@@ -610,6 +610,9 @@ def _write_json(path, data):
     os.replace(tmp, path)
 
 
+_unsaved = set()
+
+
 def store_clip(kind, items, path=None):
     _clip[kind] = items
     path = path or clipboard_path()
@@ -617,11 +620,16 @@ def store_clip(kind, items, path=None):
     data[kind] = items
     try:
         _write_json(path, data)
-    except OSError as e:
-        warn("the copy is not on disk (%s) - it pastes in this Maya only" % e)
+    except (OSError, TypeError, ValueError) as e:
+        _unsaved.add(kind)
+        return warn("the copy is not on disk (%s) - it pastes in this Maya only" % e)
+    _unsaved.discard(kind)
 
 
 def clip_items(kind, path=None):
+    """A copy that never reached the file stays ahead of the older one still there."""
+    if kind in _unsaved:
+        return _clip[kind]
     return _read_json(path or clipboard_path()).get(kind) or _clip[kind]
 
 

@@ -527,6 +527,16 @@ class ClipboardOnDisk(unittest.TestCase):
         core._clip["pose"] = [["A", {"tx": 3.0}]]
         self.assertEqual(core.clip_items("pose", self.path), [["A", {"tx": 3.0}]])
 
+    def test_a_copy_that_could_not_be_written_wins_over_the_older_file(self):
+        self.addCleanup(core._unsaved.clear)
+        core.store_clip("pose", [["A", {"tx": 1.0}]], self.path)
+        with mock.patch.object(core, "warn") as warn:
+            core.store_clip("pose", [["B", {"tx": object()}]], self.path)
+        warn.assert_called_once()
+        self.assertEqual(core.clip_items("pose", self.path)[0][0], "B")
+        core.store_clip("pose", [["C", {"tx": 3.0}]], self.path)
+        self.assertEqual(core.clip_items("pose", self.path), [["C", {"tx": 3.0}]])
+
     def test_the_stored_pairs_match_by_name(self):
         core.store_clip("pose", [["FKWrist_L", {"tx": 1.0}], ["FKElbow_L", {"tx": 2.0}]], self.path)
         pairs = core._match_clip(core.clip_items("pose", self.path), ["tab_b:Manny_Rig1:FKElbow_L"])

@@ -31,7 +31,7 @@ TOOLS = ("nudge", "inbetween", "save_recovery", "install_recovery_check", "selec
          "paste_relationship", "paste_world_space", "copy_world_space", "enum_attrs", "selection", "space_switch",
          "add_bookmark", "go_to_bookmark", "delete_bookmark_here", "clear_bookmarks", "bookmarks",
          "select_rig_controls", "select_animated", "key_selection", "delete_static_channels", "bake_selection",
-         "reset_to_default_pose", "clear_default_pose")
+         "reset_to_default_pose", "clear_default_pose", "save_pose_file", "load_pose_file")
 
 
 class BarCmds(object):
@@ -940,6 +940,15 @@ class Strip(BarTest):
         core.paste_world_space.assert_called_once_with(all_keys=True)
         self.assertEqual([e[1] for e in strip._snapshot_menu()],
                          [core.snapshot_default_pose, core.reset_to_default_pose, core.clear_default_pose])
+
+    def test_copy_and_paste_pose_open_the_pose_file_menu_on_a_right_click(self):
+        for compact in (False, True):
+            strip = self.strip(compact=compact)
+            for tip in ("Copy Pose", "Paste Pose"):
+                button = self.by_tip(strip, tip)
+                self.assertEqual(button.contextMenuPolicy(), Qt.CustomContextMenu)
+                self.assertEqual([e[1] for e in button._menu() if e],
+                                 [core.copy_pose, core.paste_pose, core.save_pose_file, core.load_pose_file])
 
     def test_the_relationship_button_copies_and_shift_pastes_by_channels(self):
         strip = self.strip()

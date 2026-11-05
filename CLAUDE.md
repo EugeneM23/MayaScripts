@@ -18130,9 +18130,13 @@ today; the spec says what its fix wants.
 only, so a copy pasted between scene tabs of one Maya but never into a file open in a second Maya, or
 after a restart. Now `store_clip` writes it to `AT_clipboard.json` in Maya's user folder as well (through a
 `.partial`, as the selection-set library does) and `clip_items` reads the file first - it holds the latest
-copy made in any Maya; memory only when the file is missing or broken. World Space and Relationship stay
+copy made in any Maya; memory only when the file is missing or broken, or when this Maya's last copy could
+not be written (`_unsaved`: it stays ahead of the older copy still in the file). World Space and Relationship stay
 in memory (they hold full DAG paths of this scene). Right click on Copy / Paste Pose: Save pose to file /
 Load pose from file (`.atpose`, the same `{"pose": [[name, {attr: value}]]}`). Trap: `CoreTest` patches
 `core.clipboard_path` to a temp file - without it every clipboard test read the animator's real file.
-Proof: `test_atbar.ClipboardOnDisk`, 266 AT tests; live on 7003 on throwaway cubes - the in-memory copy
-wiped, the pose (tx 3.5, ry 42) and the animation (from frame 20) pasted back from the file.
+Proof: `test_atbar.ClipboardOnDisk`, `test_atbar_bar` (the right-click menu, Full and Compact), 268 AT
+tests; live on 7003 on throwaway cubes - the in-memory copy wiped, the pose (tx 3.5, ry 42) and the
+animation (from frame 20) pasted back from the file; and two mayapy sessions with their own scenes and one
+`MAYA_APP_DIR`: copied from `Manny_Rig:`, pasted onto `tab_x:Manny_Rig1:` picked in reverse order - every
+control by name, the animation from frame 100.
