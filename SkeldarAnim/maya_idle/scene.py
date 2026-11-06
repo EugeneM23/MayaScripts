@@ -241,7 +241,8 @@ def idle_of(root):
     uuid = (cmds.ls(root, uuid=True) or [root])[0]
     cache = _state()["idles"]
     hit = cache.get(uuid)
-    if hit and hit[0] == hash(text):
+    if hit and hit[0] == hash(text) and isinstance(hit[1], im.Idle):   # a cache an older build filled (an
+        #  install purges the modules, sys keeps the cache) is read again
         return hit[1]
     idle = build_idle(root, data)
     cache[uuid] = (hash(text), idle)
