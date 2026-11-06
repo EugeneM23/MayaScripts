@@ -367,3 +367,25 @@ def memo(root):
         return json.loads(cmds.getAttr(root + "." + MARKER) or "{}")
     except ValueError:
         return None
+
+
+def built():
+    """Every skeleton Idle Builder has built in the scene (its top joint carries the kept source)."""
+    cmds = _cmds()
+    found = cmds.ls("*." + SOURCE_ATTR, recursive=True, objectsOnly=True, long=True, type="joint") or []
+    try:
+        from maya_scenetabs import scope
+        found = scope.active_only(found)
+    except Exception:                                   # noqa: BLE001
+        pass
+    return sorted(set(found))
+
+
+def label(root):
+    """A skeleton as the list names it: its character group without _Character, else its namespace, else root."""
+    cmds = _cmds()
+    above = cmds.listRelatives(root, parent=True, fullPath=True)
+    if above:
+        name = _short(above[0])
+        return name[:-len("_Character")] if name.endswith("_Character") else name
+    return _short(root)

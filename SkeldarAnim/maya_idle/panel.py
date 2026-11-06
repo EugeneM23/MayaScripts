@@ -264,23 +264,48 @@ def working():
     return out
 
 
+def _set_working(roots):
+    cmds = _cmds()
+    _state()["working"] = [u for r in roots for u in (cmds.ls(r, uuid=True) or [])]
+    show_list()
+
+
 def _apply_on(roots):
-    lines = []
-    for root in roots:
-        try:
-            lines.append(scene.apply(root, values(), chosen_card(), parts()))
-        except (scene.Refusal, im.Refusal) as error:
-            lines.append("%s: %s" % (scene._short(root), error))
-    return " | ".join(lines)
+    import time
+    began = time.time()
+    lines, failed = [], []
+    knobs, card, chosen = values(), chosen_card(), parts()
+    progress = len(roots) > 1 and not _cmds().about(batch=True)
+    if progress:
+        _cmds().progressWindow(title="Idle Builder", progress=0, maxValue=len(roots), isInterruptable=True,
+                               status="%d skeletons" % len(roots))
+    try:
+        for i, root in enumerate(roots):
+            if progress:
+                if _cmds().progressWindow(query=True, isCancelled=True):
+                    failed.append("cancelled after %d" % i)
+                    break
+                _cmds().progressWindow(edit=True, progress=i, status=scene.label(root))
+            try:
+                lines.append(scene.apply(root, knobs, card, chosen))
+            except (scene.Refusal, im.Refusal) as error:
+                failed.append("%s: %s" % (scene.label(root), error))
+    finally:
+        if progress:
+            _cmds().progressWindow(endProgress=True)
+    if len(roots) == 1:
+        return " | ".join(lines + failed)
+    text = "%d of %d skeletons keyed in %.1f s" % (len(lines), len(roots), time.time() - began)
+    return text + (" | " + " | ".join(failed) if failed else "")
 
 
 def press_apply():
     def run():
-        roots = scene.selected_tops()
+        roots = scene.selected_tops() or working()
         if not roots:
             return "Select a bone of each skeleton with an idle"
-        cmds = _cmds()
-        _state()["working"] = [u for r in roots for u in (cmds.ls(r, uuid=True) or [])]
+        work = working()
+        _set_working(work + [r for r in roots if r not in work])
         return _apply_on(roots)
     return _run(run)
 
@@ -297,7 +322,9 @@ def press_restore():
         roots = scene.selected_tops() or working()
         if not roots:
             return "Select a skeleton built by Idle Builder"
-        return " | ".join(scene.restore(r) for r in roots)
+        lines = [scene.restore(r) for r in roots if scene.has_source(r)]
+        _set_working([r for r in working() if r not in roots])
+        return " | ".join(lines) or "nothing built among them"
     return _run(run)
 
 
@@ -312,6 +339,69 @@ def press_reset():
 
 def knob_changed(*_):
     return _run(lambda: _rekey("knob"))
+
+
+# ---- the list of skeletons (Walk Builder's walkers list) ----
+
+LIST = "skeldarIdleList"
+_LISTED = []           # the paths the list shows, row by row (1-based rows = index + 1)
+
+
+def show_list():
+    """Every built skeleton, the working ones marked; the working ones selected in the list."""
+    cmds = _cmds()
+    if not cmds.textScrollList(LIST, exists=True):
+        return
+    work = working()
+    rows = scene.built()
+    for r in work:
+        if r not in rows:
+            rows.append(r)
+    _LISTED[:] = rows
+    cmds.textScrollList(LIST, edit=True, removeAll=True)
+    for r in rows:
+        cmds.textScrollList(LIST, edit=True, append=("▶ " if r in work else "    ") + scene.label(r))
+    picked = [i + 1 for i, r in enumerate(rows) if r in work]
+    if picked:
+        cmds.textScrollList(LIST, edit=True, selectIndexedItem=picked)
+
+
+def _list_rows():
+    cmds = _cmds()
+    picked = cmds.textScrollList(LIST, query=True, selectIndexedItem=True) or []
+    return [_LISTED[i - 1] for i in picked if 0 < i <= len(_LISTED)]
+
+
+def list_picked(*_):
+    """Rows clicked in the list: those skeletons are the working ones (a knob keys them), selected in the scene."""
+    roots = _list_rows()
+    _set_working(roots)
+    cmds = _cmds()
+    if roots:
+        cmds.select(roots, replace=True)
+    refresh()
+    return _say("working: %d skeleton(s) - a knob keys them, Apply keys them now" % len(roots))
+
+
+def list_select_all(*_):
+    _set_working(list(_LISTED))
+    if _LISTED:
+        _cmds().select(_LISTED, replace=True)
+    refresh()
+    return _say("working: all %d skeletons" % len(_LISTED))
+
+
+def list_key_now(*_):
+    return _run(lambda: _apply_on(working()) if working() else "pick skeletons in the list")
+
+
+def list_restore(*_):
+    def run():
+        roots = _list_rows()
+        lines = [scene.restore(r) for r in roots if scene.has_source(r)]
+        _set_working([r for r in working() if r not in roots])
+        return " | ".join(lines) or "nothing picked"
+    return _run(run)
 
 
 # ---- the card ----
@@ -373,12 +463,23 @@ def build_panel():
                             height=hubstyle.height("small", 22), annotation=tip, changeCommand=knob_changed)
     cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "both", 4), (3, "both", 4)])
-    _button(APPLY_BTN, "Apply", "primary", "user", "The selected skeletons' idles rebuilt on the pose", press_apply)
+    _button(APPLY_BTN, "Apply", "primary", "user", "The selected skeletons' idles rebuilt on the pose and added to the list (nothing selected: the picked ones in the list)", press_apply)
     _button(RESTORE_BTN, "Restore", "secondary", "arrow-back-up", "Their own keys back", press_restore)
     _button(RESET_BTN, "Reset", "secondary", "refresh", "The knobs back to their defaults", press_reset)
     cmds.setParent("..")
+    hubstyle.mark(cmds.text(OPTION + "listHeading", label="Skeletons", align="left"), "heading")
+    cmds.textScrollList(LIST, allowMultiSelection=True, numberOfRows=8, height=140,
+                        annotation="Every skeleton Idle Builder has built. Click (Ctrl / Shift for several) to pick "
+                                   "the WORKING ones: a knob released keys them. Apply adds the scene's selection.",
+                        selectCommand=list_picked)
+    cmds.popupMenu(parent=LIST, button=3)
+    cmds.menuItem(label="Pick all", command=list_select_all)
+    cmds.menuItem(label="Key the picked now", command=list_key_now)
+    cmds.menuItem(label="Restore the picked (their own keys)", command=list_restore)
+    cmds.setParent("..", menu=True)
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True, height=54), "status")
     cmds.setParent("..")
+    show_list()
     start()
     refresh()
     return column
