@@ -269,7 +269,7 @@ def pose_for(root, idle, card_path):
     worlds = [W[idle.clip.index[n]] for n in names]
     out = wp._onto(names, worlds, statics, pose_bones, wt, head=("head" in statics))[0]
     out = dict((leaf, wp._np(m)) for leaf, m in out.items())
-    return im.pose_targets(idle, out), name
+    return im.pose_targets(idle, out) + (im.card_grips(pose_bones),), name
 
 
 def _mean_locals(idle):
@@ -292,6 +292,7 @@ def _channels(idle, L):
     values = {}
     moved = set(idle.followers) | ({idle.pelvis} if idle.pelvis is not None else set())
     moved |= set(j for j in range(len(idle.paths)) if float(np.ptp(idle.trans[j], axis=0).max()) > 1e-4)
+    moved |= set(j for j, g in enumerate(idle.groups) if g == "helper")
     for j, path in enumerate(idle.paths):
         st = idle.statics[j]
         current = [float(v) for v in cmds.getAttr(path + ".rotate")[0]]
@@ -318,8 +319,18 @@ def apply(root, given, card_path, parts):
     given = dict(given or {}, fps=_fps())
     L, info = im.evaluate(idle, given, pose, parts)
     values = _channels(idle, L)
+    links = []
+    try:
+        from maya_scenesetup import bonedrive
+        links = bonedrive.find_links([p for p in idle.paths if _leaf(p) in ("weapon_r", "weapon_l")])
+    except ImportError:
+        bonedrive = None
     with ws._Chunk("Idle Builder"):
+        for bone, _weapon in links:                 # a weapon driving its bone lets go for the write ...
+            bonedrive.unlink(bone)
         written, held = ws.write_curves(values, {}, idle.start)
+        for bone, weapon in links:                  # ... and takes the new track back, its grip kept
+            bonedrive.relink(weapon, bone)
         if not cmds.attributeQuery(MARKER, node=root, exists=True):
             cmds.addAttr(root, longName=MARKER, dataType="string")
         cmds.setAttr(root + "." + MARKER, json.dumps({"knobs": im.knobs(given), "card": card_path or "",
@@ -333,6 +344,8 @@ def apply(root, given, card_path, parts):
         line += " | pelvis lowered up to %.1f cm for the feet" % info["drop"]
     if info.get("held"):
         line += " | hands on the chest: " + ", ".join("%s %.1f cm" % (s.upper(), v) for s, v in sorted(info["held"].items()))
+    if links:
+        line += " | weapon re-seated: " + ", ".join(_short(w) for _b, w in links)
     if held:
         line += " | left to their drivers: %s" % ", ".join(sorted(held))
     return line

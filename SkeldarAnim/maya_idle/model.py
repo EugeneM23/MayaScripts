@@ -337,7 +337,8 @@ def evaluate(idle, given=None, pose=None, parts=ALL_PARTS):
     times = np.arange(n_out) * tempo
     parts = set(parts or ())
     share = k["share"] if pose else 0.0
-    rot_t, pelvis_t, feet_t = pose if pose else ({}, None, {})
+    rot_t, pelvis_t, feet_t = pose[:3] if pose else ({}, None, {})
+    grips = pose[3] if pose and len(pose) > 3 else {}
 
     def gain(g):
         if g in ("root", "helper", "other"):
@@ -450,13 +451,25 @@ def evaluate(idle, given=None, pose=None, parts=ALL_PARTS):
     info["held"] = _weapon_hold(idle, L, W, k, share if "arms" in parts else 0.0, idle.loops or k["seam"] >= 1.0)
     W = fk(clip.names, clip.parents, L, clip.top_parent)
     # helpers riding a bone ride it again
-    for h, (b, rel) in sorted(idle.followers.items()):
+    followers = dict(idle.followers)
+    sa = share if "arms" in parts else 0.0
+    for leaf, (body, rel_card) in grips.items():
+        h, b = clip.index.get(leaf), clip.index.get(body)
+        if h is None or b is None or sa <= 0:
+            continue
+        src = idle.followers.get(h)
+        old = src[1] if src and src[0] == b else rel_card
+        rel = np.eye(4)
+        rel[:3, :3] = slerp(old[:3, :3], rel_card[:3, :3], sa)
+        rel[3, :3] = old[3, :3] * (1.0 - sa) + rel_card[3, :3] * sa
+        followers[h] = (b, rel)
+    for h, (b, rel) in sorted(followers.items()):
         hw = rel[None] @ W[b]
         p = clip.parents[h]
         base = W[p] if p >= 0 else np.broadcast_to(clip.top_parent, hw.shape)
         L[h] = hw @ np.linalg.inv(base)
         W = fk(clip.names, clip.parents, L, clip.top_parent)
-    info["followers"] = len(idle.followers)
+    info["followers"] = len(followers)
     return L, info
 
 
@@ -544,4 +557,23 @@ def _weapon_hold(idle, L, W, k, alpha, cyclic):
             L[ha, t, :3, :3] = orthonormal((hw @ np.linalg.inv(lw))[:3, :3])
         out[s] = worst
         W[:] = fk(names, parents, L, idle.clip.top_parent)
+    return out
+
+
+GRIPS = (("weapon_r", "hand_r"), ("weapon_l", "hand_l"))
+
+
+def card_grips(card_bones):
+    """{weapon bone: (its hand, the bone's world over the hand's)} read off a pose card's own bones: where the
+    pose holds its weapon sockets in its hands."""
+    out = {}
+    for leaf, hand in GRIPS:
+        a, b = card_bones.get(leaf), card_bones.get(hand)
+        if not a or not b:
+            continue
+        wa = np.array(a["world"], float).reshape(4, 4)
+        wb = np.array(b["world"], float).reshape(4, 4)
+        rel = wa @ np.linalg.inv(wb)
+        rel[:3, :3] = orthonormal(rel[:3, :3])
+        out[leaf] = (hand, rel)
     return out
