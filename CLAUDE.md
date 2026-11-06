@@ -11783,6 +11783,59 @@ as the thing that decides the one-body spring and the fingers' stilling.**
 - **Not built**: a lag or a strength per hand under the hold; removing the grip's stilling (a hand holding a
   thing should not flex its fingers, and it would change every take already made).
 
+## Walk Builder: a clip whose keys run on past its motion (2026-11-06)
+
+The animator, their walker on port 7002: «walk builder добавляет ключи к походке но в итоге у меня ломается
+цикл. Наш плагин должен обеспечивать соблюдение цикличности». Read on their scene (nothing written): the walker
+`root` walks its own captured cycle `own:462dab8fd658b3cb`, keyed 0..130 (131 keys a curve), the last ~5 frames
+slowing almost to a stop - the pelvis 0.25-0.5 cm a frame against its 1.5 median, the feet still - and frame 0
+leaping back into motion (the hand 4.3 cm out of frame 0 against 0.37 cm into frame 130).
+- **The cause is in the INPUT and in the clean**: `read_clip` reads a skeleton's keys from their first time to
+  their last, and something on that skeleton was keyed to 130 while the motion ends at 120 - so the captured
+  cycle holds **every bone still over its last 10 frames**, and frame 120 is frame 0 moved by the travel to
+  0.0185 cm (the cycle is 120 frames). The clean's loop check took frame 130 for the closing frame (it equals
+  frame 120); the seam step then read the pelvis - closing to 0.0185 cm, past `SEAM_TOL` 0.01 - as a bone keyed
+  short and refilled it through the hold («keys that stopped early, refilled back to the first frame: pelvis
+  (from frame 120)»), so the model's own repeated-frame trim (`model.trimmed`) found the held frames no longer
+  equal and kept all ten. **Not a one-off**: 18 of the 120 walks in their SkeldarWalks folder carry it, every
+  one an own cycle (read 0..140 or 0..134, the motion ending at 111..121; one of 93 frames moves only 0..23).
+  The synthetic test walker's seam is exact, which is why nothing had caught it: there the clean leaves the
+  hold alone and the model trims it.
+- **`clean.held_ends(worlds, c)`**, run first in `loop()`: a body standing still at an end - every body joint's
+  world within `model.DUP_TOL` of the frame beside it - over `HELD_MIN` (2) frames or more is cut, at the start
+  as at the end, unless less than `MIN_CYCLE` would be left. One frame written twice stays the model's to drop
+  (`trimmed`, and its «1 repeated frame dropped» in the summary - AGS_Sprint reads as before). One bone held
+  while the rest walk is no hold (that is the seam step's keyed-short refill, unchanged). The report: «loop:
+  the body stood still over its last 10 frames - keys that ran on past the motion: the cycle is frames 0-120 of
+  0-130», the Pick line «cleaned: 10 still frames cut». A head cut is written from the clip's own start (a cycle
+  has no phase of its own). Their kept source is untouched: the next press reads it the new way, and Restore
+  still gives back their keys as they were.
+- **On their cycle, card and settings** (`verify_walk_held_tail.py`, **0 of 8 gates, mayapy standalone**,
+  keyed onto a Manny UE5 skeleton and read back off the keys): keyed **0..120**, the last frame on the first to
+  **0.00000 cm / deg**, the pelvis moving into the seam at **0.79** of its median step; the control (the hold
+  check switched off) keys 0..130 with the pelvis refilled, as in their scene, and its pelvis's last steps fall
+  to **0.11** of the median. The hold was diluting the speed too: 2.00 m/s against the 1.84 the 130-frame
+  reading gave. The seam's jolt (0.79 against the control's 0.85 of the cycle's own worst) does not tell the two
+  apart: what they saw is the stop, not a jolt.
+- Proof: `tests/test_walkclean.py` (five new: the end hold, the head hold, a single repeated frame left to the
+  model, one bone held is no hold, a clip barely moving not cut below a cycle - the end one written with their
+  0.0185 cm pelvis seam, failing as their scene did before the fix); the 1078 walk unit tests OK. A scan of
+  every walk on this machine: 18 own cycles read differently, every library walk, card and repo fixture
+  unchanged. `verify_walk_clean.py` dies at its stale line 84 and `verify_walk_sprint.py` fails its gate 4
+  (1.65 deg) **identically on a HEAD export**.
+- **Not changed**: the playback range. Their scene plays 0..130 and the walk now ends at 120, so Maya holds the
+  last pose for ten frames until the range is set to the cycle; Pick does not touch the animator's range.
+  **Not seen in a GUI Maya**: their next press, after Check update.
+
+338. **A clip whose keys run on past its motion passes every loop check.** A skeleton keyed to 130 whose motion
+     ends at 120 holds the whole body still for ten frames, and its last frame IS its first moved by the travel
+     - so «is the cycle closed?» answers yes, and every later step treats the hold as motion: the seam step
+     refilled the one bone whose seam was 0.0085 cm past its tolerance, which in turn defeated the model's own
+     trim of repeated frames. Each guard was right about its own case (a frame written twice, a bone keyed
+     short) and the case between them - the whole body still for several frames - belonged to neither. Ask
+     «does anything move?» at the ends before asking «does it close?», and test a reader on a fixture with the
+     real data's imprecision: the exact synthetic walker took the other branch and never showed it.
+
 ## Walk Builder: the Weapon tab rebuilt — the hand on the chest, late (2026-11-05)
 
 The animator, step by step in a scene on port 7002: «Manny_Rig_Character на этом шаге мы используем анимацию

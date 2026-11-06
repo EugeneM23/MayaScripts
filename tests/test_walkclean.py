@@ -162,6 +162,62 @@ class LoopTests(unittest.TestCase):
         middle = slice(8, P - 8)
         self.assertLess(float(np.abs(rig.rot[j, middle] - before[middle]).max()), 1e-9)
 
+    def test_a_clip_whose_body_stands_still_at_its_end_loses_the_hold(self):
+        """The animator's own cycle (2026-11-06): keyed 0-120 and read 0-130, every bone holding frame 120's pose
+        for ten frames. The loop check took frame 130 for the closing frame (it IS frame 0 moved by the travel),
+        the seam step refilled the pelvis as a bone keyed short, and the walk slowed to a stop before its seam.
+        Their pelvis closed to 0.0185 cm, past SEAM_TOL - which is what sent it to the refill; the model's own
+        repeated-frame trim then found the held frames no longer equal and kept every one of them."""
+        rig = rig_of(walker_worlds())
+        rig.trans[IDX["pelvis"], -1] += [0.0185, 0.0, 0.0]          # the source's own seam, as theirs
+        worlds = rig.worlds()
+        held = np.concatenate([worlds, np.repeat(worlds[:, -1:], 10, axis=1)], axis=1)
+        out, report = run(held)
+        self.assertEqual(out.worlds.shape[1], P + 1, report.text())
+        self.assertLess(float(np.abs(out.worlds - worlds).max()), 0.02)
+        self.assertIn("stood still over its last 10 frames", report.text())
+        self.assertNotIn("refilled", report.text())
+        # the walk the model reads moves on every frame into its seam as out of it: no stop before the loop
+        walk = wm.analyse(out)
+        result = walk.evaluate(walk.own_knobs()).worlds
+        pelvis = np.linalg.norm(np.diff(result[IDX["pelvis"], :, 3, :3], axis=0), axis=1)
+        self.assertEqual(walk.P, P)
+        self.assertGreater(float(pelvis[-3:].min()), 0.5 * float(np.median(pelvis)))
+
+    def test_a_clip_whose_body_stands_still_at_its_start_loses_the_hold(self):
+        worlds = walker_worlds()
+        held = np.concatenate([np.repeat(worlds[:, :1], 4, axis=1), worlds], axis=1)
+        out, report = run(held)
+        self.assertEqual(out.worlds.shape[1], P + 1, report.text())
+        self.assertLess(float(np.abs(out.worlds - worlds).max()), 1e-9)
+        self.assertIn("stood still over its first 4 frames", report.text())
+
+    def test_a_single_repeated_frame_is_left_to_the_model(self):
+        """One frame written twice is the model's to drop (model.trimmed, said in its summary): the clean leaves it."""
+        worlds = walker_worlds()
+        clip = clip_of(np.concatenate([worlds, worlds[:, -1:]], axis=1))
+        out, report = wc.clean(clip, STATICS, dict(REST), {})
+        self.assertIs(out, clip, report.text())
+
+    def test_one_bone_held_while_the_rest_walk_is_no_hold(self):
+        """Only the WHOLE body standing still is a hold past the motion; one bone held while the rest walk is a
+        bone keyed short (the seam step's to refill), and nothing is cut."""
+        rig = rig_of(walker_worlds())
+        j = IDX["spine_01"]
+        rig.rot[j, -6:] = rig.rot[j, -6]
+        worlds = rig.worlds()
+        self.assertEqual(wc.held_ends(worlds, wc._Clip(clip_of(worlds))), (0, P))
+        rig = rig_of(walker_worlds())
+        rig.trans[IDX["root"], -6:] = rig.trans[IDX["root"], -6]   # the root alone stopping is no hold either
+        worlds = rig.worlds()
+        self.assertEqual(wc.held_ends(worlds, wc._Clip(clip_of(worlds))), (0, P))
+
+    def test_a_clip_that_barely_moves_is_not_cut_below_a_cycle(self):
+        worlds = walker_worlds()
+        held = np.concatenate([worlds[:, :6], np.repeat(worlds[:, 5:6], 30, axis=1)], axis=1)
+        lo, hi = wc.held_ends(held, wc._Clip(clip_of(held)))
+        self.assertEqual((lo, hi), (0, held.shape[1] - 1))
+
     def test_holden_offsets_take_the_step_off_and_end_flat(self):
         off = wc._holden(25, 6, np.array([2.0]), np.array([0.5]))
         self.assertAlmostEqual(float(off[0, 0] - off[-1, 0]), 2.0, places=12)

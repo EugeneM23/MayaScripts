@@ -5,7 +5,8 @@ Save walk keeps a clip as it stands; `clean()` makes the cycle when the walk is 
 Clean tab (KNOBS). Kept after a try (the same day: «полезным оказались функции inPlace, FixPosture, Seam ... Можно
 еще сглаживание оставить ... Fix pos давай сделаем кнопкой»):
 
-1. the loop: a closed cycle as it is, one missing its closing frame given it, else the best loop cut out of
+1. the loop: a body standing still at an end cut off first (keys run on past the motion, 2026-11-06); then a
+   closed cycle as it is, one missing its closing frame given it, else the best loop cut out of
    the clip - the Kovar-Gleicher distance (the body's points in the root's ground frame, a few frames either
    side) over whole strides, the fewest strides near the best (a cut cycle's climb taken off);
 2. the seam (Seam): a cut cycle's (or a joint's own) seam closed by Holden's two-sided cubics - value and slope;
@@ -37,6 +38,7 @@ RANGES = dict((k[0], (k[2], k[3])) for k in KNOBS)
 CLOSED_TOL = (0.1, 0.002)  # cm, rotation elements: the last frame against the first moved by the root's travel
 SEAM_TOL = (0.01, 0.05)    # cm, degrees: a joint's own seam this small is closed already
 MIN_CYCLE = 10             # frames: no shorter loop is cut
+HELD_MIN = 2               # frames: the body still over this many at an end is a hold past the motion (held_ends)
 LOOP_WINDOW = 2            # frames either side of a candidate pair in the loop distance
 LOOP_TIE = 1.2             # of the least distance: the loops within it (+ LOOP_SLACK) are candidates...
 LOOP_SLACK = 0.5           # cm: ...the fewest strides among them, the longest of those, is cut
@@ -312,9 +314,57 @@ def _cycle_travel(path, up, harmonics=6):
     return coeffs[0] * P
 
 
+def held_ends(worlds, c):
+    """(first, last): the frames the motion runs between. Keys that run on past the motion - a curve keyed to frame
+    130 on a cycle that ends at 120 - hold the WHOLE body still over the clip's last frames (or its first), and
+    read as part of the cycle they slowed the walk to a stop before every seam (the animator's own cycle,
+    2026-11-06: «walk builder добавляет ключи к походке но в итоге у меня ломается цикл»). A body standing still
+    over HELD_MIN or more frames at an end is cut there - every body joint's world within model.DUP_TOL of the
+    frame beside it; one frame written twice is left to model.trimmed, which says it in the walk's summary.
+    (0, F - 1) when nothing is held, or when what would be left is shorter than a cycle."""
+    body = worlds[c.body]
+    frames = body.shape[1]
+
+    def still(a, b):
+        return (float(np.abs(body[:, a, 3, :3] - body[:, b, 3, :3]).max()) <= wm.DUP_TOL[0] and
+                float(np.abs(body[:, a, :3, :3] - body[:, b, :3, :3]).max()) <= wm.DUP_TOL[1])
+
+    last = frames - 1
+    while last > 0 and still(last, last - 1):
+        last -= 1
+    if frames - 1 - last < HELD_MIN:
+        last = frames - 1
+    first = 0
+    while first < last and still(first, first + 1):
+        first += 1
+    if first < HELD_MIN:
+        first = 0
+    if last - first < MIN_CYCLE:
+        return 0, frames - 1
+    return first, last
+
+
+def _held_text(first, last, frames):
+    parts = []
+    if first:
+        parts.append("its first %d frames" % first)
+    if last < frames - 1:
+        parts.append("its last %d frames" % (frames - 1 - last))
+    return ("the body stood still over %s - keys that ran on past the motion: the cycle is frames %d-%d of 0-%d"
+            % (" and ".join(parts), first, last, frames - 1))
+
+
 def loop(worlds, c, report):
     """(worlds, cut): the clip as a cycle (its last frame its first's place in the next cycle) and whether its seam
-    still needs closing (a loop cut out of a longer clip)."""
+    still needs closing (a loop cut out of a longer clip). A body standing still at an end is cut off first
+    (held_ends): read as the cycle's own frames it passed the loop check (the hold's last frame IS the first
+    moved by the travel) and the seam step then refilled a bone through it."""
+    first, last = held_ends(worlds, c)
+    if (first, last) != (0, worlds.shape[1] - 1):
+        cut_off = first + worlds.shape[1] - 1 - last
+        report.add("loop", _held_text(first, last, worlds.shape[1]),
+                   "%d still frame%s cut" % (cut_off, "" if cut_off == 1 else "s"))
+        worlds = worlds[:, first:last + 1]
     if is_closed(worlds, c):
         return worlds, False
     frames = worlds.shape[1]
