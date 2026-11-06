@@ -36,6 +36,11 @@ SLIDERS = (
     ("height", "Height, cm", "The pelvis raised or lowered; the legs take it by IK"),
     ("seam", "Seam, fr", "The last frames eased onto the first, so the idle loops"),
 )
+WEAPON_SLIDERS = (
+    ("overlap_l", "Overlap L, ms", "The left hand rides the chest this many ms late (the weapon trails the body)"),
+    ("overlap_r", "Overlap R, ms", "The right hand rides the chest this many ms late"),
+)
+HOLDS = (("hold_l", "Hold L"), ("hold_r", "Hold R"))
 JOB = {}
 
 
@@ -71,9 +76,16 @@ def _control(name):
 def values():
     cmds = _cmds()
     out = {}
-    for name, _label, _tip in SLIDERS:
+    for name, _label, _tip in SLIDERS + WEAPON_SLIDERS:
         if cmds.floatSliderGrp(_control(name), exists=True):
             out[name] = float(cmds.floatSliderGrp(_control(name), q=True, value=True))
+            _remember(name, out[name])
+        else:
+            out[name] = float(_stored(name, im.DEFAULTS[name]))
+    for name, _label in HOLDS:
+        box = OPTION + name
+        if cmds.checkBox(box, exists=True):
+            out[name] = 1.0 if cmds.checkBox(box, q=True, value=True) else 0.0
             _remember(name, out[name])
         else:
             out[name] = float(_stored(name, im.DEFAULTS[name]))
@@ -289,7 +301,7 @@ def press_restore():
 
 def press_reset():
     cmds = _cmds()
-    for name, _label, _tip in SLIDERS:
+    for name, _label, _tip in SLIDERS + WEAPON_SLIDERS:
         if cmds.floatSliderGrp(_control(name), exists=True):
             cmds.floatSliderGrp(_control(name), edit=True, value=im.DEFAULTS[name])
         _remember(name, im.DEFAULTS[name])
@@ -338,6 +350,22 @@ def build_panel():
         low, high = im.RANGES[name]
         cmds.floatSliderGrp(_control(name), label=label, field=True, minValue=low, maxValue=high,
                             fieldMinValue=low, fieldMaxValue=high, step=0.05, precision=2,
+                            value=float(_stored(name, im.DEFAULTS[name])),
+                            columnWidth3=hubstyle.pick((92, 44, 100), (100, 50, 150)), adjustableColumn=3,
+                            height=hubstyle.height("small", 22), annotation=tip, changeCommand=knob_changed)
+    hubstyle.mark(cmds.text(OPTION + "weaponHeading", label="Weapon", align="left"), "heading")
+    cmds.rowLayout(numberOfColumns=len(HOLDS))
+    for name, label in HOLDS:
+        hubstyle.mark(cmds.checkBox(OPTION + name, label=label,
+                                    value=float(_stored(name, im.DEFAULTS[name])) >= 0.5,
+                                    annotation="The hand rides the chest rigidly at its mean offset, so it holds "
+                                               "the pose's grip on the torso (needs a pose with Arms on)",
+                                    changeCommand=knob_changed), "chip")
+    cmds.setParent("..")
+    for name, label, tip in WEAPON_SLIDERS:
+        low, high = im.RANGES[name]
+        cmds.floatSliderGrp(_control(name), label=label, field=True, minValue=-500.0, maxValue=500.0,
+                            fieldMinValue=low, fieldMaxValue=high, step=1.0, precision=0,
                             value=float(_stored(name, im.DEFAULTS[name])),
                             columnWidth3=hubstyle.pick((92, 44, 100), (100, 50, 150)), adjustableColumn=3,
                             height=hubstyle.height("small", 22), annotation=tip, changeCommand=knob_changed)

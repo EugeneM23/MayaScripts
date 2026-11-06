@@ -26,12 +26,17 @@ DEFAULTS = {
     "smooth": 0.0,      # frames of Gaussian over the motion
     "height": 0.0,      # cm added to the pelvis
     "seam": 0.0,        # frames at the end eased onto the first frame
+    "hold_l": 1.0, "hold_r": 1.0,    # Weapon: the hand rides the chest at its mean offset (where the pose holds the arm)
+    "overlap_l": 0.0, "overlap_r": 0.0,   # Weapon: ms the chest it rides is late
+    "fps": 30.0,        # the output rate (ms into frames)
 }
 RANGES = {
     "share": (0.0, 1.0), "motion": (0.0, 3.0),
     "torso": (0.0, 3.0), "head": (0.0, 3.0), "arms": (0.0, 3.0), "fingers": (0.0, 3.0),
     "pelvis": (0.0, 3.0), "feet": (0.0, 3.0),
     "tempo": (0.25, 3.0), "smooth": (0.0, 10.0), "height": (-30.0, 30.0), "seam": (0.0, 60.0),
+    "hold_l": (0.0, 1.0), "hold_r": (0.0, 1.0), "overlap_l": (-1000.0, 1000.0), "overlap_r": (-1000.0, 1000.0),
+    "fps": (1.0, 240.0),
 }
 ALL_PARTS = ("torso", "head", "arms", "legs", "pelvis")      # what of the pose comes in (chips)
 RIGID_CM = 0.05
@@ -184,6 +189,7 @@ class Idle(object):
                 self.legs[s] = dict(th=th, ca=ca, fo=fo, pos_mean=pos.mean(0), pos_dev=pos - pos.mean(0),
                                     rot_mean=F, rot_dev=log_rot(np.einsum("ij,njk->nik", F.T, rot)))
         self.followers = self._followers()
+        self.loops = bool(self.pelvis is not None and np.linalg.norm(self.worlds[self.pelvis, 0, 3, :3] - self.worlds[self.pelvis, -1, 3, :3]) < 0.5)
 
     def _followers(self):
         """{helper index: (body index, the helper's world over the body's)} for helpers riding a bone rigidly."""
@@ -390,6 +396,8 @@ def evaluate(idle, given=None, pose=None, parts=ALL_PARTS):
             L[fo, t, :3, :3] = orthonormal((fw @ np.linalg.inv(cw))[:3, :3])
         info["short"][s] = worst
     W = fk(clip.names, clip.parents, L, clip.top_parent)
+    info["held"] = _weapon_hold(idle, L, W, k, share if "arms" in parts else 0.0, idle.loops or k["seam"] >= 1.0)
+    W = fk(clip.names, clip.parents, L, clip.top_parent)
     # helpers riding a bone ride it again
     for h, (b, rel) in sorted(idle.followers.items()):
         hw = rel[None] @ W[b]
@@ -399,3 +407,90 @@ def evaluate(idle, given=None, pose=None, parts=ALL_PARTS):
         W = fk(clip.names, clip.parents, L, clip.top_parent)
     info["followers"] = len(idle.followers)
     return L, info
+
+
+# ---- Weapon: the hands on the chest, late (Walk Builder's Weapon tab) ----
+
+def _chest(idle):
+    ix = idle.clip.index
+    for name in ("spine_05", "spine_04", "spine_03"):
+        if name in ix:
+            return ix[name]
+    spines = [j for j, g in enumerate(idle.groups) if g == "torso"]
+    return spines[-1] if spines else None
+
+
+def _late(mats, lag, cyclic):
+    """(N, 4, 4) read `lag` frames earlier: places lerped, turns slerped; a loop wraps, else the ends hold."""
+    n = mats.shape[0]
+    out = np.empty_like(mats)
+    period = n - 1 if cyclic and n > 2 else None
+    for t in range(n):
+        u = t - lag
+        if period:
+            u = u % period
+        else:
+            u = min(max(u, 0.0), n - 1)
+        i0 = int(math.floor(u))
+        i1 = min(i0 + 1, n - 1)
+        f = u - i0
+        m = np.eye(4)
+        m[:3, :3] = slerp(mats[i0, :3, :3], mats[i1, :3, :3], f)
+        m[3, :3] = mats[i0, 3, :3] * (1.0 - f) + mats[i1, 3, :3] * f
+        out[t] = m
+    return out
+
+
+def _weapon_hold(idle, L, W, k, alpha, cyclic):
+    """Each held hand rides the chest rigidly at its own mean offset, the chest read `overlap` ms late; the
+    arm (upperarm, lowerarm) solved onto it by two-bone IK, the hand's turn set. Only where the pose holds the
+    arms (`alpha`, the pose's share on Arms). Answers {side: cm the hand moved at most}."""
+    out = {}
+    chest = _chest(idle)
+    if chest is None or alpha <= 0.0:
+        return out
+    ix = idle.clip.index
+    names = idle.clip.names
+    parents = idle.clip.parents
+    C = W[chest]
+    for s in ("l", "r"):
+        hold = k["hold_" + s]
+        if hold < 0.5:
+            continue
+        chain = ("upperarm_" + s, "lowerarm_" + s, "hand_" + s)
+        if not all(n in ix for n in chain):
+            continue
+        up, lo, ha = (ix[n] for n in chain)
+        H = W[ha].copy()
+        rel = H @ np.linalg.inv(C)
+        A = np.eye(4)
+        A[:3, :3] = orthonormal(rel[:, :3, :3].sum(0))
+        A[3, :3] = rel[:, 3, :3].mean(0)
+        lag = k["overlap_" + s] * k["fps"] / 1000.0
+        want = A[None] @ _late(C, lag, cyclic)
+        n_out = H.shape[0]
+        worst = 0.0
+        for t in range(n_out):
+            target = np.eye(4)
+            target[:3, :3] = slerp(H[t, :3, :3], want[t, :3, :3], alpha)
+            target[3, :3] = H[t, 3, :3] * (1.0 - alpha) + want[t, 3, :3] * alpha
+            worst = max(worst, float(np.linalg.norm(target[3, :3] - H[t, 3, :3])))
+            pw = W[parents[up], t]
+            uw = L[up, t] @ pw
+            shoulder = uw[3, :3]
+            elbow_fk = (L[lo, t] @ uw)[3, :3]
+            l1 = float(np.linalg.norm(L[lo, t, 3, :3]))
+            l2 = float(np.linalg.norm(L[ha, t, 3, :3]))
+            elbow, reach = _two_bone(shoulder, elbow_fk, target[3, :3], l1, l2)
+            uw[:3, :3] = uw[:3, :3] @ between(elbow_fk - shoulder, elbow - shoulder)
+            lw = L[lo, t] @ uw
+            wrist_fk = (L[ha, t] @ lw)[3, :3]
+            lw[:3, :3] = lw[:3, :3] @ between(wrist_fk - elbow, reach - elbow)
+            hw = np.eye(4)
+            hw[:3, :3] = target[:3, :3]
+            L[up, t, :3, :3] = orthonormal((uw @ np.linalg.inv(pw))[:3, :3])
+            L[lo, t, :3, :3] = orthonormal((lw @ np.linalg.inv(uw))[:3, :3])
+            L[ha, t, :3, :3] = orthonormal((hw @ np.linalg.inv(lw))[:3, :3])
+        out[s] = worst
+        W[:] = fk(names, parents, L, idle.clip.top_parent)
+    return out

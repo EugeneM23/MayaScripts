@@ -314,6 +314,7 @@ def apply(root, given, card_path, parts):
     began = time.time()
     idle = idle_of(root)
     pose, name = pose_for(root, idle, card_path) if card_path else (None, "")
+    given = dict(given or {}, fps=_fps())
     L, info = im.evaluate(idle, given, pose, parts)
     values = _channels(idle, L)
     with ws._Chunk("Idle Builder"):
@@ -327,6 +328,8 @@ def apply(root, given, card_path, parts):
                                        (" on %s" % name) if name else "", time.time() - began)
     if short > 0.5:
         line += " | a foot %.1f cm out of reach" % short
+    if info.get("held"):
+        line += " | hands on the chest: " + ", ".join("%s %.1f cm" % (s.upper(), v) for s, v in sorted(info["held"].items()))
     if held:
         line += " | left to their drivers: %s" % ", ".join(sorted(held))
     return line
