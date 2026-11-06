@@ -34,6 +34,8 @@ SLIDERS = (
     ("tempo", "Tempo x", "Speed: 2 plays the idle twice as fast (half the frames)"),
     ("smooth", "Smooth, fr", "A Gaussian over the motion, frames"),
     ("height", "Height, cm", "The pelvis raised or lowered; the legs take it by IK"),
+    ("stance", "Stance x", "The distance between the feet: x their spread (1 = as the idle and the pose have it)"),
+    ("width", "Width, cm", "Centimetres added to the distance between the feet (negative: narrower)"),
     ("seam", "Seam, fr", "The last frames eased onto the first, so the idle loops"),
 )
 WEAPON_SLIDERS = (

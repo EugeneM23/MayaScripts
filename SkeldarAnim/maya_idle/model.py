@@ -25,6 +25,8 @@ DEFAULTS = {
     "tempo": 1.0,       # x the clip's speed
     "smooth": 0.0,      # frames of Gaussian over the motion
     "height": 0.0,      # cm added to the pelvis
+    "stance": 1.0,      # x the feet's spread across the body
+    "width": 0.0,       # cm added to the feet's spread
     "seam": 0.0,        # frames at the end eased onto the first frame
     "hold_l": 1.0, "hold_r": 1.0,    # Weapon: the hand rides the chest at its mean offset (where the pose holds the arm)
     "overlap_l": 0.0, "overlap_r": 0.0,   # Weapon: ms the chest it rides is late
@@ -34,13 +36,14 @@ RANGES = {
     "share": (0.0, 1.0), "motion": (0.0, 3.0),
     "torso": (0.0, 3.0), "head": (0.0, 3.0), "arms": (0.0, 3.0), "fingers": (0.0, 3.0),
     "pelvis": (0.0, 3.0), "feet": (0.0, 3.0),
-    "tempo": (0.25, 3.0), "smooth": (0.0, 10.0), "height": (-30.0, 30.0), "seam": (0.0, 60.0),
+    "tempo": (0.25, 3.0), "smooth": (0.0, 10.0), "height": (-30.0, 30.0), "stance": (0.0, 3.0), "width": (-60.0, 60.0), "seam": (0.0, 60.0),
     "hold_l": (0.0, 1.0), "hold_r": (0.0, 1.0), "overlap_l": (-1000.0, 1000.0), "overlap_r": (-1000.0, 1000.0),
     "fps": (1.0, 240.0),
 }
 ALL_PARTS = ("torso", "head", "arms", "legs", "pelvis")      # what of the pose comes in (chips)
 RIGID_CM = 0.05
 RIGID_DEG = 0.2
+REACH = 0.99          # a leg kept this share of its length short of straight when the pelvis drops for it
 
 
 class Refusal(Exception):
@@ -288,6 +291,26 @@ def _seam(arr, frames):
     return out
 
 
+def _spread(means, idle, k):
+    """The feet's mean places moved apart or together across the body (in the root's frame, the up part
+    left alone): their spread x `stance`, plus `width` cm, about their middle."""
+    if set(means) != {"l", "r"} or (abs(k["stance"] - 1.0) < 1e-9 and abs(k["width"]) < 1e-9):
+        return means
+    up = np.array([0.0, 1.0, 0.0]) @ idle.worlds[idle.root, 0, :3, :3].T
+    up = up / np.linalg.norm(up)
+    l, r = means["l"][0], means["r"][0]
+    mid = (l + r) * 0.5
+    out = {}
+    for s, sign in (("l", 1.0), ("r", -1.0)):
+        half = means[s][0] - mid
+        flat = half - up * float(np.dot(half, up))
+        n = float(np.linalg.norm(flat))
+        side = flat / n if n > 1e-6 else np.zeros(3)
+        moved = flat * k["stance"] + side * (k["width"] * 0.5)
+        out[s] = (mid + (half - flat) + moved, means[s][1])
+    return out
+
+
 def _two_bone(hip, knee_hint, ankle, l1, l2):
     d = ankle - hip
     D = float(np.linalg.norm(d))
@@ -362,16 +385,44 @@ def evaluate(idle, given=None, pose=None, parts=ALL_PARTS):
     info = {"frames": n_out, "short": {}}
     # the legs onto their feet
     root_w = W[idle.root]
+    means = {}
     for s, leg in idle.legs.items():
-        th, ca, fo = leg["th"], leg["ca"], leg["fo"]
         pos_mean, F = leg["pos_mean"], leg["rot_mean"]
         sl = share if "legs" in parts else 0.0
         if sl > 0 and s in feet_t:
             pos_mean = pos_mean * (1.0 - sl) + feet_t[s][0] * sl
             F = slerp(F, feet_t[s][1], sl)
-        fg = k["feet"] * k["motion"]
-        pos = pos_mean + motion(leg["pos_dev"]) * fg
-        rot = F[None] @ exp_rot(motion(leg["rot_dev"]) * fg)
+        means[s] = (pos_mean, F)
+    means = _spread(means, idle, k)
+    fg = k["feet"] * k["motion"]
+    feet = {}
+    for s, leg in idle.legs.items():
+        pos_mean, F = means[s]
+        feet[s] = (pos_mean + motion(leg["pos_dev"]) * fg, F[None] @ exp_rot(motion(leg["rot_dev"]) * fg))
+    # the pelvis lowered where a leg cannot reach its foot (a wider stance), smoothly
+    if idle.pelvis is not None and feet:
+        up_w = np.array([0.0, 1.0, 0.0])
+        drop = np.zeros(n_out)
+        for s, leg in idle.legs.items():
+            th, ca, fo = leg["th"], leg["ca"], leg["fo"]
+            reach = (np.linalg.norm(L[ca, :, 3, :3], axis=-1) + np.linalg.norm(L[fo, :, 3, :3], axis=-1)) * REACH
+            for t in range(n_out):
+                ankle = (np.append(feet[s][0][t], 1.0) @ root_w[t])[:3]
+                d = ankle - W[th, t, 3, :3]
+                h = float(np.dot(d, up_w))
+                flat2 = float(np.dot(d, d)) - h * h
+                if flat2 + h * h > reach[t] ** 2:
+                    need = -h - math.sqrt(max(reach[t] ** 2 - flat2, 0.0))
+                    drop[t] = max(drop[t], need)
+        if drop.max() > 1e-6:
+            drop = np.maximum(_blur(drop, 3.0), drop)
+            root_rot = idle.worlds[idle.root, 0, :3, :3]
+            L[idle.pelvis, :, 3, :3] -= drop[:, None] * (up_w @ root_rot.T)[None]
+            W = fk(clip.names, clip.parents, L, clip.top_parent)
+            info["drop"] = float(drop.max())
+    for s, leg in idle.legs.items():
+        th, ca, fo = leg["th"], leg["ca"], leg["fo"]
+        pos, rot = feet[s]
         l1 = np.linalg.norm(L[ca, :, 3, :3], axis=-1)
         l2 = np.linalg.norm(L[fo, :, 3, :3], axis=-1)
         worst = 0.0
