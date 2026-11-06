@@ -159,10 +159,13 @@ try:
     shutil.copy(SWORD_FILE, sw.wf.pose_path_for(sw.WALKS, "two_handed_sword"))
     cmds.file(new=True, force=True)
     cmds.currentUnit(time="ntsc")
-    walk, statics, start = sw.load_walk("AGS_Sprint")[:3]
+    walk, statics, start, report = sw.load_walk("AGS_Sprint")
     data = sw.wf.load(sw.wf.path_for(sw.WALKS, "AGS_Sprint"))
-    gate(walk.P == 60 and walk.dropped == 1 and "1 repeated frame dropped" in walk.summary(),
-         "the walk read without its repeated last frame: %s" % walk.summary())
+    #  the clean cuts the repeated frame since 2026-11-06 (clean.held_ends: before it smooths anything, or the
+    #  copy no longer equals its neighbour and model.trimmed misses it) - the model's own trim is the fallback
+    gate(walk.P == 60 and ("stood still over its last frame" in report.text() or walk.dropped == 1),
+         "the walk read without its repeated last frame: %s | %s" % (report.text().replace("\n", " | "),
+                                                                    walk.summary()))
     manny = ma_import(os.path.join(ASSETS, "Manny_Skeleton.ma"), "manny")
     result, info, text = sw.apply(manny, "AGS_Sprint", SCENE, "two_handed_sword")
     print("        " + text)

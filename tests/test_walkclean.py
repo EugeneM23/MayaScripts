@@ -192,12 +192,19 @@ class LoopTests(unittest.TestCase):
         self.assertLess(float(np.abs(out.worlds - worlds).max()), 1e-9)
         self.assertIn("stood still over its first 4 frames", report.text())
 
-    def test_a_single_repeated_frame_is_left_to_the_model(self):
-        """One frame written twice is the model's to drop (model.trimmed, said in its summary): the clean leaves it."""
+    def test_a_single_repeated_frame_is_cut_before_it_is_smoothed(self):
+        """One frame written twice (the animator's next capture, 2026-11-06: keyed 0-121, frame 121 frame 120's
+        copy). It was left to model.trimmed - but the clean smooths first, the copy no longer equals its
+        neighbour, and the model kept a frozen frame at the seam: under Weapon overlap the hands, reading the
+        chest late while In place takes the root's CURRENT step out, jumped 5 cm into every loop."""
         worlds = walker_worlds()
-        clip = clip_of(np.concatenate([worlds, worlds[:, -1:]], axis=1))
-        out, report = wc.clean(clip, STATICS, dict(REST), {})
-        self.assertIs(out, clip, report.text())
+        out, report = run(np.concatenate([worlds, worlds[:, -1:]], axis=1), smooth=0.92)
+        self.assertEqual(out.worlds.shape[1], P + 1, report.text())
+        self.assertIn("stood still over its last frame", report.text())
+        self.assertEqual(wm.analyse(out).P, P)
+        out, report = run(np.concatenate([worlds[:, :1], worlds], axis=1), smooth=0.92)
+        self.assertEqual(out.worlds.shape[1], P + 1, report.text())
+        self.assertIn("stood still over its first frame", report.text())
 
     def test_one_bone_held_while_the_rest_walk_is_no_hold(self):
         """Only the WHOLE body standing still is a hold past the motion; one bone held while the rest walk is a

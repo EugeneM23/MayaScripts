@@ -11802,14 +11802,24 @@ leaping back into motion (the hand 4.3 cm out of frame 0 against 0.37 cm into fr
   The synthetic test walker's seam is exact, which is why nothing had caught it: there the clean leaves the
   hold alone and the model trims it.
 - **`clean.held_ends(worlds, c)`**, run first in `loop()`: a body standing still at an end - every body joint's
-  world within `model.DUP_TOL` of the frame beside it - over `HELD_MIN` (2) frames or more is cut, at the start
-  as at the end, unless less than `MIN_CYCLE` would be left. One frame written twice stays the model's to drop
-  (`trimmed`, and its «1 repeated frame dropped» in the summary - AGS_Sprint reads as before). One bone held
-  while the rest walk is no hold (that is the seam step's keyed-short refill, unchanged). The report: «loop:
-  the body stood still over its last 10 frames - keys that ran on past the motion: the cycle is frames 0-120 of
-  0-130», the Pick line «cleaned: 10 still frames cut». A head cut is written from the clip's own start (a cycle
-  has no phase of its own). Their kept source is untouched: the next press reads it the new way, and Restore
-  still gives back their keys as they were.
+  world within `model.DUP_TOL` of the frame beside it - over `HELD_MIN` (1) frame or more is cut, at the start
+  as at the end, unless less than `MIN_CYCLE` would be left. One bone held while the rest walk is no hold (that
+  is the seam step's keyed-short refill, unchanged). The report: «loop: the body stood still over its last 10
+  frames - keys that ran on past the motion: the cycle is frames 0-120 of 0-130», the Pick line «cleaned: 10
+  still frames cut». A head cut is written from the clip's own start (a cycle has no phase of its own). Their
+  kept source is untouched: the next press reads it the new way, and Restore still gives back their keys as
+  they were.
+- **…and ONE repeated frame too** (the same morning, after the first push, `HELD_MIN` 2 -> 1: «теперь при
+  активации захлеста во вкладке weapon руки не в цикле»). Their next capture (`own:9fc64a95f87d3f2d`, read
+  after a Maya restart) is the same walk keyed 0..121 with frame 121 a copy of 120. The first fix left a single
+  copy to `model.trimmed`, as before - but the clean smooths and closes seams BEFORE the model reads the clip,
+  their Smooth 0.92 blurred the copy into its neighbours, and the model no longer saw two equal frames: a frozen
+  frame stayed at the seam (the walk read 121 frames for 120). Under Weapon overlap it shows in the hands: they
+  ride the chest 3.8 frames late while In place takes the root's CURRENT step out, so the frozen frame lands
+  apart from where the hands meet it, and they jumped into the seam at **3.2x** their median step (a 3.24 cm
+  jolt against the cycle's own ~1.3). Nothing may touch a clip before its held ends are cut. `model.trimmed`
+  stays as the fallback for a clip read without the clean; AGS_Sprint's copy is now the clean's to cut («the
+  body stood still over its last frame»), the same 60-frame cycle.
 - **On their cycle, card and settings** (`verify_walk_held_tail.py`, **0 of 8 gates, mayapy standalone**,
   keyed onto a Manny UE5 skeleton and read back off the keys): keyed **0..120**, the last frame on the first to
   **0.00000 cm / deg**, the pelvis moving into the seam at **0.79** of its median step; the control (the hold
@@ -11817,12 +11827,20 @@ leaping back into motion (the hand 4.3 cm out of frame 0 against 0.37 cm into fr
   to **0.11** of the median. The hold was diluting the speed too: 2.00 m/s against the 1.84 the 130-frame
   reading gave. The seam's jolt (0.79 against the control's 0.85 of the cycle's own worst) does not tell the two
   apart: what they saw is the stop, not a jolt.
-- Proof: `tests/test_walkclean.py` (five new: the end hold, the head hold, a single repeated frame left to the
-  model, one bone held is no hold, a clip barely moving not cut below a cycle - the end one written with their
-  0.0185 cm pelvis seam, failing as their scene did before the fix); the 1078 walk unit tests OK. A scan of
-  every walk on this machine: 18 own cycles read differently, every library walk, card and repo fixture
-  unchanged. `verify_walk_clean.py` dies at its stale line 84 and `verify_walk_sprint.py` fails its gate 4
-  (1.65 deg) **identically on a HEAD export**.
+- **The repeated frame, on their cycle, card and Overlap 125.3 ms** (the same verify, gates 9-12, **12 of 12**
+  in all): the copy cut before the smoothing, keyed 0..120, the last frame on the first to 0.00000, the hands
+  jolting at most **1.26 cm** round the loop and stepping into the seam at 1.06 of their median; the control
+  (`HELD_MIN` 2, the first fix) keys 0..121 with the hands at **3.24 cm** and **3.23x** - and a knee pop at the
+  seam smoothed by the target besides.
+- Proof: `tests/test_walkclean.py` (five new: the end hold, the head hold, a single repeated frame cut before
+  it is smoothed, one bone held is no hold, a clip barely moving not cut below a cycle - the end one written
+  with their 0.0185 cm pelvis seam, the repeated one with their Smooth 0.92, each failing as their scene did
+  before its fix); the 1078 walk unit tests OK. A scan of every walk on this machine: **70 of 121 read
+  differently** - the held tails, and most of their own captures carry a single repeated end frame, which any
+  Smooth above 0 kept until now; AGS_Sprint's copy too. `verify_walk_sprint.py` reads its repeated frame
+  through the clean's report now (gate 1) and fails its gate 4 (1.65 deg), `verify_walk.py` fails
+  [4, 24, 27, 30, 57, 77] and `verify_walk_clean.py` dies at its stale line 84 - **all identically on a HEAD
+  export**.
 - **Not changed**: the playback range. Their scene plays 0..130 and the walk now ends at 120, so Maya holds the
   last pose for ten frames until the range is set to the cycle; Pick does not touch the animator's range.
   **Not seen in a GUI Maya**: their next press, after Check update.
@@ -11834,7 +11852,10 @@ leaping back into motion (the hand 4.3 cm out of frame 0 against 0.37 cm into fr
      trim of repeated frames. Each guard was right about its own case (a frame written twice, a bone keyed
      short) and the case between them - the whole body still for several frames - belonged to neither. Ask
      «does anything move?» at the ends before asking «does it close?», and test a reader on a fixture with the
-     real data's imprecision: the exact synthetic walker took the other branch and never showed it.
+     real data's imprecision: the exact synthetic walker took the other branch and never showed it. And a
+     check that relies on two frames being EQUAL must run before anything that blurs them: the model's
+     repeated-frame trim sat after the clean's smoothing, so one copied frame survived any Smooth above 0 -
+     in 50 of the animator's captures, found only when Weapon overlap made the frozen frame visible.
 
 ## Walk Builder: the Weapon tab rebuilt — the hand on the chest, late (2026-11-05)
 

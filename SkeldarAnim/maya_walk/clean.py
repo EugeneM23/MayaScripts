@@ -38,7 +38,7 @@ RANGES = dict((k[0], (k[2], k[3])) for k in KNOBS)
 CLOSED_TOL = (0.1, 0.002)  # cm, rotation elements: the last frame against the first moved by the root's travel
 SEAM_TOL = (0.01, 0.05)    # cm, degrees: a joint's own seam this small is closed already
 MIN_CYCLE = 10             # frames: no shorter loop is cut
-HELD_MIN = 2               # frames: the body still over this many at an end is a hold past the motion (held_ends)
+HELD_MIN = 1               # frames: the body still over this many at an end is a hold past the motion (held_ends)
 LOOP_WINDOW = 2            # frames either side of a candidate pair in the loop distance
 LOOP_TIE = 1.2             # of the least distance: the loops within it (+ LOOP_SLACK) are candidates...
 LOOP_SLACK = 0.5           # cm: ...the fewest strides among them, the longest of those, is cut
@@ -320,7 +320,10 @@ def held_ends(worlds, c):
     read as part of the cycle they slowed the walk to a stop before every seam (the animator's own cycle,
     2026-11-06: «walk builder добавляет ключи к походке но в итоге у меня ломается цикл»). A body standing still
     over HELD_MIN or more frames at an end is cut there - every body joint's world within model.DUP_TOL of the
-    frame beside it; one frame written twice is left to model.trimmed, which says it in the walk's summary.
+    frame beside it. ONE frame written twice too (the same day's next capture, keyed 0-121 with 121 a copy of
+    120): it was left to model.trimmed, but the clean smooths and closes seams before the model reads the
+    clip, the copy no longer equals its neighbour, and a frozen frame stayed at the seam - the hands under
+    Weapon overlap jumped 5 cm into every loop. Nothing may touch the clip before its held ends are cut.
     (0, F - 1) when nothing is held, or when what would be left is shorter than a cycle."""
     body = worlds[c.body]
     frames = body.shape[1]
@@ -345,11 +348,12 @@ def held_ends(worlds, c):
 
 
 def _held_text(first, last, frames):
+    count = lambda k: "frame" if k == 1 else "%d frames" % k
     parts = []
     if first:
-        parts.append("its first %d frames" % first)
+        parts.append("its first " + count(first))
     if last < frames - 1:
-        parts.append("its last %d frames" % (frames - 1 - last))
+        parts.append("its last " + count(frames - 1 - last))
     return ("the body stood still over %s - keys that ran on past the motion: the cycle is frames %d-%d of 0-%d"
             % (" and ".join(parts), first, last, frames - 1))
 
