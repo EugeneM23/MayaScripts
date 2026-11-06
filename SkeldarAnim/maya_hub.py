@@ -167,6 +167,10 @@ SECTIONS = (
     Section("walk", "Walk Builder", "maya_walk.panel",
             "build_panel", "skeldarHubFrameWalk",
             "animation", "walk"),
+    #  2026-11-06: an idle rebuilt on a pose card (a draft, Walk Builder's way).
+    Section("idle", "Idle Builder", "maya_idle.panel",
+            "build_panel", "skeldarHubFrameIdle",
+            "animation", "user"),
     #  2026-10-13: handheld filming and an impact on a layer each, out of its standalone script.
     Section("camshake", "Camera Shake", "maya_camshake",
             "build_panel", "skeldarHubFrameCamShake",

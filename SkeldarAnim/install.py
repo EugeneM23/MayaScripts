@@ -142,6 +142,7 @@ _PAYLOAD = (
     "maya_dynamics",            # the Dynamics card: chains that swing - colliders, wind, loops (2026-10-26)
     "maya_moveset",             # the Moveset card: the Longsword combo trees, shared with the page (2026-10-29)
     "maya_walk",                # the Walk Builder card: a walk cycle rebuilt from knobs (2026-10-13)
+    "maya_idle",                # the Idle Builder card: an idle rebuilt on a pose card (2026-11-06)
     "maya_scenetabs",           # scene tabs: several scenes in one Maya (2026-10-15)
     "maya_radial.py",           # the radial menu under alt+q and its editor card (2026-10-15)
     "maya_radial_rules.py",     # the radial menu's pure half: slots, items, the release rule (2026-10-15)
