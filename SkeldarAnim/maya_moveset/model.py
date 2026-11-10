@@ -135,7 +135,12 @@ def _weapon_in(folder, name):
 
 def weapons(folder):
     """The weapons the folder holds, `graph.json` first and the rest by file
-    name. The data says which weapons there are; no table here names one."""
+    name. The data says which weapons there are; no table here names one.
+
+    One weapon a key: a second graph declaring a weapon already listed
+    (`graph.dagger.all.json`, written for another page beside the dagger's
+    own) is no second weapon. The file named for the key - `graph.<key>.json`
+    - is the weapon's; with none of that name, the first by file name."""
     try:
         names = os.listdir(folder)
     except OSError:
@@ -144,8 +149,17 @@ def weapons(folder):
                    if n.startswith("graph.") and n.endswith(".json") and n != GRAPH)
     if GRAPH in names:
         files.insert(0, GRAPH)
-    found = [_weapon_in(folder, name) for name in files]
-    return [w for w in found if w is not None]
+    found = []
+    for name in files:
+        weapon = _weapon_in(folder, name)
+        if weapon is None:
+            continue
+        same = [i for i, w in enumerate(found) if w.key == weapon.key]
+        if not same:
+            found.append(weapon)
+        elif name != GRAPH and _file_key(name) == weapon.key:
+            found[same[0]] = weapon
+    return found
 
 
 def weapon_of(folder, key):

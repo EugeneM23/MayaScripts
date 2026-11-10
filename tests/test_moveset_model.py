@@ -185,6 +185,22 @@ class Weapons(unittest.TestCase):
         self.assertEqual([(w.key, w.label) for w in m.weapons(self.folder)],
                          [("longsword", "Longsword"), ("dagger", "Dagger")])
 
+    def test_a_second_graph_of_one_weapon_is_no_second_weapon(self):
+        #  2026-11-10: `graph.dagger.all.json`, made beside the dagger's own
+        #  graph for another page, declared the dagger too - the card got two
+        #  segments of one name and could not be built
+        self._write(m.GRAPH, graph())
+        self._write("graph.dagger.all.json", dagger_graph())
+        self._write("graph.dagger.json", dagger_graph())
+        self.assertEqual([(w.key, w.graph) for w in m.weapons(self.folder)],
+                         [("longsword", m.GRAPH), ("dagger", "graph.dagger.json")])
+
+    def test_a_weapon_with_no_file_of_its_own_name_keeps_its_first_graph(self):
+        self._write("graph.dagger.all.json", dagger_graph())
+        self._write("graph.dagger.old.json", dagger_graph())
+        self.assertEqual([(w.key, w.graph) for w in m.weapons(self.folder)],
+                         [("dagger", "graph.dagger.all.json")])
+
     def test_a_graph_with_no_meta_is_the_longsword_by_todays_rules(self):
         self._write(m.GRAPH, graph())
         sword = m.weapons(self.folder)[0]
