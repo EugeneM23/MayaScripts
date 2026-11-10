@@ -142,6 +142,12 @@ KNOBS = (
     # is the lever, and anything it holds follows by its own constraint.
     ("weapon_hold", 1.0, 0.0, 1.0),
     ("weapon_overlap", 0.0, -120.0, 120.0),
+    # Inherit (2026-11-10, «ручку которая будет контролировать процент холда 1 - 100% наследования как
+    # сейчас 0 - 0 процентов полная статика»): Hold parents the hand to the chest, and this is that
+    # parent's weight - the share of the chest's own motion (its turn and its place, about their means)
+    # the held hand takes. 1 rides the chest as before, matrix for matrix; 0 stands still in the frame
+    # the cycle travels in. The 2026-11-03 Chest rotation / position strengths, as one number.
+    ("weapon_inherit", 1.0, 0.0, 1.0),
     # Aim target (2026-11-10), the animator's example: the weapon in Aim Mode with its aim target's keys
     # thinned out «для придания веса оружию» - the grip plays the whole animation and the blade points at
     # a target that plays less of it. «1 - вся анимация 0 - аим таргет полностью статичен»: the share of
@@ -200,7 +206,7 @@ SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "fo
          "arms", "hands", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
          "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "passing_knee", "knee_soft", "g_arm", "g_elbow",
          "arm_swing_add", "duty", "push", "heel_strike", "slap", "arm_lag", "elbow_lag", "hand_lag",
-         "arm_overlap", "elbow_overlap", "hand_overlap", "weapon_overlap", "weapon_hold", "weapon_aim", "spring_comp")
+         "arm_overlap", "elbow_overlap", "hand_overlap", "weapon_overlap", "weapon_hold", "weapon_inherit", "weapon_aim", "spring_comp")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
@@ -274,6 +280,7 @@ OVERLAP_QUIET = 1e-6      # frames: an Arm overlap under this touches nothing
 AIM_REACH = 1.15          # the aim target stands this far past the blade's tip, x its length (Aim Mode's own)
 AIM_BLADE = 100.0         # cm: the blade a weapon BONE stands for where the scene holds no weapon (along its +Z)
 AIM_QUIET = 1e-9          # an Aim target this near 1 keeps the whole animation: nothing is touched
+INHERIT_QUIET = 1e-9      # an Inherit this near 1 rides the chest whole: the chest's cycle is read as it is
 # the trunk and the head on springs (docs/superpowers/specs/2026-10-14-walk-sprint-legs-and-body-design.md)
 BODY_INERTIA = 1.0        # x the pivot's acceleration felt by the trunk on its lever
 HEAD_INERTIA = 0.3        # ...and by the head on the neck: a head is held - at 1 a sprint's steps bobbed it 12 deg off
@@ -4455,6 +4462,8 @@ class Walk(object):
         #  the scene: the hand is the lever. Two hands holding one thing hold together, so the carrier alone
         #  drives and the other follows (the grip kept to machine precision).
         holds = dict((side, float(ks[side]["weapon_overlap"])) for side in self.rigid_sides(ctx))
+        #  Inherit (2026-11-10): the share of the chest's own motion each held hand takes (1: all of it)
+        inherits = dict((side, min(max(float(ks[side]["weapon_inherit"]), 0.0), 1.0)) for side in holds)
         followers = dict((side, [side]) for side in holds)
         #  two hands on ONE thing (a pose's own grip) hold together: the carrier drives at the two sides'
         #  mean lag and the other takes its delta, so the grip is kept to machine precision. A free hand -
@@ -4465,6 +4474,7 @@ class Walk(object):
             mean = sum(holds.values()) / float(len(holds))
             others = [s for s in sorted(holds) if s != carrier]
             holds = {carrier: mean}
+            inherits = {carrier: sum(inherits.values()) / float(len(inherits))}
             followers = {carrier: [carrier] + others}
         #  Aim target (2026-11-10): a side whose blade aims at a target keeping less than all of its own
         #  motion - {carrier: (the share kept, the hands that swing with it)}. The tab's rule: only where
@@ -4485,6 +4495,7 @@ class Walk(object):
         out = {"frames": biggest(lags), "elbow": biggest(elbows), "hand": biggest(turns), "grip": grip,
                "hold": sorted(set(s for row in followers.values() for s in row)),
                "weapon": biggest(holds), "hold_cm": 0.0,
+               "inherit": min(list(inherits.values()) or [1.0]),     # the least share a held hand takes
                "aim": {"asked": sorted(aims), "keep": {}, "lever": {}, "deg": 0.0, "cm": 0.0},
                "held": sorted(held),          # the sides the SCENE gives a weapon (the line's own wording)
                "out_of_pose": sorted(s for s in out_of_pose if s in chains)}
@@ -4515,7 +4526,8 @@ class Walk(object):
                 if max(abs(lags[side]), abs(turns[side]), abs(elbows[side])) >= OVERLAP_QUIET:
                     hands[side] = wanted(kin[chain[-1]], lags[side], turns[side])
         if holds:
-            out["hold_cm"] = self._weapon_hold(kin, n, chains, hands, holds, followers, ctx["alpha"])
+            out["hold_cm"] = self._weapon_hold(kin, n, chains, hands, holds, followers, ctx["alpha"],
+                                               inherits)
         if aims:                       # after Hold / Overlap: the blade aims from where they left the hand
             levers = self._aim_levers(kin, chains, held, sorted(aims), bool(ctx.get("weapons")))
             out["aim"].update(self._weapon_aim(kin, n, chains, hands, aims, levers, ctx["alpha"]))
@@ -4550,7 +4562,7 @@ class Walk(object):
             out[f, 3, :3] = mean_p + (dev[f] - mean_p) * position + per * f
         return out
 
-    def _weapon_hold(self, kin, n, chains, hands, holds, followers, alpha):
+    def _weapon_hold(self, kin, n, chains, hands, holds, followers, alpha, inherits=None):
         """The Weapon tab, rebuilt 2026-11-05 on the animator's own recipe (in place on `hands`): the hand is
         held RIGID on the chest - its offset from the chest frozen at its own MEAN over the cycle, so it stops
         playing the arm's swing and keeps the additive pose's hold on the torso - and the chest it rides is
@@ -4558,8 +4570,13 @@ class Walk(object):
         late:
 
             A    = steady(H(f) . inv(C(f)), 0, 0)      the hand's offset from the chest, held at its mean
-            want = shifted(C, lag)                     the chest's own pose, that many frames old
+            want = shifted(steady(C, k, k), lag)       the chest's own pose, that many frames old
             H'(f) = blend(H(f), A . want(f), alpha)    the pose's share blends it in
+
+        `k` is Inherit (`inherits[side]`, 2026-11-10): the share of its own motion the chest hands on - its
+        turn slerped from its mean heading and its place pulled toward its mean, the travel kept
+        (steady_chest). 1 is the chest as it is, read untouched; 0 a chest that only travels, so the hand
+        stands still in the frame the cycle travels in - «0 процентов полная статика».
 
         It needs NO weapon in the scene: the hand is the lever, and a weapon in it follows by its own
         constraint (the plugin's weapon space is parent-constrained to the hand with no offset). Hands that
@@ -4579,7 +4596,8 @@ class Walk(object):
                     hands[s] = np.array(kin[chains[s][-1]])
             H = np.array(hands[side], float)
             arm = self.steady_chest(H @ inv_c, 0.0, 0.0)       # the offset held at its mean: a parent, not a mix
-            want = shifted_cycle(C, lag)
+            keep = 1.0 if inherits is None else float(inherits.get(side, 1.0))
+            want = shifted_cycle(C if keep >= 1.0 - INHERIT_QUIET else self.steady_chest(C, keep, keep), lag)
             inv_h = np.linalg.inv(H)
             for f in range(n + 1):
                 full = blend_matrix(H[f], arm[f] @ want[f], alpha)
@@ -4810,6 +4828,25 @@ def share_line(info):
     return (" | " + ", ".join(out) + " of the cycle") if out else ""
 
 
+def hold_line(info):
+    """What the Weapon tab's Hold did, for a status line ("" with no hand held): who rides the chest, how
+    much of its motion they take (Inherit) and how late (Overlap)."""
+    swung = (info.get("arms") or {}).get("overlap") or {}
+    if not swung.get("hold"):
+        return ""
+    both = len(swung["hold"]) > 1
+    who = "both hands" if both else "the %s hand" % {"l": "left", "r": "right"}[swung["hold"][0]]
+    keep = float(swung.get("inherit", 1.0))
+    if keep < 0.005:
+        return " | %s %s still: none of the chest's motion" % (who, "stand" if both else "stands")
+    text = " | %s %s the chest" % (who, "ride" if both else "rides")
+    if keep < 1.0 - INHERIT_QUIET:
+        text += " at %.0f %% of its motion" % (100.0 * keep)
+    if swung.get("weapon"):
+        text += ", %.1f fr late (moved %.1f cm)" % (swung["weapon"], swung["hold_cm"])
+    return text
+
+
 def aim_line(info):
     """What Aim target did, for a status line ("" at its own 1): the share of its motion the blade's target
     keeps and the most the blade swung to it, or why a dialled knob did nothing."""
@@ -4865,13 +4902,7 @@ def describe(result):
         text += " | %s %.1f frames behind the body%s" % (
             "the held weapon trails" if a["grip"] else "the arms trail", a["drag"],
             ", bouncing" if a["bounce"] > 0.05 else "")
-    swung = (info.get("arms") or {}).get("overlap") or {}
-    if swung.get("hold"):
-        text += " | %s the chest" % ("both hands ride" if len(swung["hold"]) > 1 else
-                                     "the %s hand rides" % {"l": "left", "r": "right"}[swung["hold"][0]])
-        if swung.get("weapon"):
-            text += ", %.1f fr late (moved %.1f cm)" % (swung["weapon"], swung["hold_cm"])
-    return text + aim_line(info) + share_line(info) + placement_line(info) + balance_line(info)
+    return text + hold_line(info) + aim_line(info) + share_line(info) + placement_line(info) + balance_line(info)
 
 
 def placement_line(info):

@@ -262,7 +262,7 @@ class GaitTests(unittest.TestCase):
 
     def test_it_stands_after_overlap(self):
         names = [p.name for p in gait.PARAMS if p.group == gait.WEAPON]
-        self.assertEqual(names, ["weapon_hold", "weapon_overlap", "weapon_aim"])
+        self.assertEqual(names[-2:], ["weapon_overlap", "weapon_aim"])
 
     def test_its_own_value_is_one_and_its_range_zero_to_one(self):
         self.assertEqual(gait.own_value(self.own, "weapon_aim"), 1.0)

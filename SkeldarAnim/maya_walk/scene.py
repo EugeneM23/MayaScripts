@@ -1464,12 +1464,7 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
         if arm:
             text += " | " + arm
     swung = (result.info.get("arms") or {}).get("overlap") or {}
-    if swung.get("hold"):
-        text += " | %s the chest" % ("both hands ride" if len(swung["hold"]) > 1 else
-                                     "the %s hand rides" % {"l": "left", "r": "right"}[swung["hold"][0]])
-        if swung.get("weapon"):
-            text += ", %.1f fr late (moved %.1f cm)" % (swung["weapon"], swung["hold_cm"])
-    text += wm.aim_line(result.info)
+    text += wm.hold_line(result.info) + wm.aim_line(result.info)
     if swung.get("out_of_pose"):
         text += " | the %s arm is out of the pose: the Weapon knobs leave it alone" % " and ".join(
             {"l": "left", "r": "right"}[s] for s in swung["out_of_pose"])

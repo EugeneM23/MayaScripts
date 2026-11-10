@@ -18306,3 +18306,33 @@ off the scene passes 0.0000 cm from the static target and from the half one, its
 `tests/test_walk_weapon_aim.py` (31; 11 fail with the pass neutered); 13766 in the suite, the one
 failure the known `test_chat_deploy.Keys`. **Not seen in a GUI Maya**: the slider and
 a real press are the animator's, after Check update; their scene on 7005 was only read.
+
+**…and Inherit: Hold's own percent** (the same day, after asking whether the static hands had not been built
+before: «Давай сделаем ручку которая будет контролировать процент холда 1 - 100% наследования как сейчас 0 - 0
+процентов полная статика»). Spec `docs/superpowers/specs/2026-11-10-walk-weapon-hold-inherit-design.md`. The
+"stands still" end of the 2026-11-03 Chest rotation / position strengths had gone with the 2026-11-05 rebuild;
+this brings it back as ONE number - trap 335's parent constraint, whose weight the slider is.
+- **`Inherit`** (the Weapon tab, between Hold and Overlap; `gait` param `weapon_inherit`, sided, "added", 0..1,
+  default 1; engine knob `weapon_inherit`): the share of the chest's own motion a HELD hand takes. In
+  `_weapon_hold` the chest the hand rides is `steady_chest(C, k, k)` (the helper the rebuild kept: the turn
+  slerped from its mean heading, the place pulled toward its mean, the travel kept), so
+  `H' = A . shifted(steady(C, k, k), lag)`. **At 1 the chest's cycle is passed untouched** (no arithmetic on
+  it: the default is bit for bit what it was); at 0 the hand with whatever it holds stands still in the frame
+  the cycle travels in. Overlap reads that same chest late; a pose's grip takes the two sides' mean; a held
+  hand has no arm spring, so 0 is exact. Hold off, no pose, an arm out of the pose: nothing.
+- **`model.hold_line`** is the one writer of the hold's words for `describe` and the Pick line (the two
+  copies are gone): «both hands ride the chest at 30 % of its motion, 4.5 fr late», «both hands stand still:
+  none of the chest's motion».
+- With Hold on, Inherit 0 and Aim target 0 mean the same thing for the blade (a static hand has a static
+  target); Aim target is what stills the TIP while the grip still rides the chest.
+
+Proof: `docs/superpowers/plans/walkparam/verify_walk_weapon_inherit.py` (its harness is
+`verify_walk_weapon_aim`'s, imported) - **0 of 19 gates, mayapy standalone**. `model`, their own cycle under
+`LongSword_Idle_3P`: 1 the identity; at 1 the hand rides the chest rigidly (2e-13) and so moves 8.60 cm / 11.21
+deg; **at 0 it moves 2e-13 cm and turns 2e-13 deg**; a half is the chest's cycle keeping half (4.30 cm / 5.60
+deg, 2e-13 off the promise); Overlap 4.5 frames late on that chest 2e-13; the hold 7e-14, the bones 4e-14, the
+loop and the body exact, Hold off matrix for matrix, Balance carrying the hips 0.085 cm differently. `keys`,
+through `scene.apply` onto a Manny UE5 skeleton with a Long Sword in its hand: **the sword moves 0.0000 cm and
+turns 0.0000 deg at 0** (8.59 cm / 11.52 deg at 1), 4.28 cm / 5.76 deg at a half, and back at 1 it is where it
+was to 2e-14. `tests/test_walk_weapon_inherit.py` (23, all red before the knob); `verify_walk_weapon_aim.py`
+0 of 27 again. **Not seen in a GUI Maya.**

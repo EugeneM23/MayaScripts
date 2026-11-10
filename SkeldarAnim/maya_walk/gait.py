@@ -256,6 +256,13 @@ PARAMS = (
               "weapon needs no setting of its own, and two hands holding one thing keep their grip exactly. "
               "It acts only where the additive pose holds that arm: at Pose 0 the arms play the cycle. Off, "
               "the arm swings as the cycle swings it and Overlap does nothing"),
+    # Inherit (2026-11-10): «процент холда 1 - 100% наследования как сейчас 0 - 0 процентов полная статика»
+    Param("weapon_inherit", WEAPON, "Inherit", "", "added", sided=True, rule=_fixed(0.0, 1.0), default=1.0,
+          tip="With Hold on, how much of the chest's own motion the held hand takes - the weight of its "
+              "parent. 1 - all of it: the hand rides the chest rigidly, as Hold does by itself. 0 - none: "
+              "the hand with its weapon stands still while the body moves under it (it still travels with "
+              "the walk). Between, that share of the chest's turn and of its bob and sway. Overlap reads "
+              "that same chest late; two hands keep their grip"),
     Param("weapon_overlap", WEAPON, "Overlap", "ms", "added", sided=True,
           rule=_fixed(-OVERLAP_MAX, OVERLAP_MAX),
           tip="With Hold on, the chest the hand rides is this many milliseconds old - the torso leads and "
@@ -896,6 +903,7 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
         #  the Weapon tab: the hand rigid on the chest, the chest it rides that many frames old
         e["weapon_hold" + sfx] = 1.0 if sv("weapon_hold") >= 0.5 else 0.0
         e["weapon_overlap" + sfx] = sv("weapon_overlap") * fps / 1000.0            # ms -> frames
+        e["weapon_inherit" + sfx] = min(max(sv("weapon_inherit"), 0.0), 1.0)   # the chest's share (own 1)
         e["weapon_aim" + sfx] = min(max(sv("weapon_aim"), 0.0), 1.0)    # the share its target keeps (own 1)
         e["arm_fwd_add" + sfx] = sv("arms_forward") - so("arms_forward")
         e["arm_out_add" + sfx] = sv("arm_out") - so("arm_out")
