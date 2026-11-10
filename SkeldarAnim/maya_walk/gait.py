@@ -261,6 +261,16 @@ PARAMS = (
           tip="With Hold on, the chest the hand rides is this many milliseconds old - the torso leads and "
               "the hand with its weapon follows late, which is the overlap. Negative leads instead. The "
               "slider reaches half the cycle either way"),
+    # Aim target (2026-11-10), the animator's example: the weapon in Aim Mode, its aim target's keys
+    # thinned out «для придания веса оружию» - «1 - вся анимация 0 - аим таргет полностью статичен»
+    Param("weapon_aim", WEAPON, "Aim target", "", "added", sided=True, rule=_fixed(0.0, 1.0), default=1.0,
+          tip="The weapon's weight, as Aim Mode with its aim target smoothed: the grip plays the whole "
+              "animation and the blade points at a target standing past its tip that keeps only this share "
+              "of its own motion. 1 - the whole animation, nothing changes; 0 - the target stands still "
+              "ahead of the character, so the heavy end stays put while the hands move the handle under "
+              "it. The hands turn with the weapon and two hands keep their grip. It acts where the "
+              "additive pose holds that arm and needs no Hold; with no weapon in the scene the right "
+              "hand's weapon bone stands for a 1 m blade"),
     # the physics
     Param("whip", PHYSICS, "Whip", "", "added", rule=_fixed(0.0, 1.0), default=0.3,
           tip="The arms, the trunk and the head overshoot as they catch up with the body (springs whose stride "
@@ -886,6 +896,7 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
         #  the Weapon tab: the hand rigid on the chest, the chest it rides that many frames old
         e["weapon_hold" + sfx] = 1.0 if sv("weapon_hold") >= 0.5 else 0.0
         e["weapon_overlap" + sfx] = sv("weapon_overlap") * fps / 1000.0            # ms -> frames
+        e["weapon_aim" + sfx] = min(max(sv("weapon_aim"), 0.0), 1.0)    # the share its target keeps (own 1)
         e["arm_fwd_add" + sfx] = sv("arms_forward") - so("arms_forward")
         e["arm_out_add" + sfx] = sv("arm_out") - so("arm_out")
         e["elbow_add" + sfx] = _solved_elbow(walk, s, sv("elbow"), sv("elbow") - so("elbow"))

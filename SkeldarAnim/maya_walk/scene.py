@@ -1383,7 +1383,7 @@ def animate(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, pose_c
     amount = float(wm.knobs(**knobs).get("in_place", 0.0))
     rw = steps = None
     layer_note = ""
-    weapons = weapons_in_hands(root)       # what Weapon overlap swings (the hands' own weapons)
+    weapons = weapons_in_hands(root)       # the hands' own weapons: who carries a hold, the blade Aim target aims
     if kp.is_empty(keys) and not with_steps:
         result = evaluated(walk, knobs, pose, prepared, parts, weapons)
         moving = result.worlds if amount <= 0.0 else None
@@ -1469,13 +1469,15 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
                                      "the %s hand rides" % {"l": "left", "r": "right"}[swung["hold"][0]])
         if swung.get("weapon"):
             text += ", %.1f fr late (moved %.1f cm)" % (swung["weapon"], swung["hold_cm"])
+    text += wm.aim_line(result.info)
     if swung.get("out_of_pose"):
         text += " | the %s arm is out of the pose: the Weapon knobs leave it alone" % " and ".join(
             {"l": "left", "r": "right"}[s] for s in swung["out_of_pose"])
     knobs = result.info.get("knobs") or {}
     dialled = lambda names: any(abs(float(knobs.get(name + s, 0.0) or 0.0)) >= wm.OVERLAP_QUIET
                                 for name in names for s in ("", "_l", "_r"))
-    if anim.pose is None and dialled(("weapon_overlap",)):
+    aimed = any(float(knobs.get("weapon_aim" + s, 1.0)) < 1.0 - wm.AIM_QUIET for s in ("", "_l", "_r"))
+    if anim.pose is None and (dialled(("weapon_overlap",)) or aimed):
         text += " | no additive pose: the Weapon knobs do nothing"
     matched = result.info.get("leg_match") or {}
     if anim.pose is not None and matched.get("on"):

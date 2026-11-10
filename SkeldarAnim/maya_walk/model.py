@@ -142,6 +142,12 @@ KNOBS = (
     # is the lever, and anything it holds follows by its own constraint.
     ("weapon_hold", 1.0, 0.0, 1.0),
     ("weapon_overlap", 0.0, -120.0, 120.0),
+    # Aim target (2026-11-10), the animator's example: the weapon in Aim Mode with its aim target's keys
+    # thinned out «для придания веса оружию» - the grip plays the whole animation and the blade points at
+    # a target that plays less of it. «1 - вся анимация 0 - аим таргет полностью статичен»: the share of
+    # its own motion the target keeps about its mean (_weapon_aim). It needs no Hold; with no weapon in
+    # the scene the right hand's weapon bone stands for the blade.
+    ("weapon_aim", 1.0, 0.0, 1.0),
     ("torso_lag", 0.0, -10.0, 15.0),
     ("head_lag", 0.0, -10.0, 15.0),
     # The bob's timing: its regular part later (frames of the new cycle: the low point after the contact moves
@@ -194,7 +200,7 @@ SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "fo
          "arms", "hands", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
          "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "passing_knee", "knee_soft", "g_arm", "g_elbow",
          "arm_swing_add", "duty", "push", "heel_strike", "slap", "arm_lag", "elbow_lag", "hand_lag",
-         "arm_overlap", "elbow_overlap", "hand_overlap", "weapon_overlap", "weapon_hold", "spring_comp")
+         "arm_overlap", "elbow_overlap", "hand_overlap", "weapon_overlap", "weapon_hold", "weapon_aim", "spring_comp")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
@@ -264,6 +270,10 @@ ARM_HARMONICS = 6         # the shoulder's path the arms feel: its first this ma
 ACCEL_HZ = 8.0            # ...and none faster than this many a second: a sprint's stride is 15 frames, and 6 harmonics of
                           # it reached a 2.5-frame period - the frames' own noise (AGS_Sprint, 2026-10-14)
 OVERLAP_QUIET = 1e-6      # frames: an Arm overlap under this touches nothing
+# Aim target (docs/superpowers/specs/2026-11-10-walk-weapon-aim-target-design.md)
+AIM_REACH = 1.15          # the aim target stands this far past the blade's tip, x its length (Aim Mode's own)
+AIM_BLADE = 100.0         # cm: the blade a weapon BONE stands for where the scene holds no weapon (along its +Z)
+AIM_QUIET = 1e-9          # an Aim target this near 1 keeps the whole animation: nothing is touched
 # the trunk and the head on springs (docs/superpowers/specs/2026-10-14-walk-sprint-legs-and-body-design.md)
 BODY_INERTIA = 1.0        # x the pivot's acceleration felt by the trunk on its lever
 HEAD_INERTIA = 0.3        # ...and by the head on the neck: a head is held - at 1 a sprint's steps bobbed it 12 deg off
@@ -777,6 +787,22 @@ def shifted_points(pts, lag):
         a = g - math.floor(g)
         out[f] = (1.0 - a) * place[lo] + a * place[hi] + per * f
     return out
+
+
+def damped_points(pts, keep):
+    """A cycle of world points (n+1, 3) - its last frame its first moved by the cycle's travel - keeping the
+    share `keep` of its own motion: each point pulled toward the cycle's MEAN place, the linear travel taken
+    out for it and put back at each frame, so the result is a cycle again and at 0 the point glides down the
+    travel line with no motion of its own (in place: it stands still). keep 1: the input, point for point.
+    The weapon's aim target under Aim target."""
+    if keep == 1.0:
+        return np.array(pts)
+    pts = np.asarray(pts, float)
+    n = pts.shape[0] - 1
+    per = (pts[n] - pts[0]) / float(n)
+    dev = np.array([pts[f] - per * f for f in range(n + 1)])
+    mean = dev[:n].mean(axis=0)
+    return np.array([mean + (dev[f] - mean) * keep + per * f for f in range(n + 1)])
 
 
 def aim_swing(a, b):
@@ -3044,6 +3070,7 @@ class Walk(object):
                              or abs(ks[s]["elbow_overlap"]) >= OVERLAP_QUIET
                              or abs(ks[s]["hand_overlap"]) >= OVERLAP_QUIET
                              or s in self.rigid_sides(ctx)     # the Weapon tab's Hold moves the arms
+                             or float(ks[s]["weapon_aim"]) < 1.0 - AIM_QUIET      # ...and so does its Aim target
                              for s in SIDES)
             swinging = (moved_arms and bool(self._arm_chains())) or self._bodies_on(k)
             still = list(bases)
@@ -4402,6 +4429,8 @@ class Walk(object):
         overlap reads the elbow's bend PLANE at L + e (per arm, and free under a grip - it moves no hand).
         The Weapon tab (rebuilt 2026-11-05) then holds the hand RIGID on the chest and reads that chest
         `weapon_overlap` frames late (_weapon_hold): the animator's own recipe, for every additive pose.
+        Aim target (2026-11-10) then swings the blade about its grip onto a target keeping only a share of
+        its own motion (_weapon_aim): the weapon's weight.
         Returns what it did (info["arms"]["overlap"])."""
         ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
         chains = self._arm_chains()
@@ -4437,13 +4466,30 @@ class Walk(object):
             others = [s for s in sorted(holds) if s != carrier]
             holds = {carrier: mean}
             followers = {carrier: [carrier] + others}
+        #  Aim target (2026-11-10): a side whose blade aims at a target keeping less than all of its own
+        #  motion - {carrier: (the share kept, the hands that swing with it)}. The tab's rule: only where
+        #  the additive pose holds that arm; it needs no Hold. Hands holding one thing swing as one (the
+        #  two sides' mean, the carrier's lever), a free hand on its own
+        aims = {}
+        if pose is not None and ctx["alpha"] > 0.0:
+            keeps = dict((side, min(max(float(ks[side]["weapon_aim"]), 0.0), 1.0))
+                         for side in chains if side not in out_of_pose)
+            if grip and len(keeps) == 2:
+                carrier = list(held)[0] if len(held) == 1 else "r"
+                mean = sum(keeps.values()) / 2.0
+                if mean < 1.0 - AIM_QUIET:
+                    aims[carrier] = (mean, [carrier] + [s for s in sorted(keeps) if s != carrier])
+            else:
+                aims = dict((side, (keep, [side])) for side, keep in keeps.items() if keep < 1.0 - AIM_QUIET)
         biggest = lambda table: max([abs(v) for v in table.values()] or [0.0])
         out = {"frames": biggest(lags), "elbow": biggest(elbows), "hand": biggest(turns), "grip": grip,
                "hold": sorted(set(s for row in followers.values() for s in row)),
                "weapon": biggest(holds), "hold_cm": 0.0,
+               "aim": {"asked": sorted(aims), "keep": {}, "lever": {}, "deg": 0.0, "cm": 0.0},
                "held": sorted(held),          # the sides the SCENE gives a weapon (the line's own wording)
                "out_of_pose": sorted(s for s in out_of_pose if s in chains)}
-        if not chains or (max(out["frames"], out["elbow"], out["hand"]) < OVERLAP_QUIET and not holds):
+        if not chains or (max(out["frames"], out["elbow"], out["hand"]) < OVERLAP_QUIET and not holds
+                          and not aims):
             out["frames"] = out["elbow"] = out["hand"] = out["weapon"] = 0.0
             out["hold"] = []
             return out
@@ -4470,6 +4516,9 @@ class Walk(object):
                     hands[side] = wanted(kin[chain[-1]], lags[side], turns[side])
         if holds:
             out["hold_cm"] = self._weapon_hold(kin, n, chains, hands, holds, followers, ctx["alpha"])
+        if aims:                       # after Hold / Overlap: the blade aims from where they left the hand
+            levers = self._aim_levers(kin, chains, held, sorted(aims), bool(ctx.get("weapons")))
+            out["aim"].update(self._weapon_aim(kin, n, chains, hands, aims, levers, ctx["alpha"]))
         hints = {}
         for side, chain in chains.items():
             if side in hands and abs(elbows[side]) >= OVERLAP_QUIET:
@@ -4539,6 +4588,70 @@ class Walk(object):
                     hands[s][f] = hands[s][f] @ T
                 moved = max(moved, float(np.linalg.norm(full[3, :3] - H[f, 3, :3])))
         return moved
+
+    def _aim_levers(self, kin, chains, held, sides, scene_has_weapons):
+        """{side: (grip, aim point, "weapon" | "bone")} - the blade each of `sides` aims with, as two points
+        in that hand's own frame: the weapon the SCENE holds in the hand (its grip, and its tip pushed
+        AIM_REACH past - where Aim Mode stands its target); and, where the scene holds no weapon at all, the
+        right hand's weapon BONE stands for one - the grip on the bone, AIM_BLADE along its +Z (UE's socket,
+        which every catalog weapon lies along at zero grip), read where the frames hold the bone in the hand
+        (a pose's own grip is in it). The tab has worked with no weapon in the scene since 2026-11-05, and
+        the animator's own road puts the sword on the rig after the walk is built. A side with neither has
+        no lever and is left out."""
+        out = {}
+        for side in sides:
+            if side in held:
+                grip, tip = (np.asarray(held[side][key], float) for key in ("grip", "tip"))
+                if float(np.linalg.norm(tip - grip)) > 1e-6:
+                    out[side] = (grip, grip + (tip - grip) * AIM_REACH, "weapon")
+        if not scene_has_weapons and "r" in sides and "r" not in out:
+            hand = chains["r"][-1]
+            for h, (body, _rel) in sorted(self.follows.items()):
+                if self.names[h] == "weapon_r" and body == hand:
+                    rel = kin[h, 0] @ np.linalg.inv(kin[hand, 0])
+                    grip = np.array(rel[3, :3], float)
+                    out["r"] = (grip, grip + _unit(rel[2, :3]) * AIM_BLADE * AIM_REACH, "bone")
+                    break
+        return out
+
+    def _weapon_aim(self, kin, n, chains, hands, aims, levers, alpha):
+        """Aim target (2026-11-10, in place on `hands`): the animator's example - the weapon in Aim Mode, its
+        aim target's keys thinned out «для придания веса оружию». The grip plays the whole animation and the
+        blade points at a target that keeps only a share of its own motion:
+
+            G(f) = grip . H(f)       T(f) = aim . H(f)        the blade's line, where the hand has it
+            T'   = damped(T, keep)                             the target, pulled toward its mean
+            H'(f) = H(f) . swung_about(G(f), aim_swing(T - G, T' - G))
+
+        A swing about the grip, so the grip does not move; the minimal one, so the roll about the blade
+        stays the animation's (the example's up target keeps every key). `keep` 1 is the whole animation,
+        0 a target standing still in the frame the cycle travels in; the pose's share blends it in. The
+        hands of one `aims` row swing together, so a two-handed hold is kept to machine precision, and
+        _arm_to_hand rebuilds each arm. Returns {"keep": {side: the share kept}, "lever": {side: kind},
+        "deg": the most a blade swung, "cm": the most its target moved}."""
+        out = {"keep": {}, "lever": {}, "deg": 0.0, "cm": 0.0}
+        for side, (keep, riders) in sorted(aims.items()):
+            if side not in levers:
+                continue
+            grip, aim, kind = levers[side]
+            for s in riders:
+                if s not in hands:             # a hand nothing has moved yet joins at the frames' own
+                    hands[s] = np.array(kin[chains[s][-1]])
+            H = np.array(hands[side], float)
+            G = np.array([grip @ H[f, :3, :3] + H[f, 3, :3] for f in range(n + 1)])
+            T = np.array([aim @ H[f, :3, :3] + H[f, 3, :3] for f in range(n + 1)])
+            share = 1.0 - alpha * (1.0 - keep)
+            want = damped_points(T, share)
+            for f in range(n + 1):
+                a, b = T[f] - G[f], want[f] - G[f]
+                M = swung_about(G[f], aim_swing(a, b))
+                for s in riders:
+                    hands[s][f] = hands[s][f] @ M
+                cos = float(np.dot(_unit(a), _unit(b)))
+                out["deg"] = max(out["deg"], math.degrees(math.acos(min(max(cos, -1.0), 1.0))))
+                out["cm"] = max(out["cm"], float(np.linalg.norm(want[f] - T[f])))
+            out["keep"][side], out["lever"][side] = share, kind
+        return out
 
     def _grip_motion(self, kin, n, chains, w0, zeta, S, hold_side="r"):
         """Two hands holding one thing: ONE hand carries it - its world turn and place trail their target
@@ -4697,6 +4810,19 @@ def share_line(info):
     return (" | " + ", ".join(out) + " of the cycle") if out else ""
 
 
+def aim_line(info):
+    """What Aim target did, for a status line ("" at its own 1): the share of its motion the blade's target
+    keeps and the most the blade swung to it, or why a dialled knob did nothing."""
+    aim = ((info.get("arms") or {}).get("overlap") or {}).get("aim") or {}
+    if aim.get("keep"):
+        keep = min(aim["keep"].values())
+        what = "a static target" if keep < 0.005 else "a target keeping %.0f %% of its motion" % (100.0 * keep)
+        return " | the blade aims at %s (swung up to %.0f deg)" % (what, aim.get("deg", 0.0))
+    if aim.get("asked"):
+        return " | no weapon in the hand and no weapon bone: Aim target does nothing"
+    return ""
+
+
 def describe(result):
     info = result.info
     text = "%d frames, stride %.1f cm, %.2f m/s" % (info["frames"], info["stride_cm"], info["speed"])
@@ -4745,7 +4871,7 @@ def describe(result):
                                      "the %s hand rides" % {"l": "left", "r": "right"}[swung["hold"][0]])
         if swung.get("weapon"):
             text += ", %.1f fr late (moved %.1f cm)" % (swung["weapon"], swung["hold_cm"])
-    return text + share_line(info) + placement_line(info) + balance_line(info)
+    return text + aim_line(info) + share_line(info) + placement_line(info) + balance_line(info)
 
 
 def placement_line(info):

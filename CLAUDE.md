@@ -18249,3 +18249,60 @@ after edits. **Live on 7003** (the engine loaded beside the installed build, the
 key on FKWrist_R plus a full redraw **81 ms** (was 1.3 s), the 62 changed frames in 22 slices <= 41 ms;
 Ctrl+Z recomputed in 23 slices <= 61 ms; the trail on the rig to 0.0 cm after the edit and after the undo.
 Not proven: a real mouse drag (the attribute callbacks and the mouse-down wait were driven by script).
+
+## Walk Builder: Aim target - the weapon's tip keeps less of the animation (2026-11-10)
+
+The animator, with an example on port 7005: «Здесь я сделал aim mode для нашего оружия и сгладил анимацию
+аим таргета, сделал я это для придания веса оружию. Давай мы повторим тот же эффект в нашем walk builder во
+вкладке weapon. Сделай ручку которая будет имитировать этот эффект 1 - вся анимация 0 - аим таргет полностью
+статичен». Spec `docs/superpowers/specs/2026-11-10-walk-weapon-aim-target-design.md`.
+
+**The example, read only** (its tracks kept as `docs/superpowers/plans/walkparam/weapon_aim_example.json.gz`):
+`Manny_Rig`, a run in place, 0..76, four strides of 19 frames. The Long Sword is out of the hands
+(Connections' World, both IK hands on their proxies), its translate keyed on every frame, its rotate Aim
+Mode's constraint. **The up keeps all 77 keys; the target keeps 5** (0, 20, 40, 60, 76): the animator deleted
+the keys between. The FK arm controls still play the take, so the target's track from before is rebuilt (the
+FK wrist times one constant, on the kept keys to 0.0001 cm): it swung 67 cm across the body, **30 cm of
+amplitude at the stride's own frequency**; after, 1.1 cm there and a slow 43 cm drift - which is what a key
+every 20 frames reads off a 19-frame stride. So the effect: **the grip plays the whole animation and the blade
+points at a target that plays less of it.**
+
+- **`Aim target`** (the Weapon tab, after Overlap; `gait` param `weapon_aim`, sided, "added", 0..1, default
+  1; engine knob `weapon_aim`): the share of its own motion the blade's target keeps about its mean -
+  `model.damped_points(pts, keep)`, the linear travel out and back as every overlap of the tab reads a cycle.
+  **1 is the walk matrix for matrix, 0 a target standing still in the frame the cycle travels in.** An
+  amplitude, not a low-pass: the animator's own words define the two ends, and on a cycle nearly all of the
+  target's motion is at the stride's frequency, so a filter below it is the same static target.
+- **`model._weapon_aim`**, one more step inside `_arm_overlap`, after Hold / Overlap and before
+  `_arm_to_hand`: per frame the grip `G = grip . H` and the target `T = aim . H` (the aim point `AIM_REACH`
+  1.15 x the blade past the grip - Aim Mode's own distance), `T' = damped(T, 1 - share (1 - keep))`, and the
+  hand swung about the grip by the minimal turn taking `T - G` onto `T' - G` (`aim_swing`, `swung_about`): the
+  grip does not move, the roll about the blade stays the animation's (the example's up keeps every key).
+  Hands holding one thing (a pose's grip) take the carrier's swing together - the hold kept to 4e-14 - at the
+  two sides' mean; a free hand on its own.
+- **The lever** (`_aim_levers`): the weapon the scene holds in that hand (`scene.weapons_in_hands`); with **no
+  weapon in the scene at all** the right hand's `weapon_r` stands for one - the grip on the bone, `AIM_BLADE`
+  100 cm along its +Z (the tab works with no weapon since 2026-11-05, and the example's own road puts the sword
+  on the rig after the walk is built). Neither: «no weapon in the hand and no weapon bone: Aim target does
+  nothing».
+- **Where**: the tab's rule - only where the additive pose holds that arm (the share blends it in, an arm out
+  of the pose is left alone). It needs no Hold. Balance counts it among the arm moves (`moved_arms`). The
+  line (`model.aim_line`, in `describe` and the Pick line): «the blade aims at a target keeping 30 % of its
+  motion (swung up to 9 deg)» / «a static target».
+- **An aim's promise is the blade's LINE through the target, not the blade's point on it**: the grip is free
+  to come nearer the target or go further, so a gate measures the target's distance from the ray (the tests'
+  and the verify's `miss`), never "the aim point is static" - my first tests asked that and were wrong.
+- Idle Builder's own Weapon controls and the Gait Builder fork are untouched.
+
+Proof: `docs/superpowers/plans/walkparam/verify_walk_weapon_aim.py` - **0 of 27 gates, mayapy standalone**, three
+phases. `example`: the knob's arithmetic on the animator's own track - the blade's swing off its mean 17.1 deg
+as the animation was, 15.5 in their example, 11.3 / 8.4 / 5.7 at Aim target 0.5 / 0.25 / 0. `model`, their own
+cycle under `LongSword_Idle_3P` with a Long Sword's blade: 1 the identity; at 0 and 0.5 the blade's line passes
+5e-14 cm from a target keeping that share (the walk's own blade misses by 20.8 / 10.4 cm), the grip moves
+6e-14 cm, the blade swings 9.6 -> 2.6 deg, the hold 4e-14, the bones 3e-14, the loop and the body exact, no
+Hold needed, Balance carrying the hips 0.009 cm differently, the weapon-bone lever 2e-13. `keys`, the whole road
+through `scene.apply` onto a Manny UE5 skeleton with a Long Sword in its hand: the sword's own line read back
+off the scene passes 0.0000 cm from the static target and from the half one, its grip unmoved, 9.9 -> 2.7 deg.
+`tests/test_walk_weapon_aim.py` (31; 11 fail with the pass neutered); 13766 in the suite, the one
+failure the known `test_chat_deploy.Keys`. **Not seen in a GUI Maya**: the slider and
+a real press are the animator's, after Check update; their scene on 7005 was only read.
