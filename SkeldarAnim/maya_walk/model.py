@@ -154,6 +154,13 @@ KNOBS = (
     # its own motion the target keeps about its mean (_weapon_aim). It needs no Hold; with no weapon in
     # the scene the right hand's weapon bone stands for the blade.
     ("weapon_aim", 1.0, 0.0, 1.0),
+    # Shoulder (2026-11-10, «доводчик плеча которые будет подкручивать плече что бы мы избавились от
+    # перерастяжения»): the share of the arm's REACH changes the clavicle takes. The hand the tab moves
+    # (Hold's chest, late and damped; the aim) comes nearer the shoulder and goes further from it, and the
+    # elbow alone paid for that - it opened to 0.94 of the arm on the animator's cycle. The clavicle turns
+    # about its own pivot so the shoulder follows the hand: 0 nothing (matrix for matrix), 1 the shoulder
+    # takes all of it and the elbow holds its mean bend (_shoulder_assist).
+    ("weapon_shoulder", 0.0, 0.0, 1.0),
     ("torso_lag", 0.0, -10.0, 15.0),
     ("head_lag", 0.0, -10.0, 15.0),
     # The bob's timing: its regular part later (frames of the new cycle: the low point after the contact moves
@@ -206,7 +213,8 @@ SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "fo
          "arms", "hands", "elbow", "arm_drag", "arm_bounce", "arm_fwd_add", "arm_out_add", "elbow_add",
          "elbow_swing_add", "shoulder_add", "toe_add", "knee_bend", "passing_knee", "knee_soft", "g_arm", "g_elbow",
          "arm_swing_add", "duty", "push", "heel_strike", "slap", "arm_lag", "elbow_lag", "hand_lag",
-         "arm_overlap", "elbow_overlap", "hand_overlap", "weapon_overlap", "weapon_hold", "weapon_inherit", "weapon_aim", "spring_comp")
+         "arm_overlap", "elbow_overlap", "hand_overlap", "weapon_overlap", "weapon_hold", "weapon_inherit", "weapon_aim", "weapon_shoulder",
+         "spring_comp")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
@@ -281,6 +289,10 @@ AIM_REACH = 1.15          # the aim target stands this far past the blade's tip,
 AIM_BLADE = 100.0         # cm: the blade a weapon BONE stands for where the scene holds no weapon (along its +Z)
 AIM_QUIET = 1e-9          # an Aim target this near 1 keeps the whole animation: nothing is touched
 INHERIT_QUIET = 1e-9      # an Inherit this near 1 rides the chest whole: the chest's cycle is read as it is
+# Shoulder: the clavicle follows the hand (_shoulder_assist)
+SHOULDER_QUIET = 1e-9     # a Shoulder under this touches nothing
+SHOULDER_MAX_DEG = 35.0   # the clavicle turns no further than this off the frames' own...
+SHOULDER_FREE = 0.6       # ...freely up to this share of it, then easing in with no corner (soft_reach)
 # the trunk and the head on springs (docs/superpowers/specs/2026-10-14-walk-sprint-legs-and-body-design.md)
 BODY_INERTIA = 1.0        # x the pivot's acceleration felt by the trunk on its lever
 HEAD_INERTIA = 0.3        # ...and by the head on the neck: a head is held - at 1 a sprint's steps bobbed it 12 deg off
@@ -3078,6 +3090,7 @@ class Walk(object):
                              or abs(ks[s]["hand_overlap"]) >= OVERLAP_QUIET
                              or s in self.rigid_sides(ctx)     # the Weapon tab's Hold moves the arms
                              or float(ks[s]["weapon_aim"]) < 1.0 - AIM_QUIET      # ...and so does its Aim target
+                             or float(ks[s]["weapon_shoulder"]) > SHOULDER_QUIET  # ...and its Shoulder
                              for s in SIDES)
             swinging = (moved_arms and bool(self._arm_chains())) or self._bodies_on(k)
             still = list(bases)
@@ -4491,8 +4504,16 @@ class Walk(object):
                     aims[carrier] = (mean, [carrier] + [s for s in sorted(keeps) if s != carrier])
             else:
                 aims = dict((side, (keep, [side])) for side, keep in keeps.items() if keep < 1.0 - AIM_QUIET)
+        #  Shoulder (2026-11-10): the share of the arm's reach changes each clavicle takes - the tab's rule
+        #  again (where the additive pose holds that arm, its share blending it in), and it needs no Hold
+        shoulders = {}
+        if pose is not None and ctx["alpha"] > 0.0:
+            shoulders = dict((side, ctx["alpha"] * min(max(float(ks[side]["weapon_shoulder"]), 0.0), 1.0))
+                             for side in chains if side not in out_of_pose)
+            shoulders = dict((side, v) for side, v in shoulders.items() if v > SHOULDER_QUIET)
         biggest = lambda table: max([abs(v) for v in table.values()] or [0.0])
         out = {"frames": biggest(lags), "elbow": biggest(elbows), "hand": biggest(turns), "grip": grip,
+               "shoulder": {"asked": sorted(shoulders), "share": {}, "deg": 0.0, "reach": {}},
                "hold": sorted(set(s for row in followers.values() for s in row)),
                "weapon": biggest(holds), "hold_cm": 0.0,
                "inherit": min(list(inherits.values()) or [1.0]),     # the least share a held hand takes
@@ -4500,7 +4521,7 @@ class Walk(object):
                "held": sorted(held),          # the sides the SCENE gives a weapon (the line's own wording)
                "out_of_pose": sorted(s for s in out_of_pose if s in chains)}
         if not chains or (max(out["frames"], out["elbow"], out["hand"]) < OVERLAP_QUIET and not holds
-                          and not aims):
+                          and not aims and not shoulders):
             out["frames"] = out["elbow"] = out["hand"] = out["weapon"] = 0.0
             out["hold"] = []
             return out
@@ -4536,8 +4557,72 @@ class Walk(object):
             if side in hands and abs(elbows[side]) >= OVERLAP_QUIET:
                 hints[side] = late_bend(kin[chain[0]], kin[chain[1]], kin[chain[2]],
                                         lags[side] + elbows[side])
-        self._reattach(worlds, kin, self._arm_to_hand(kin, n, chains, hands, hints), only)
+        base, turned = kin, {}
+        if shoulders:                  # last: the clavicle follows the hand everything above has placed
+            base, turned, did = self._shoulder_assist(kin, n, chains, hands, shoulders)
+            out["shoulder"].update(did)
+        new = self._arm_to_hand(base, n, chains, hands, hints)
+        new.update(turned)
+        self._reattach(worlds, kin, new, only)
         return out
+
+    def _shoulder_assist(self, kin, n, chains, hands, shares):
+        """Shoulder (2026-11-10): the clavicle turned about its own pivot so the SHOULDER follows the hand,
+        and the elbow stops paying alone for every change of the arm's reach. Per frame, with d the
+        shoulder-to-hand distance the frames' shoulder leaves the wanted hand at and `ref` its mean over
+        the cycle:
+
+            d' = ref + (d - ref) (1 - share)         the reach the arm is left with
+
+        and the clavicle swings - the least turn, in the plane of its own bone and the hand - until the
+        shoulder stands d' from the hand (the triangle pivot / shoulder / hand, its two other sides fixed),
+        no further than SHOULDER_MAX_DEG off the frames' own, eased into it. Both ways about the mean, so
+        there is no corner where it engages and the clavicle's own mean stays the frames'. At share 1 the
+        arm keeps one reach and the elbow one bend; 0 is never called.
+        Returns (a copy of `kin` with each turned clavicle and its arm carried rigidly - what _arm_to_hand
+        rebuilds the arm from -, {clavicle: (n+1, 4, 4)}, {"share", "deg", "reach": {side: (reach before,
+        after) as the most of the arm's length}}). A hand nothing has moved joins `hands` at the frames'."""
+        base = kin.copy()
+        turned, did = {}, {"share": {}, "deg": 0.0, "reach": {}}
+        limit = math.radians(SHOULDER_MAX_DEG)
+        for side, share in sorted(shares.items()):
+            up_j, low_j, hand_j = chains[side]
+            clav = self.parents[up_j]
+            if clav < 0 or self.kind[clav] != "arm":          # no clavicle: the arm hangs off the chest
+                continue
+            if side not in hands:
+                hands[side] = np.array(kin[hand_j])
+            want = hands[side]
+            arm = sum(float(np.linalg.norm(self.lt[j].mean(axis=0))) for j in (low_j, hand_j))
+            P, S, H = kin[clav, :, 3, :3], kin[up_j, :, 3, :3], want[:, 3, :3]
+            d = np.linalg.norm(H - S, axis=1)
+            ref = float(d[:n].mean())
+            after = np.array(d)
+            for f in range(n + 1):
+                c, h = S[f] - P[f], H[f] - P[f]
+                r, D = float(np.linalg.norm(c)), float(np.linalg.norm(h))
+                if r < 1e-6 or D < 1e-6:
+                    continue
+                e = h / D
+                p = c - np.dot(c, e) * e
+                if float(np.linalg.norm(p)) < 1e-6 * r:       # the clavicle points at the hand: no plane
+                    continue
+                p = _unit(p)
+                phi = math.acos(min(max(float(np.dot(c, e)) / r, -1.0), 1.0))
+                wanted = ref + (d[f] - ref) * (1.0 - share)
+                phi2 = math.acos(min(max((r * r + D * D - wanted * wanted) / (2.0 * r * D), -1.0), 1.0))
+                theta = phi - phi2                             # toward the hand: positive
+                theta = math.copysign(soft_reach(abs(theta), SHOULDER_FREE * limit, limit), theta)
+                c2 = r * (math.cos(phi - theta) * e + math.sin(phi - theta) * p)
+                M = swung_about(P[f], aim_swing(c, c2))
+                for j in (clav, up_j, low_j, hand_j):
+                    base[j, f] = kin[j, f] @ M
+                after[f] = float(np.linalg.norm(H[f] - base[up_j, f, 3, :3]))
+                did["deg"] = max(did["deg"], math.degrees(abs(theta)))
+            turned[clav] = base[clav]
+            did["share"][side] = share
+            did["reach"][side] = (float(d.max()) / arm, float(after.max()) / arm) if arm > 1e-9 else (0.0, 0.0)
+        return base, turned, did
 
     def steady_chest(self, mats, rotation, position):
         """A cycle (n+1, 4, 4) with its own animation scaled: its turn slerped from the cycle's MEAN heading
@@ -4860,6 +4945,19 @@ def aim_line(info):
     return ""
 
 
+def shoulder_line(info):
+    """What Shoulder did, for a status line ("" at its own 0): the share of the arm's reach the clavicle
+    takes, how far it turned, and the most the arm is stretched before and after."""
+    did = ((info.get("arms") or {}).get("overlap") or {}).get("shoulder") or {}
+    if not did.get("share"):
+        return ""
+    side = max(did["reach"], key=lambda s: did["reach"][s][0])
+    before, after = did["reach"][side]
+    return (" | the shoulder takes %.0f %% of the arm's reach (the clavicle turns up to %.0f deg, the arm "
+            "stretched %.0f -> %.0f %%)" % (100.0 * max(did["share"].values()), did["deg"], 100.0 * before,
+                                            100.0 * after))
+
+
 def describe(result):
     info = result.info
     text = "%d frames, stride %.1f cm, %.2f m/s" % (info["frames"], info["stride_cm"], info["speed"])
@@ -4902,7 +5000,7 @@ def describe(result):
         text += " | %s %.1f frames behind the body%s" % (
             "the held weapon trails" if a["grip"] else "the arms trail", a["drag"],
             ", bouncing" if a["bounce"] > 0.05 else "")
-    return text + hold_line(info) + aim_line(info) + share_line(info) + placement_line(info) + balance_line(info)
+    return text + hold_line(info) + aim_line(info) + shoulder_line(info) + share_line(info) + placement_line(info) + balance_line(info)
 
 
 def placement_line(info):

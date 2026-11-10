@@ -278,6 +278,14 @@ PARAMS = (
               "it. The hands turn with the weapon and two hands keep their grip. It acts where the "
               "additive pose holds that arm and needs no Hold; with no weapon in the scene the right "
               "hand's weapon bone stands for a 1 m blade"),
+    # Shoulder (2026-11-10): «доводчик плеча которые будет подкручивать плече что бы мы избавились от
+    # перерастяжения»
+    Param("weapon_shoulder", WEAPON, "Shoulder", "", "added", sided=True, rule=_fixed(0.0, 1.0), default=0.0,
+          tip="The shoulder follows the hand, so the elbow is not overstretched: the clavicle turns toward "
+              "the hand as it goes away from the shoulder and back as it comes near, taking this share of "
+              "every change of the arm's reach. 0 - nothing, the elbow pays for all of it; 1 - the shoulder "
+              "takes all of it and the elbow keeps its mean bend. The clavicle turns no further than 35 deg. "
+              "It acts where the additive pose holds that arm and needs no Hold"),
     # the physics
     Param("whip", PHYSICS, "Whip", "", "added", rule=_fixed(0.0, 1.0), default=0.3,
           tip="The arms, the trunk and the head overshoot as they catch up with the body (springs whose stride "
@@ -905,6 +913,7 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
         e["weapon_overlap" + sfx] = sv("weapon_overlap") * fps / 1000.0            # ms -> frames
         e["weapon_inherit" + sfx] = min(max(sv("weapon_inherit"), 0.0), 1.0)   # the chest's share (own 1)
         e["weapon_aim" + sfx] = min(max(sv("weapon_aim"), 0.0), 1.0)    # the share its target keeps (own 1)
+        e["weapon_shoulder" + sfx] = min(max(sv("weapon_shoulder"), 0.0), 1.0)   # the clavicle's share (own 0)
         e["arm_fwd_add" + sfx] = sv("arms_forward") - so("arms_forward")
         e["arm_out_add" + sfx] = sv("arm_out") - so("arm_out")
         e["elbow_add" + sfx] = _solved_elbow(walk, s, sv("elbow"), sv("elbow") - so("elbow"))

@@ -18336,3 +18336,31 @@ through `scene.apply` onto a Manny UE5 skeleton with a Long Sword in its hand: *
 turns 0.0000 deg at 0** (8.59 cm / 11.52 deg at 1), 4.28 cm / 5.76 deg at a half, and back at 1 it is where it
 was to 2e-14. `tests/test_walk_weapon_inherit.py` (23, all red before the knob); `verify_walk_weapon_aim.py`
 0 of 27 again. **Not seen in a GUI Maya.**
+
+**…and Shoulder: the clavicle follows the hand, so the elbow is not overstretched** (the same day, a walker on
+port 7005: «перерастягивается локоть при текущих настройках. Нужно сделать доводчик плеча которые будет
+подкручивать плече что бы мы избавились от перерастяжения. Сделай пока ручку в weapon»). Spec
+`docs/superpowers/specs/2026-11-10-walk-weapon-shoulder-design.md`.
+- **Read on their scene first** (read only) and rebuilt headless from the walker's memo to the digit: their own
+  cycle `own:c1d1b1c8e510aa98` under `LongSword_Idle_3P`, Hold on, Inherit 0.67, Overlap 43.1 ms, Aim target 0.3 -
+  the LEFT arm's shoulder-to-hand distance runs **0.74 .. 0.94 of the arm** four times a cycle (the elbow's bend
+  85 -> 39 deg), the right 0.60 .. 0.77. No one knob does it (each back at its default alone: 0.88-0.95): every
+  Weapon knob moves the hand against the chest and the elbow alone paid for every change of the arm's reach.
+- **`Shoulder`** (the Weapon tab, last; `gait` param `weapon_shoulder`, sided, "added", 0..1, **default 0**;
+  engine knob `weapon_shoulder`): the share of those changes the clavicle takes. `model._shoulder_assist`, the
+  last step of `_arm_overlap` before `_arm_to_hand`: with `d` the frames' shoulder-to-hand distance and `ref`
+  its mean over the cycle, `d' = ref + (d - ref)(1 - share)`, and the clavicle swings about its own pivot (the
+  least turn, in the plane of its bone and the hand; the triangle pivot / shoulder / hand) until the shoulder
+  stands `d'` from the hand, no further than `SHOULDER_MAX_DEG` 35 (free to 0.6 of it, then `soft_reach`). The
+  arm is carried rigidly with it in a copy of `kin` and rebuilt to the SAME hand. **0 is the walk matrix for
+  matrix, 1 leaves the arm one reach and the elbow one bend.** Both ways about the mean, so no corner where it
+  engages. The tab's rule (where the additive pose holds that arm, its share blending it in), no Hold needed;
+  Balance counts it (`moved_arms`); the line `model.shoulder_line`.
+- On their walker, off the scene's keys: left reach 0.731..0.940 -> **0.813..0.813** at 1 (the elbow 40..86 ->
+  71 deg), the clavicle up to 22.6 deg (the shoulder 7.0 cm); right 0.596..0.777 -> 0.681, 17.8 deg; the hands,
+  the sword and the body where they were; at 0.5 exactly half of the change.
+- Proof: `docs/superpowers/plans/walkparam/verify_walk_weapon_shoulder.py` - **0 of 15 gates, mayapy
+  standalone**, their cycle, card and card settings through `scene.apply` onto a Manny UE5 skeleton with a Long
+  Sword, read back off the joints (gate 1: Shoulder 0 reproduces their scene's 0.94). `tests/test_walk_weapon_shoulder.py`
+  (24; the fixture's Overlap is 1 frame so the turn stays under the free 21 deg - at 3 frames the limit eases in
+  and "one reach" reads 0.24 cm). **Not seen in a GUI Maya**; their scene on 7005 was only read.

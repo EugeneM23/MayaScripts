@@ -174,7 +174,7 @@ class GaitTests(unittest.TestCase):
 
     def test_the_weapon_tab_s_order(self):
         names = [p.name for p in gait.PARAMS if p.group == gait.WEAPON]
-        self.assertEqual(names, ["weapon_hold", "weapon_inherit", "weapon_overlap", "weapon_aim"])
+        self.assertEqual(names, ["weapon_hold", "weapon_inherit", "weapon_overlap", "weapon_aim", "weapon_shoulder"])
 
     def test_its_own_value_is_one_and_its_range_zero_to_one(self):
         self.assertEqual(gait.own_value(self.own, "weapon_inherit"), 1.0)
