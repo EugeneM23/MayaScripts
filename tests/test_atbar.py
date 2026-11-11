@@ -379,7 +379,9 @@ class RelationshipInRange(unittest.TestCase):
         fake = mock.MagicMock()
         fake.objExists.return_value = True
         with mock.patch.object(core, "cmds", fake), \
-                mock.patch.object(core, "_clip", {"rel": ("anchor", [("follower", [1.0] * 16, [0, 0, 0])])}), \
+                mock.patch.object(core, "clip_items", return_value={
+                    "anchor": "anchor", "items": [["follower", [1.0] * 16, [0, 0, 0]]], "namespaces": [""]}), \
+                mock.patch.object(core, "_find", return_value={"anchor": "anchor", "follower": "follower"}), \
                 mock.patch.object(core, "highlighted_range", return_value=span), \
                 mock.patch.object(core, "key_times", return_value=keys), \
                 mock.patch.object(core, "run_at_times", side_effect=lambda times, fn: ran.extend(times)), \
@@ -541,6 +543,57 @@ class ClipboardOnDisk(unittest.TestCase):
         core.store_clip("pose", [["FKWrist_L", {"tx": 1.0}], ["FKElbow_L", {"tx": 2.0}]], self.path)
         pairs = core._match_clip(core.clip_items("pose", self.path), ["tab_b:Manny_Rig1:FKElbow_L"])
         self.assertEqual(pairs, [("tab_b:Manny_Rig1:FKElbow_L", {"tx": 2.0})])
+
+
+class XformClipboardAcrossScenes(unittest.TestCase):
+    """2026-11-11, «копі-паст щоб можна було це робити між сценами»: World Space and Xform Relationship
+    paste in another scene or tab - found by name, the copied rig first, inside the open tab."""
+
+    FOUND = ["|tab_a:Manny_Rig:FKWrist_L", "|tab_b:Manny_Rig:FKWrist_L", "|tab_b:Manny_Rig1:FKWrist_L",
+             "|tab_b:Manny_Rig:Main", "|tab_b:Manny_Rig1:Main", "|tab_b:Sword:sword_ctrl"]
+
+    def test_the_namespaces_are_kept_relative_to_the_tab(self):
+        nodes = ["|tab_a:Manny_Rig:FKWrist_L", "|tab_a:Manny_Rig:Main", "|tab_a:Sword:sword_ctrl"]
+        self.assertEqual(core.relative_namespaces(nodes, "tab_a"), ["Manny_Rig", "Sword"])
+        self.assertEqual(core.relative_namespaces(["|Manny_Rig:Main"], ""), ["Manny_Rig"])
+
+    def test_another_tab_takes_the_same_rig_never_the_first_tab_s(self):
+        got = core.clip_targets(["FKWrist_L", "Main"], self.FOUND, namespaces=["Manny_Rig"], within="tab_b")
+        self.assertEqual(got, {"FKWrist_L": "|tab_b:Manny_Rig:FKWrist_L", "Main": "|tab_b:Manny_Rig:Main"})
+
+    def test_the_selection_s_rig_comes_first(self):
+        got = core.clip_targets(["FKWrist_L"], self.FOUND, sel=["|tab_b:Manny_Rig1:Main"],
+                                namespaces=["Manny_Rig"], within="tab_b")
+        self.assertEqual(got, {"FKWrist_L": "|tab_b:Manny_Rig1:FKWrist_L"})
+
+    def test_a_scene_without_tabs_finds_a_renamed_rig(self):
+        self.assertEqual(core.clip_targets(["FKWrist_L"], ["|Manny_Rig2:FKWrist_L"], namespaces=["Manny_Rig"]),
+                         {"FKWrist_L": "|Manny_Rig2:FKWrist_L"})
+
+    def test_a_renumbered_rig_wins_over_another_rig(self):
+        found = ["|Decoy:FKWrist_L", "|Manny_Rig1:FKWrist_L"]
+        self.assertEqual(core.clip_targets(["FKWrist_L"], found, namespaces=["Manny_Rig"]),
+                         {"FKWrist_L": "|Manny_Rig1:FKWrist_L"})
+
+    def test_world_space_goes_onto_a_matching_selection_else_the_found_controls(self):
+        items = [("FKWrist_L", "mA"), ("Main", "mB")]
+        found = {"FKWrist_L": "b:FKWrist_L", "Main": "b:Main"}
+        self.assertEqual(core.world_targets(items, [], found), [("b:FKWrist_L", "mA"), ("b:Main", "mB")])
+        self.assertEqual(core.world_targets(items, ["c:Main"], found), [("c:Main", "mB")])
+        self.assertEqual(core.world_targets([("FKWrist_L", "mA")], ["c:prop", "c:box"], found),
+                         [("c:prop", "mA"), ("c:box", "mA")])
+
+    def test_both_go_through_the_clipboard_file(self):
+        import tempfile
+        path = os.path.join(tempfile.mkdtemp(), core.CLIPBOARD_NAME)
+        self.addCleanup(core._clip.update, dict(core._clip))
+        world = {"items": [["FKWrist_L", [1.0] * 16]], "namespaces": ["Manny_Rig"]}
+        rel = {"anchor": "Main", "items": [["FKWrist_L", [1.0] * 16, [0.0, 1.0, 2.0]]], "namespaces": ["Manny_Rig"]}
+        core.store_clip("world", world, path)
+        core.store_clip("rel", rel, path)
+        core._clip.update(world=None, rel=None)
+        self.assertEqual(core.clip_items("world", path), world)
+        self.assertEqual(core.clip_items("rel", path), rel)
 
 
 class Smoothing(unittest.TestCase):

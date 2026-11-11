@@ -18492,3 +18492,18 @@ asked: like Snap weapon, «создавать голове аим и контр�
   key 0.00001 deg; the target moved 44.7 cm on the rig, Update, on the new point 0.00001 deg; Head aim 0.5 half way
   to 0.0000 deg; Head aim 0 the walk's head 20 deg off it; Remove gives every key back 0.0). **Not seen in a GUI
   Maya.** Not built: the turn spread over the neck, a lag on the gaze, a target carried by the chest.
+
+## AT bar: World Space and Xform Relationship paste in another scene (2026-11-11)
+
+The animator, a Maya on 7003: «Зроби у функцій АТ копі-паст щоб можна було це робити між сценами».
+Copy Pose / Copy Animation already went through `AT_clipboard.json` (2026-11-05); World Space and Xform
+Relationship still kept full node paths in memory, so in another file or scene tab nothing matched.
+- **Both go to the clipboard file** (`store_clip("world" | "rel", ...)`): each control by its name without
+  namespaces, plus the rigs it came from relative to the scene tab (`relative_namespaces`).
+- **A paste finds them again** (`clip_targets`, built on the selection sets' `resolve`): inside the open tab
+  only; the selection's rig first, then the copied rig, then a renumbered one (`Manny_Rig` -> `Manny_Rig1`,
+  `_ns_base`), then the rig holding most of them. World Space with a selection that matches the copy (by
+  name, by order, or one copied onto many) goes onto the selection as before (`world_targets`).
+- Proof: `tests/test_atbar.py` `XformClipboardAcrossScenes`, `tests/test_atbar_core.py` `Xform` (two new
+  cross-scene cases); mayapy standalone 4/4 (copy, `file -new`, paste onto `Manny_Rig1` beside a decoy rig,
+  rigid follow to 0.001, one undo). Not seen in a GUI Maya.

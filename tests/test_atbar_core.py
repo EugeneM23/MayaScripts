@@ -161,6 +161,8 @@ class FakeCmds(object):
             return [n for n in names if n in self.curves and self.curves[n]["type"] in kind]
         if kind == "transform" and args and isinstance(args[0], str):
             return [p for p in self.transforms if p.split("|")[-1] == args[0]]
+        if kind == "transform" and args and isinstance(args[0], list) and kw.get("recursive"):
+            return sorted(n for n in self.existing if n.split("|")[-1].split(":")[-1] in args[0])
         return self.ls_more(*args, **kw)
 
     def ls_more(self, *args, **kw):
@@ -1021,8 +1023,11 @@ class Xform(CoreTest):
         self.assertTrue(all(kw["matrix"] == translate(1, 2, 3) for _n, _t, kw in self.fake.xforms))
 
     def test_world_space_on_all_keys_is_set_and_keyed_at_each_key(self):
-        core._clip["world"] = [("a", translate(1, 2, 3))]
+        self.fake.selected = ["a"]
+        self.fake.values["a.worldMatrix[0]"] = translate(1, 2, 3)
         self.fake.existing.add("a")
+        core.copy_world_space()
+        self.fake.selected = []
         self.fake.add_curve("a.tx", [(4, 0), (8, 0)])
         core.paste_world_space(all_keys=True)
         self.assertEqual([t for _n, t, _kw in self.fake.xforms], [4.0, 8.0])
@@ -1060,10 +1065,37 @@ class Xform(CoreTest):
         self.fake.selected = ["one"]
         core.copy_relationship()
         core.paste_relationship()
-        core._clip["rel"] = ("gone", [])
+        core.store_clip("rel", {"anchor": "gone", "items": [["follower", [1.0] * 16, [0, 0, 0]]],
+                                "namespaces": [""]})
         core.paste_relationship()
         self.assertEqual(len(self.fake.warnings), 3)
-        self.assertIn("anchor no longer exists", self.fake.warnings[-1])
+        self.assertIn("anchor gone is not in this scene", self.fake.warnings[-1])
+
+    def test_world_space_pastes_in_another_scene_tab_on_the_same_rig(self):
+        self.fake.namespaceInfo = mock.MagicMock(return_value=":tab_a")
+        self.fake.selected = ["|tab_a:Manny_Rig:hand"]
+        self.fake.values["|tab_a:Manny_Rig:hand.worldMatrix[0]"] = translate(1, 2, 3)
+        core.copy_world_space()
+        core._clip["world"] = None
+        self.fake.namespaceInfo = mock.MagicMock(return_value=":tab_b")
+        self.fake.selected = []
+        self.fake.existing.update(("|tab_a:Manny_Rig:hand", "|tab_b:Manny_Rig:hand", "|tab_b:Manny_Rig1:hand"))
+        core.paste_world_space()
+        self.assertEqual([(n, kw["matrix"]) for n, _t, kw in self.fake.xforms],
+                         [("|tab_b:Manny_Rig:hand", translate(1, 2, 3))])
+
+    def test_a_relationship_pastes_in_another_scene_on_the_selected_rig(self):
+        self.fake.selected = ["|Manny_Rig:follower", "|Manny_Rig:anchor"]
+        self.fake.values.update({"|Manny_Rig:follower.worldMatrix[0]": translate(12, 1, 0),
+                                 "|Manny_Rig:anchor.worldMatrix[0]": translate(10, 0, 0),
+                                 "|Hero:anchor.worldMatrix[0]": rot_z(90, at=(20, 0, 0))})
+        core.copy_relationship()
+        core._clip["rel"] = None
+        self.fake.existing.update(("|Hero:follower", "|Hero:anchor", "|Other:follower", "|Other:anchor"))
+        self.fake.selected = ["|Hero:anchor"]
+        core.paste_relationship()
+        self.assertEqual(self.fake.xforms[-1][0], "|Hero:follower")
+        self.assertTrue(close(self.fake.xforms[-1][2]["matrix"][12:15], [19, 2, 0]))
 
 
 # ---------------------------------------------------------------- space switch

@@ -930,22 +930,75 @@ def align_objects():
         key_transform(n)
 
 
+# 2026-11-11 «копі-паст щоб можна було це робити між сценами»: World Space and Xform Relationship go to the
+# clipboard file too, by name without namespaces, with the rigs they came from relative to the scene tab; a
+# paste finds the same controls in whatever scene or tab is open - the selection's rig first.
+
+def tab_namespace():
+    current = cmds.namespaceInfo(currentNamespace=True) or ""
+    return current.strip(":")
+
+
+def relative_namespaces(nodes, within=""):
+    """The namespaces `nodes` live in, each once, relative to the scene tab's `within`. Pure."""
+    within = (within or "").strip(":")
+    out = []
+    for node in nodes:
+        ns = _namespace(node)
+        if within and (ns == within or ns.startswith(within + ":")):
+            ns = ns[len(within) + 1:]
+        if ns not in out:
+            out.append(ns)
+    return out
+
+
+def clip_targets(keys, found, sel=(), namespaces=(), within=""):
+    """{key: node} for the copied `keys` among `found` (every node named like one): the selection's rig
+    first, then the rigs the copy came from, inside the scene tab's `within`. Pure."""
+    within = (within or "").strip(":")
+    prefer = [_namespace(n) for n in sel]
+    prefer += [(within + ":" + ns if ns else within) if within else ns for ns in namespaces]
+    bases = set(_ns_base(ns) for ns in prefer)
+    prefer += sorted(ns for ns in set(_namespace(n) for n in found) if _ns_base(ns) in bases)
+    return {member_key(n): n for n in resolve(keys, found, prefer, within)}
+
+
+def _ns_base(ns):
+    """`tab_b:Manny_Rig` for `tab_b:Manny_Rig1`: a re-referenced rig's namespace without its number."""
+    return ns.rstrip("0123456789")
+
+
+def _find(keys, sel, namespaces):
+    found = cmds.ls(list(keys), recursive=True, long=True, type="transform") or []
+    return clip_targets(keys, found, sel, namespaces, tab_namespace())
+
+
 def copy_world_space():
     sel = selection()
     if not sel:
         return warn("select objects")
-    _clip["world"] = [(n, world_matrix(n)) for n in sel]
+    store_clip("world", {"items": [[strip_ns(n), list(world_matrix(n))] for n in sel],
+                         "namespaces": relative_namespaces(sel, tab_namespace())})
     message("world space copied: %d" % len(sel))
+
+
+def world_targets(items, sel, by_key):
+    """[(node, matrix)]: onto the selection when it matches the copy (by name, by order, or one copied
+    onto many), else onto the copied controls found in this scene (`by_key`). Pure."""
+    pairs = _match_clip(items, sel) if sel else []
+    return pairs or [(by_key[k], m) for k, m in items if k in by_key]
 
 
 @undoable
 def paste_world_space(all_keys=False):
-    if not _clip["world"]:
+    clip = clip_items("world")
+    if not clip or not clip.get("items"):
         return warn("copy world space first")
-    items = [(n, m) for n, m in _clip["world"] if cmds.objExists(n)]
+    copied = [(k, m) for k, m in clip["items"]]
     sel = selection()
-    if sel and len(items) == 1 and sel != [items[0][0]]:
-        items = [(n, items[0][1]) for n in sel]
+    items = world_targets(copied, sel, _find([k for k, _ in copied], sel, clip.get("namespaces") or []))
+    if not items:
+        return warn("none of the %d copied objects is in this scene - select where to paste" % len(copied))
     if not all_keys:
         for n, m in items:
             set_world_matrix(n, m)
@@ -969,8 +1022,9 @@ def copy_relationship():
     items = []
     for n in sel[:-1]:
         m = world_matrix(n)
-        items.append((n, mmul(m, inv), [m[12 + i] - a[12 + i] for i in range(3)]))
-    _clip["rel"] = (anchor, items)
+        items.append([strip_ns(n), mmul(m, inv), [m[12 + i] - a[12 + i] for i in range(3)]])
+    store_clip("rel", {"anchor": strip_ns(anchor), "items": items,
+                       "namespaces": relative_namespaces(sel, tab_namespace())})
     message("relationship to %s copied" % strip_ns(anchor))
 
 
@@ -989,12 +1043,17 @@ def paste_relationship(in_range=False, channels="tr"):
     """On the current frame, or (`in_range`, 2026-10-23 «тільки виділеної кількості ключів, умовно з 10
     по 20»; it replaced "on all keys") on the keys of the anchor and the followers inside the frames
     highlighted on the Time Bar."""
-    if not _clip["rel"]:
+    clip = clip_items("rel")
+    if not clip or not clip.get("anchor"):
         return warn("copy a relationship first")
-    anchor, items = _clip["rel"]
-    if not cmds.objExists(anchor):
-        return warn("anchor no longer exists")
-    items = [item for item in items if cmds.objExists(item[0])]
+    keys = [clip["anchor"]] + [k for k, _rel, _offset in clip["items"]]
+    by_key = _find(keys, selection(), clip.get("namespaces") or [])
+    anchor = by_key.get(clip["anchor"])
+    if not anchor:
+        return warn("the anchor %s is not in this scene" % clip["anchor"])
+    items = [(by_key[k], rel, offset) for k, rel, offset in clip["items"] if k in by_key]
+    if not items:
+        return warn("none of the followers is in this scene")
     times = None
     if in_range:
         span = highlighted_range()
