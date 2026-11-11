@@ -742,6 +742,45 @@ class KeepsLocalPoses(unittest.TestCase):
         self.assertEqual(install.read_shipped(self.poses()),
                          {"Shipped.pose": {"pose.json": _sha("old shipped")}})
         self.assertEqual(os.listdir(os.path.dirname(self.dest)), ["SkeldarAnim"])
+        #  and the old build stands whole: nothing was deleted before the new one was ready
+        self.assertEqual(_read(os.path.join(self.dest, "maya_tool.py")), "old tool")
+        self.assertEqual(_read(os.path.join(self.dest, "stray.txt")), "left over")
+
+    def test_a_file_held_in_the_old_build_refuses_the_install_and_deletes_nothing(self):
+        """2026-11-11: an install's rmtree stopped half way on a file another program held, and
+        left assets/ half deleted - every weapon «nothing came out of LongSword_02.fbx». The old
+        folder is now swapped out by ONE rename, which a held file refuses before anything goes."""
+        real = os.rename
+        dest = os.path.normcase(os.path.abspath(self.dest))
+
+        def held(src, dst):
+            if os.path.normcase(os.path.abspath(src)) == dest:
+                raise PermissionError(32, "The process cannot access the file")
+            return real(src, dst)
+        install.os.rename = held
+        try:
+            with self.assertRaises(OSError) as raised:
+                install.copy_payload(self.src, self.dest)
+        finally:
+            install.os.rename = real
+        self.assertIn("nothing was changed", str(raised.exception))
+        self.assertEqual(_read(os.path.join(self.dest, "maya_tool.py")), "old tool")
+        self.assertEqual(_read(os.path.join(self.dest, "stray.txt")), "left over")
+        self.assertEqual(_read(self.poses("Mine.pose", "pose.json")), "mine")
+        self.assertEqual(os.listdir(os.path.dirname(self.dest)), ["SkeldarAnim"])
+
+    def test_an_old_build_that_cannot_be_deleted_is_swept_by_the_next_install(self):
+        real = install.shutil.rmtree
+        install.shutil.rmtree = lambda path, ignore_errors=False, **kw: (None if install.OLD_PREFIX in path else real(path, ignore_errors=ignore_errors))   # leaves the old build
+        try:
+            install.copy_payload(self.src, self.dest)
+        finally:
+            install.shutil.rmtree = real
+        self.assertEqual(_read(os.path.join(self.dest, "maya_tool.py")), "new tool")
+        left = [n for n in os.listdir(os.path.dirname(self.dest)) if n != "SkeldarAnim"]
+        self.assertEqual(len(left), 1)
+        install.copy_payload(self.src, self.dest)
+        self.assertEqual(os.listdir(os.path.dirname(self.dest)), ["SkeldarAnim"])
 
     # ---- animation cards (2026-10-03): a `<Name>.anim` folder is one unit as a `.pose` is
 

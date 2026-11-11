@@ -4531,6 +4531,13 @@ function; the fifth replays OverRig's own installer command verbatim —
 
 Things that will bite if forgotten:
 
+- **The new build is made beside the old one and swapped in by renames** (2026-11-11): an
+  install's `rmtree(dest)` stopped half way on a file another program held and left `assets/`
+  with four files - every weapon «nothing came out of LongSword_02.fbx», the rigs and icons gone
+  too. `copy_payload` builds into `SkeldarAnim_installing_*` beside it, renames the old folder to
+  `SkeldarAnim_previous_*` (a held file refuses that whole rename: «nothing was changed»), renames
+  the new one in, deletes the old best effort; leftovers are swept by the next install. Tests
+  `KeepsLocalPoses.test_a_file_held_in_the_old_build_*` / `test_an_old_build_that_cannot_*`.
 - **`same_place(src, dest)` guards the copy**: a re-drag of `install.py`
   from the installed folder itself must not `rmtree` the very files it is
   about to copy. Source == destination skips the copy and only rebuilds

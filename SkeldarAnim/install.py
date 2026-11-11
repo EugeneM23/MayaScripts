@@ -669,6 +669,10 @@ def copy_payload(src_root, dest):
     does not hold) - that error then goes on, and with no new manifest nothing is dropped.
     Returns `keep_local`'s `Kept`.
     """
+    parent = os.path.dirname(os.path.abspath(dest))
+    if not os.path.isdir(parent):
+        os.makedirs(parent)
+    _sweep_old_builds(parent)
     aside = None
     old_poses = os.path.join(dest, POSES)
     if os.path.isdir(old_poses):
@@ -681,24 +685,59 @@ def copy_payload(src_root, dest):
             raise
     kept = Kept()
     new_cards = None
+    # 2026-11-11: the new build is made BESIDE the old one and swapped in by two renames. An
+    # `rmtree(dest)` that stopped half way on a file another program held left assets/ half
+    # deleted and every weapon «nothing came out of LongSword_02.fbx»; a rename of the old folder
+    # is refused whole by a held file, before anything is deleted.
+    fresh = tempfile.mkdtemp(prefix=FRESH_PREFIX, dir=parent)
     try:
-        if os.path.isdir(dest):
-            shutil.rmtree(dest)
-        os.makedirs(dest)
         ignore = shutil.ignore_patterns("__pycache__", "*.pyc", "*" + HALF_WRITTEN)
+        built = os.path.join(fresh, "build")
+        os.makedirs(built)
         for name in payload():
             src = os.path.join(src_root, name)
-            target = os.path.join(dest, name)
+            target = os.path.join(built, name)
             if os.path.isdir(src):
                 shutil.copytree(src, target, ignore=ignore)
             else:
                 shutil.copy2(src, target)
             if name == POSES and os.path.isdir(target):
                 new_cards = write_shipped(target)
+        if os.path.isdir(dest):
+            old = os.path.join(tempfile.mkdtemp(prefix=OLD_PREFIX, dir=parent), "old")
+            try:
+                os.rename(dest, old)
+            except OSError as error:
+                new_cards = None             # the old build stays: its own poses go back
+                shutil.rmtree(os.path.dirname(old), ignore_errors=True)
+                raise OSError(
+                    "could not replace {0} - a file in it is held open by another program "
+                    "(close it, or restart Maya) - nothing was changed: {1}".format(
+                        dest.replace("\\", "/"), error))
+            os.rename(built, dest)
+            shutil.rmtree(os.path.dirname(old), ignore_errors=True)
+        else:
+            os.rename(built, dest)
+    except BaseException:
+        new_cards = None
+        raise
     finally:
+        shutil.rmtree(fresh, ignore_errors=True)
         if aside is not None:
             kept = _put_back_poses(aside, dest, new_cards)
     return kept
+
+
+FRESH_PREFIX = "SkeldarAnim_installing_"
+OLD_PREFIX = "SkeldarAnim_previous_"
+
+
+def _sweep_old_builds(parent):
+    """The old builds and half-made new ones an earlier install could not delete (a file held
+    then): taken away now, best effort - one still held stays for the next install."""
+    for name in os.listdir(parent):
+        if name.startswith(FRESH_PREFIX) or name.startswith(OLD_PREFIX):
+            shutil.rmtree(os.path.join(parent, name), ignore_errors=True)
 
 
 def git_output(cwd, *args):
