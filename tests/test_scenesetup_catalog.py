@@ -73,7 +73,8 @@ class Table(unittest.TestCase):
     def test_the_dropdown_order_is_sword_then_spear(self):
         self.assertEqual(catalog.labels(),
                          ["Long Sword 02", "Spear 01", "Spear 03", "Dagger 01",
-                          "Creep Sword", "Swordman Sword", "Swordman Shield"])
+                          "Creep Sword", "Swordman Sword", "Swordman Shield",
+                          "Titan Axe"])
 
     def test_spear_03_ships_with_its_texture(self):
         """2026-09-28, «это должно выдаваться сразу с текстурой»: the first
@@ -582,10 +583,10 @@ class OrcD(unittest.TestCase):
 
     def test_every_row_but_the_ue4_mannequin_is_textured(self):
         """The Orc D since 2026-09-28, both Manny rows and both Creep rows since 2026-09-30. Creep 2
-        (2026-10-27) arrives in a palette colour until its textures come."""
+        (2026-10-27) and the Fighter (2026-11-11) arrive in a palette colour until their textures come."""
         self.assertEqual([c.key for c in catalog.CHARACTERS if not c.textured],
-                         ["Creep2_Rig", "Creep2_Body_Rig", "Creep2_ArmR_Rig", "Creep2_Head_Rig", "Creep2",
-                          "Creep2_Body", "Creep2_ArmR", "Creep2_Head", "UE4_Mannequin"])
+                         ["Creep2_Rig", "Creep2_Body_Rig", "Creep2_ArmR_Rig", "Creep2_Head_Rig", "Fighter_Rig", "Creep2",
+                          "Creep2_Body", "Creep2_ArmR", "Creep2_Head", "Fighter", "UE4_Mannequin"])
 
     def test_textured_defaults_to_false(self):
         self.assertFalse(catalog.Character("X", "X", "X.ma", "rig").textured)
@@ -780,7 +781,7 @@ class Models(unittest.TestCase):
     def test_the_models_in_grid_order(self):
         self.assertEqual([m.key for m in catalog.MODELS],
                          ["Manny", "Creep", "Creep2", "Creep2_Body", "Creep2_ArmR", "Creep2_Head", "Orc_D", "Playerchar",
-                          "Swordman", "UE4_Mannequin", "Auto"])
+                          "Swordman", "Fighter", "UE4_Mannequin", "Auto"])
         self.assertEqual(catalog.model_by_key("Orc_D").label, "Orc D")
         self.assertIsNone(catalog.model_by_key("Sevarog"))
 
@@ -804,10 +805,10 @@ class Models(unittest.TestCase):
         self.assertEqual([e.key for e in catalog.rows_of_kind("rig")],
                          ["Manny_Rig", "Creep_Rig", "Orc_D_Rig", "Playerchar_Rig", "Creep2_Rig",
                           "Creep2_Body_Rig", "Creep2_ArmR_Rig", "Creep2_Head_Rig",
-                          "Swordman_Rig"])
+                          "Swordman_Rig", "Fighter_Rig"])
         self.assertEqual([e.key for e in catalog.rows_of_kind("skeleton")],
                          ["Manny", "Creep", "Playerchar", "Creep2", "Creep2_Body",
-                          "Creep2_ArmR", "Creep2_Head", "Swordman", "UE4_Mannequin"])
+                          "Creep2_ArmR", "Creep2_Head", "Swordman", "Fighter", "UE4_Mannequin"])
 
     def test_a_model_and_a_kind_name_at_most_one_row(self):
         pairs = [(e.model, e.kind) for e in catalog.CHARACTERS]
@@ -821,6 +822,7 @@ class Models(unittest.TestCase):
                 ("Creep2", "rig"): "Creep2_Rig", ("Creep2", "skeleton"): "Creep2",
                 ("Creep2_Body", "rig"): "Creep2_Body_Rig", ("Creep2_Body", "skeleton"): "Creep2_Body",
                 ("Swordman", "rig"): "Swordman_Rig", ("Swordman", "skeleton"): "Swordman",
+                ("Fighter", "rig"): "Fighter_Rig", ("Fighter", "skeleton"): "Fighter",
                 ("UE4_Mannequin", "skeleton"): "UE4_Mannequin"}
         for (model, kind), key in want.items():
             self.assertEqual(catalog.character_for(model, kind).key, key)
@@ -1108,3 +1110,32 @@ class Creep2Body(unittest.TestCase):
         self.assertIn('createNode transform -n "Creep2_BodySplit" -p "Geometry"', text)
         self.assertNotIn('-n "Creep2_Body" -p', text)
         self.assertIn('".skeldarRetarget" -type "string" "rotation"', text)
+
+
+class Fighter(unittest.TestCase):
+    """2026-11-11: the Fighter on his own skeleton (Unreal's SK_Fighter_proto6 plus the camera bones),
+    untextured, and his Titan Axe as a weapon row."""
+
+    def test_both_rows_and_their_files(self):
+        rig, skel = catalog.character_by_key("Fighter_Rig"), catalog.character_by_key("Fighter")
+        self.assertEqual((rig.label, rig.file, rig.kind, rig.model, rig.textured),
+                         ("Fighter [rig]", "Fighter_Rig.ma", "rig", "Fighter", False))
+        self.assertEqual((skel.label, skel.file, skel.kind, skel.model, skel.textured),
+                         ("Fighter [skeleton]", "Fighter_Skeleton.ma", "skeleton", "Fighter", False))
+        for entry in (rig, skel):
+            self.assertTrue(os.path.isfile(catalog.character_file(entry)), entry.key)
+        self.assertTrue(os.path.isfile(catalog.portrait_path("Fighter")))
+
+    def test_the_titan_axe_rides_the_right_hand(self):
+        axe = catalog.by_key("Titan_Axe")
+        self.assertEqual((axe.label, axe.bone, axe.scale, axe.frame, axe.texture),
+                         ("Titan Axe", "weapon_r", 1.0, (0.0, 0.0, 0.0), ""))
+        self.assertTrue(axe.path.endswith("assets/Titan_Axe.fbx"), axe.path)
+        self.assertFalse(catalog.missing(axe))
+
+    def test_the_assets_name_no_drive_of_the_machine_that_built_them(self):
+        for name in ("Fighter_Rig.ma", "Fighter_Skeleton.ma"):
+            with open(catalog.asset_path(name), encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+            for word in ("D:/", "E:/", "C:/", "Downloads", "createNode script", "work/fighter"):
+                self.assertNotIn(word, text, (name, word))

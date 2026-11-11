@@ -17470,6 +17470,50 @@ re-add him and add his props again.**
      Manny's, bone by bone, and give each bone Manny's frame swung onto its own direction; a skin
      rewire re-expresses every bindPreMatrix, so the frames are free.
 
+## The Fighter and his Titan Axe (2026-11-11)
+
+The animator, with both open on port 7005: «В сцене новый персонаж и оружие для него. Нужно интегрировать
+в наш пайплайн по всем правилам». Asked, all four the recommendation: **his own skeleton plus the camera
+bones**, the name **Fighter**, a **palette colour** for now, the axe a **catalog row on the right hand**.
+Spec `docs/superpowers/specs/2026-11-11-fighter-design.md`. The scene was only read.
+
+- **Measured first**: `Downloads/SK_Fighter_proto6.FBX` (Unreal's; the `(1)` copy byte-identical) and
+  `TitanAxe_2H_01.fbx`, copied to `sources/fighter/`. His skeleton is **not Manny's**: 80 joints on UE names
+  but `spine_01..04` (no `spine_05`), no metacarpals (`index_01` hangs on the hand), one thigh and one calf
+  twist a leg, `helm` and `jaw`, no camera bones; 184 cm, pelvis 101.3, forearms 33.1 and calves 46.0
+  (Manny 95.9 / 27.3 / 42.2). His weapon sockets were already UE's (grip line +Z 0.982). One mesh, 15526
+  vertices, two slots; every texture path (`D:/work/fighter`, `E:/work/Atone_source`) is not on this
+  machine and the FBXs embed none.
+- **The Creep 2 road**: `make_fighter_source.py` (mayapy: the importer's empty `Armature` out, Manny's camera
+  bones added, the dead textures dropped, one bind pose over 82 joints) → `rebuild_fighter_rig.py` (LIVE in a
+  disposable Maya on 7057, killed after) → `make_fighter_assets.py` (Creep 2's script with his names: Creep 2's
+  position follows, so an FK translation carries its bone) → `assets/Fighter_Rig.ma` (8.4 MB),
+  `Fighter_Skeleton.ma` (6.8 MB). What his skeleton asked of `as_creep_rig_procedure`:
+  - **ghosts**: the fit's `Spine5` (half way spine_04 → neck_01, on x = 0) and the four `Finger0`s (a third of
+    the way hand → finger_01) have no bone and drive none. Placed in ONE parents-first pass with every mapped
+    fit joint snapped to its bone: placed before the midline went onto x = 0, Spine5 rode Spine4's 0.25 cm and
+    AS refused it as a LEFT-side joint (trap 299 again);
+  - **his twists**: Hip and Knee one Part each (`HipPart1 → thigh_twist_01`, `KneePart1 → calf_twist_01`);
+    his upper-arm twists stand at 0.149 / 0.595, which one BM weight cannot place, so that segment keeps AS's
+    spacing (`TWIST_SEGMENTS` leaves it out) and the bones follow by orientation with their offsets.
+- **The axe** (`make_titan_axe_asset.py` → `assets/Titan_Axe.fbx`): it already lay in our weapon axes (head +Y,
+  blade on −X, thickness Z, origin on the haft 30 cm under the head); the haft centred (0.30 cm), a plain
+  lambert, exported with no animation and read back. Row `Titan_Axe`, `weapon_r`, scale 1; its icon (1 × 4).
+  The left hand joins through Connections or Walk Builder's hold.
+- Catalog rows «Fighter [rig]» after the Swordman's rig, «Fighter [skeleton]» after his skeleton, model
+  `Fighter` after Swordman (the grid's tenth card), untextured, fire `magenta` (new). The portrait rendered
+  in the disposable Maya; `character_skeletons.json` re-run (his two rows added, the others unchanged; a UE
+  clip reads him at 0.032, so Auto never sends a Manny clip to him). `make_weapon_icons.py` redraws the
+  Swordman's two icons from their seated points - those were put back (CLAUDE.md: they stay as drawn).
+
+Proof: `docs/superpowers/plans/verify_fighter.py <a UE clip>` **12/12 mayapy standalone** on
+`LongSword_Attack_Right_Heavy_3P`: two Fighters and a Manny each in its namespace, rotation-only, 82 joints,
+skin at its bind, painted; every vertex on Unreal's FBX (7.6e-6 cm) and every joint (1.3e-6); the axe at zero
+grip, its haft 10.8° off the fist's grip line, driving weapon_r; the Retarget button - on the clip's
+orientations to 0.0009°, the limbs pointing 0.47°, his lengths kept to 0.032 cm, the others unmoved 0.0; the
+export 82 joints, no mesh; the skeleton row; FK translations carrying their bones; Delete character.
+`tests/test_scenesetup_catalog.Fighter`. **Not seen in the animator's Maya** (after Check update).
+
 ## Maya's crashes: ours, and NOT cured by taking our Qt down first (2026-11-02)
 
 The animator: «мая начала очень часто вылетать. Не связано ли это с нашим плагином?» It was

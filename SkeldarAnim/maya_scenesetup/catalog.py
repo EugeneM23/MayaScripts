@@ -133,6 +133,16 @@ CHARACTERS = [
     # Spec 2026-11-01-swordman-design.md.
     Character("Swordman_Rig", "Swordman [rig]", "Swordman_Rig.ma", "rig",
               textured=True, model="Swordman"),
+    # The Fighter (2026-11-11, «новый персонаж и оружие для него. Нужно интегрировать в наш
+    # пайплайн по всем правилам»; asked, his OWN skeleton plus the camera bones, a palette
+    # colour - his textures are on a drive not on this machine). Unreal's SK_Fighter_proto6:
+    # 80 joints on UE names but spine_01..04, no metacarpals, one thigh and one calf twist a leg,
+    # helm and jaw; 184 cm, longer limbs than Manny's. His own AdvancedSkeleton rig by the Creep's
+    # procedure (rotation-only, Creep 2's position follows), Spine5 and the metacarpals ghosts
+    # that drive no bone; Manny's camera bones added. Built by docs/superpowers/plans/
+    # make_fighter_source.py -> rebuild_fighter_rig.py -> make_fighter_assets.py from
+    # sources/fighter/. Spec 2026-11-11-fighter-design.md.
+    Character("Fighter_Rig", "Fighter [rig]", "Fighter_Rig.ma", "rig", model="Fighter"),
     # The same two meshes in the same maps as the rig (2026-09-30).
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
               "skeleton", textured=True, model="Manny"),
@@ -162,6 +172,8 @@ CHARACTERS = [
     # skeleton's way: |root with his 55 bones, |Swordman_Body beside it.
     Character("Swordman", "Swordman [skeleton]", "Swordman_Skeleton.ma", "skeleton",
               textured=True, model="Swordman"),
+    # The Fighter without his rig (2026-11-11): |root with his 82 joints, |Fighter_Body beside it.
+    Character("Fighter", "Fighter [skeleton]", "Fighter_Skeleton.ma", "skeleton", model="Fighter"),
     # 68 joints, exported once from /Game/SwordAnimsetPro/UE4_Mannequin/
     # Mesh/SK_Mannequin in the animator's own project: spine_01..03, no
     # metacarpals, no neck_02, one twist per segment. The pack animations
@@ -190,6 +202,7 @@ MODELS = [Model("Manny", "Manny"), Model("Creep", "Creep"), Model("Creep2", "Cre
           Model("Creep2_ArmR", "Creep 2 Arm R"), Model("Creep2_Head", "Creep 2 Head"),
           Model("Orc_D", "Orc D"), Model("Playerchar", "Playerchar"),
           Model("Swordman", "Swordman"),
+          Model("Fighter", "Fighter"),
           Model("UE4_Mannequin", "UE4 Mannequin"), Model(AUTO, "Auto")]
 
 
@@ -369,6 +382,13 @@ WEAPONS = [
            "weapon_r", 1.0, texture=_asset_path("Swordman/Swordman_Color.jpg")),
     Weapon("Swordman_Shield", "Swordman Shield", _asset_path("Swordman_Shield.fbx"),
            "weapon_l", 1.0, texture=_asset_path("Swordman/Swordman_Color.jpg")),
+    # 2026-11-11, the Fighter's two-handed Titan Axe (sources/fighter/TitanAxe_2H_01.fbx) by
+    # docs/superpowers/plans/make_titan_axe_asset.py: it already lay in the model axes every row
+    # uses (the head +Y, its width on X, thickness on Z) with the origin on the haft 30 cm under
+    # the head - the grip; only the haft centred and a plain material (its textures are on a drive
+    # not on this machine). 175.5 cm, scale 1. The right hand holds it; the left joins through
+    # Connections or Walk Builder's hold.
+    Weapon("Titan_Axe", "Titan Axe", _asset_path("Titan_Axe.fbx"), "weapon_r", 1.0),
 ]
 
 # 2026-09-30, «по умолчанию все виды оружия вставлялись в руку правильно без
