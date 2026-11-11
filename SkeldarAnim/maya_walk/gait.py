@@ -205,6 +205,12 @@ PARAMS = (
     Param("nod", HEAD, "Nod", "deg", "added", rule=_fixed(-30.0, 30.0), tip="The head forward (+) or back"),
     Param("head_lag", HEAD, "Head lag", "fr", "added", rule=_fixed(-5.0, 8.0),
           tip="Frames the head's motion comes after the chest's"),
+    # Head aim (2026-11-11): the head looking at the rig pose's head target (Rig pose > Head > Head aim)
+    Param("head_aim", HEAD, "Head aim", "", "added", rule=_fixed(0.0, 1.0), default=1.0,
+          tip="How much the head looks at its target: on the rig pose press Head aim, move the green target, "
+              "Update. 1 - the head looks right at it through the whole walk, the target travelling with the "
+              "character, so the gaze holds still over the bob, sway and twist; 0 - the walk's own head. "
+              "Nothing without a target"),
     # the arms
     #  2026-11-04: how much of the cycle's own animation each part of the arm keeps - the lever a pose's grip
     #  pulls, as two knobs. Both at 0 % is exactly what a grip does; the hands alone keep a quiet hand on a
@@ -870,6 +876,7 @@ def engine_knobs(walk, own_values, asked, pins=(), physics=True, lift_scale=None
         e["g_head"] = g
     e["nod_add"] = get("nod")
     e["head_lag"] = get("head_lag")
+    e["head_aim"] = min(max(get("head_aim"), 0.0), 1.0)       # the share the head looks at its target (own 1)
     e["leg_match"] = get("leg_match")
     # per side: the timing, the legs, the arms
     scale = lift_scale or _lift_scale

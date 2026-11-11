@@ -76,6 +76,10 @@ MEAN_CAPTION = "skeldarWalkMeanCaption"
 SNAP_CAPTION = "skeldarWalkSnapCaption"
 SNAP_BTN = "skeldarWalkSnap"
 UNSNAP_BTN = "skeldarWalkUnsnap"
+#  Head aim (2026-11-11): the head looks at a target placed on the rig pose
+HEAD_CAPTION = "skeldarWalkHeadCaption"
+HEAD_AIM_BTN = "skeldarWalkHeadAim"
+HEAD_REMOVE_BTN = "skeldarWalkHeadAimRemove"
 KEY_CAPTION = "skeldarWalkKeyCaption"
 #  Knobs shown as a checkbox (0 / 1), not a slider: In place, beside Pick
 CHECKS = {"in_place": IN_PLACE_BOX}
@@ -152,6 +156,10 @@ TIPS = {
                    "onto the shoulder and the hand where it holds the weapon, then press - the hand rides the clavicle "
                    "and the blade lies on that shoulder point through the whole walk.",
     "unsnap": "Unsnap: the walker's snapped weapon dropped, the walk as it was.",
+    "head_aim": "Head aim: a green target in front of the rig pose's head - move it where the head should look and "
+                "press Update; the head looks at it through the whole walk, the target travelling with the "
+                "character. How much it looks there: Head > Head aim.",
+    "head_remove": "Remove: the head aim and its target dropped, the walk's own head.",
     "apply": "Pick: the walk well's active card on every selected skeleton (UE5/UE4, Mixamo, HumanIK, Unity, "
              "Biped ...), in its own proportions, from where it stands; each joins the list below. A skeleton's own "
              "animation is kept on it first (Restore the original keys puts it back). Right button: each on its "
@@ -1978,6 +1986,18 @@ def press_snap(*_):
     return _press(lambda: snapweapon.press(_working_root(), _rekey_root))
 
 
+def press_head_aim(*_):
+    """Rig pose > Head > Head aim: the working walker's head aimed at the rig pose's target (maya_walk.headaim)."""
+    from . import headaim
+    return _press(lambda: headaim.press(_working_root(), _rekey_root))
+
+
+def press_head_remove(*_):
+    """Rig pose > Head > Remove: the working walker's head aim dropped."""
+    from . import headaim
+    return _press(lambda: headaim.remove(_working_root(), _rekey_root))
+
+
 def press_unsnap(*_):
     """Rig pose > Weapon > Unsnap: the working walker's snap dropped."""
     from . import snapweapon
@@ -2401,7 +2421,10 @@ def _rig_pose_buttons():
                                     (KEY_DELETE_BTN, "Delete", "danger", "trash", "key_delete", press_key_delete))),
         (None, None, ((MEAN_UPDATE_BTN, "Update", "primary", "refresh", "mean_update", press_mean_update),)),
         (SNAP_CAPTION, "Weapon", ((SNAP_BTN, "Snap weapon", "secondary", "sword", "snap_weapon", press_snap),
-                                  (UNSNAP_BTN, "Unsnap", "secondary", "arrow-back-up", "unsnap", press_unsnap))))
+                                  (UNSNAP_BTN, "Unsnap", "secondary", "arrow-back-up", "unsnap", press_unsnap))),
+        (HEAD_CAPTION, "Head", ((HEAD_AIM_BTN, "Head aim", "secondary", "target", "head_aim", press_head_aim),
+                                (HEAD_REMOVE_BTN, "Remove", "secondary", "arrow-back-up", "head_remove",
+                                 press_head_remove))))
     for caption, title, row in sections:
         if caption:
             hubstyle.mark(cmds.text(caption, label=title, align="left"), "heading")

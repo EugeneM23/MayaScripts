@@ -416,8 +416,9 @@ def update(rekey=None):
         # a snapped weapon is read off the rig again (2026-11-11, «обновление позы не обновляет оружие»): its hand,
         # its Aim Mode target and up moved on the rig are the snap's, which only Snap weapon used to read
         snap, snap_said = _snap_again(rig, edits.get("snap"))
-        if not moved and snap is None:
-            said = [s for s in ignored + ([snap_said] if snap_said else [])]
+        head, head_said = _head_again(rig, edits.get("head"))
+        if not moved and snap is None and head is None:
+            said = [s for s in ignored + [t for t in (snap_said, head_said) if t]]
             if said:
                 lines.append("mean pose of %s: nothing taken | %s" % (scene.walker_label(root), "; ".join(said)))
             continue
@@ -425,15 +426,19 @@ def update(rekey=None):
             edits["keys"] = kp.add(edits.get("keys") or {}, kp.CYCLE, inc)
         if snap is not None:
             edits["snap"] = snap
+        if head is not None:
+            edits["head"] = head
         scene.set_edits(root, edits)
         with scene.Unrecorded():
             _set_memo(rig, dict(memo, base=_flat(now)))
-        took = ([kp.describe(moved)] if moved else []) + ([snap_said] if snap is not None else [])
+        took = ([kp.describe(moved)] if moved else []) + ([snap_said] if snap is not None else []) +             ([head_said] if head is not None else [])
         line = "mean pose of %s: %s" % (scene.walker_label(root), ", ".join(took))
         if ignored:
             line += " | not taken: " + "; ".join(ignored)
         if snap is None and snap_said:
             line += " | " + snap_said
+        if head is None and head_said:
+            line += " | " + head_said
         lines.append(line + ((rekey or rekey_root)(root)))
     if not lines:
         return NOTHING_MOVED
@@ -469,6 +474,22 @@ def _snap_again(rig, standing):
     if _same_snap(fresh, standing):
         return None, ""
     return fresh, "weapon snapped again: " + sw.summary(fresh)
+
+
+def _head_again(rig, standing):
+    """(the head aim read off `rig` when it differs from the walker's `standing` one, else None; words for the
+    line) - the head target moved on the rig pose (maya_walk.headaim). A walker with no head aim is never read
+    for one; a rig whose target is gone keeps the walker's, and says so."""
+    if not standing:
+        return None, ""
+    from . import headaim as ha
+    try:
+        fresh = ha.read(rig, standing["aim"])         # the look axis kept: the moved target turns the head
+    except ha.Refusal as error:
+        return None, "the head aim kept: %s" % error
+    if _same_snap(fresh, standing):
+        return None, ""
+    return fresh, "head target moved: " + ha.summary(fresh)
 
 
 def rekey_root(root):

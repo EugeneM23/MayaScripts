@@ -29,6 +29,7 @@ from . import keyposes as kp
 from . import cards as wcards
 from . import gait
 from . import snapweapon as sw
+from . import headaim as ha
 
 PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE = os.path.join(PLUGIN, "assets", "manny_skeleton_template.json")
@@ -63,7 +64,7 @@ class Refusal(Exception):
     """What a press does not do, and why (the status line shows it)."""
 
 
-REFUSALS = (Refusal, wm.Refusal, wf.Refusal, wt.Refusal, mp.Refusal, kp.Refusal, wcards.Refusal, sw.Refusal)
+REFUSALS = (Refusal, wm.Refusal, wf.Refusal, wt.Refusal, mp.Refusal, kp.Refusal, wcards.Refusal, sw.Refusal, ha.Refusal)
 #  The pose's bones as a walked skeleton last used them (packed, maya_walk.cards): the walk keeps walking when
 #  its Pose Library card is renamed or deleted (2026-10-15)
 POSE_COPY = "skeldarWalkPose"
@@ -921,12 +922,13 @@ def set_working(roots):
 
 
 def empty_edits(walk=""):
-    return {"walk": walk or "", "fix": mp.empty(), "keys": kp.empty(), "posture": False, "snap": None}
+    return {"walk": walk or "", "fix": mp.empty(), "keys": kp.empty(), "posture": False, "snap": None, "head": None}
 
 
 def edits_empty(edits):
     return (not edits or (mp.is_empty(edits.get("fix") or mp.empty()) and kp.is_empty(edits.get("keys"))
-                          and not edits.get("posture") and not edits.get("snap")))
+                          and not edits.get("posture") and not edits.get("snap")
+                          and not edits.get("head")))
 
 
 def edits_of(root):
@@ -953,6 +955,7 @@ def edits_of(root):
         pass
     out["posture"] = bool(raw.get("posture", False))
     out["snap"] = sw.loads(raw.get("snap"))     # Snap weapon (2026-11-11)
+    out["head"] = ha.loads(raw.get("head"))     # Head aim (2026-11-11)
     return out
 
 
@@ -961,7 +964,7 @@ def set_edits(root, edits):
     cmds = _cmds()
     data = {"walk": (edits or {}).get("walk") or "", "fix": mp.dumps((edits or {}).get("fix") or mp.empty()),
             "keys": kp.dumps((edits or {}).get("keys") or {}), "posture": bool((edits or {}).get("posture")),
-            "snap": (edits or {}).get("snap") or None}
+            "snap": (edits or {}).get("snap") or None, "head": (edits or {}).get("head") or None}
     with Unrecorded():
         if not cmds.attributeQuery(EDITS_ATTR, node=root, exists=True):
             cmds.addAttr(root, longName=EDITS_ATTR, dataType="string")
@@ -1006,6 +1009,8 @@ def edits_line(edits):
         parts.append("posture fixed")
     if edits and edits.get("snap"):
         parts.append("snapped: " + sw.summary(edits["snap"]))
+    if edits and edits.get("head"):
+        parts.append("head aimed")
     return " | ".join(parts)
 
 
@@ -1391,7 +1396,9 @@ def animate(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, pose_c
     weapons = weapons_in_hands(root)       # the hands' own weapons: who carries a hold, the blade Aim target aims
     snap = edits.get("snap") or None
     snap_note = ""
-    if kp.is_empty(keys) and not with_steps and not snap:
+    head = edits.get("head") or None
+    head_share = float(wm.knobs(**knobs).get("head_aim", 1.0))
+    if kp.is_empty(keys) and not with_steps and not snap and not head:
         result = evaluated(walk, knobs, pose, prepared, parts, weapons)
         moving = result.worlds if amount <= 0.0 else None
     else:
@@ -1403,6 +1410,9 @@ def animate(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, pose_c
         if snap:            # Snap weapon (2026-11-11): last of everything, the rig pose's layer under it
             moving, done = sw.apply(walk, moving, snap)
             snap_note = sw.line(snap, done)
+        if head:            # Head aim (2026-11-11): after the weapon, the head looks at the rig pose's target
+            moving, done = ha.apply(walk, moving, head, head_share)
+            snap_note = "; ".join(t for t in (snap_note, ha.line(head, head_share, done)) if t)
         worlds = kp.in_place(moving, walk, amount) if amount > 0.0 else moving
         result = wm.Result(worlds, base.frames, dict(base.info, knobs=dict(base.info["knobs"], in_place=amount),
                                                      in_place=amount))

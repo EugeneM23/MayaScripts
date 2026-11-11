@@ -18445,3 +18445,31 @@ the hand rides the clavicle, the roll as in the example). Spec
   through the point 0.00004 cm, the upper arm's length 1e-6, Unsnap giving every joint curve back 0.0); 1168 walk
   unit tests. **Not seen in a GUI Maya.** Not built: other attach points (chest, back, head), the target on a
   control of its own, keying the weapon's own rotate in the hand.
+- **…and the rig pose's Update reads the snap again** (the same day: «обновление позы в Walk builder не
+  обновляет оружие»; asked, it was the Rig pose tab's Update). Update read only the rig's BONES, so a weapon, its
+  Aim Mode target or its hand moved on the rig never reached the walker - and a target moved alone (the aim
+  controllers are no game bones) read «nothing moved». `meanrig._snap_again`: a walker with a snap has it read
+  again (`snapweapon.read`), kept when it differs past `SNAP_TOL`; a rig weapon out of Aim Mode keeps the walker's
+  and says so; the walker is keyed again with no bone moved. Tests `tests/test_walk_update_snap.py` (2 of 4 red
+  before); `verify_walk_snap_weapon.py` **11/11** (gates 8-9: the target moved 15 cm on the rig, Update, the
+  walker's blade through the new point on every key, 0.00005 cm).
+
+**…and the head aimed the same way** (the same day: «для головы сделаем такую-же систему фиксации как и для оружия»;
+asked: like Snap weapon, «создавать голове аим и контролировать ручкой насколько она смотрит туда»). Spec
+`docs/superpowers/specs/2026-11-11-walk-head-aim-design.md`. `SkeldarAnim/maya_walk/headaim.py`:
+- **Rig pose tab > Head: Head aim / Remove.** Head aim makes a green diamond `<ns>:HeadAim_ctrl` under the rig's
+  Main 150 cm in front of the head (along the chest's facing), marked `skeldarWalkHeadAim` and found by that marker
+  (`aimcore.control` names by leaf, so the name alone landed it outside the rig's namespace); it is read and kept on
+  the walker (`skeldarWalkEdits` gains `head`: the head's look axis in its own frame, the target in the game ROOT's
+  frame; an older build ignores it). The animator moves the target and presses **Update** (`meanrig._head_again`)
+  or Head aim again. **The look axis is kept and only the target is read again**: read anew, every target would be
+  "where the head already looks" and nothing turned (the verify's first run, gate 8).
+- **`Head aim`** (gait parameter, Head group, 0..1, default 1; engine knob `head_aim`, which the model ignores):
+  how much the head looks there. `headaim.apply`, in `scene.animate` after Snap weapon and before In place: the head
+  turned about its pivot by that share of the least swing onto the target (carried by the root, so the gaze holds
+  over the bob, sway and twist), its subtree carried, the roll the walk's. The head alone, not the neck.
+- Proof: `tests/test_walk_head_aim.py` (19); `docs/superpowers/plans/walkparam/verify_walk_head_aim.py` **11/11
+  mayapy standalone** (Manny UE5 skeleton walking `asd` under the two-handed sword: the head on the target on every
+  key 0.00001 deg; the target moved 44.7 cm on the rig, Update, on the new point 0.00001 deg; Head aim 0.5 half way
+  to 0.0000 deg; Head aim 0 the walk's head 20 deg off it; Remove gives every key back 0.0). **Not seen in a GUI
+  Maya.** Not built: the turn spread over the neck, a lag on the gaze, a target carried by the chest.

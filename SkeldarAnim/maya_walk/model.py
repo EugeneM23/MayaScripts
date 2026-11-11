@@ -193,6 +193,10 @@ KNOBS = (
     # how far a raised Height straightens the planted knees (0..1 of STRAIGHT_KNEE): evaluate sets it from what the
     # raise needs (_height_plan)
     ("height_straighten", 0.0, 0.0, 1.0),
+    # Head aim (2026-11-11, «создавать голове аим и контролировать ручкой насколько она смотрит туда»): how much
+    # the head looks at the rig pose's head target (maya_walk.headaim, run by the scene after the model; the model
+    # itself reads nothing of it). 1 right at it, 0 the walk's own head; nothing without a target.
+    ("head_aim", 1.0, 0.0, 1.0),
 )
 ASPECT_KNOBS = ("lean_add", "chest_bounce_add", "nod_add", "arm_fwd_add", "arm_out_add", "elbow_add",
                 "elbow_swing_add", "shoulder_add", "arm_swing_add")
