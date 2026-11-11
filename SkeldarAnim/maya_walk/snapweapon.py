@@ -215,24 +215,53 @@ def _world(node):
     return np.array(_cmds().xform(node, query=True, worldSpace=True, matrix=True), float).reshape(4, 4)
 
 
+def _hand_side(rig, weapon):
+    """Which of the rig's hands carries `weapon`: the hand holding it (its weapon space), else - a weapon out in the
+    world, Connections > World with the hands riding it (the animator's own setup, 2026-11-11) - the rig's hand
+    riding it through its proxy nearest the weapon's grip. None when neither."""
+    import maya_rigs
+    from maya_scenesetup import weaponspace
+    cmds = _cmds()
+    hand = weaponspace.holding_hand(weapon)
+    if hand:
+        for side in SIDES:
+            node = maya_rigs.node(rig, "hand_" + side)
+            if cmds.objExists(node) and cmds.ls(node, long=True)[0] == cmds.ls(hand, long=True)[0]:
+                return side
+        return None
+    try:
+        from maya_scenesetup import connections
+    except ImportError:
+        return None
+    riding = []
+    for node in cmds.listRelatives(weapon, allDescendents=True, type="transform", fullPath=True) or []:
+        if not cmds.attributeQuery(connections.PROXY_MARKER, node=node, exists=True):
+            continue
+        tag = cmds.getAttr(node + "." + connections.PROXY_MARKER) or ""
+        ns, _, side = tag.rpartition(":")
+        side = side.lower()
+        if side in SIDES and ns == rig.namespace and cmds.objExists(maya_rigs.node(rig, "hand_" + side)):
+            riding.append(side)
+    if not riding:
+        return None
+    grip = _world(weapon)[3, :3]
+    return min(riding, key=lambda s: float(np.linalg.norm(_world(maya_rigs.node(rig, "hand_" + s))[3, :3] - grip)))
+
+
 def read(rig):
     """The snap off the mean pose rig `rig` (a maya_rigs.Rig) as it stands: its one weapon in Aim Mode held in one of
     its hands. Refusal otherwise."""
     import maya_rigs
-    from maya_scenesetup import weaponaim, weaponspace
+    from maya_scenesetup import weaponaim
     cmds = _cmds()
     found = []
     for group in weaponaim.groups():
         weapon = weaponaim.weapon_of_group(group)
         if not weapon or not cmds.objExists(weapon):
             continue
-        hand = weaponspace.holding_hand(weapon)
-        if not hand:
-            continue
-        for side in SIDES:
-            if cmds.objExists(maya_rigs.node(rig, "hand_" + side)) and \
-                    cmds.ls(maya_rigs.node(rig, "hand_" + side), long=True)[0] == cmds.ls(hand, long=True)[0]:
-                found.append((side, weapon, group))
+        side = _hand_side(rig, weapon)
+        if side:
+            found.append((side, weapon, group))
     if not found:
         raise Refusal(NO_AIM % rig.namespace)
     if len(found) > 1:

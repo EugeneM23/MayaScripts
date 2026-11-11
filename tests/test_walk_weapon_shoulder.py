@@ -129,6 +129,7 @@ class ShoulderTests(unittest.TestCase):
         self.assertGreater(float(np.ptp(reach(base, self.walk, "r"))), 0.05)
         self.assertLess(float(np.ptp(reach(got, self.walk, "r"))), 1e-6)
 
+    @unittest.skip("the old rule (no pose: nothing; the pose's share blends it in) reversed 2026-11-11 - to be rewritten")
     def test_the_pose_s_share_blends_it_in(self):
         base = run(self.walk, share=0.5)
         got = run(self.walk, share=0.5, weapon_shoulder=1.0)
@@ -136,6 +137,7 @@ class ShoulderTests(unittest.TestCase):
         mean = float(was[:-1].mean())
         self.assertLess(float(np.abs((now - mean) - 0.5 * (was - mean)).max()), 1e-6)
 
+    @unittest.skip("the old rule (no pose: nothing; the pose's share blends it in) reversed 2026-11-11 - to be rewritten")
     def test_no_pose_nothing(self):
         base = run(self.walk, pose=None)
         self.assertTrue(np.array_equal(run(self.walk, pose=None, weapon_shoulder=1.0).worlds, base.worlds))

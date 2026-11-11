@@ -18462,6 +18462,17 @@ the hand rides the clavicle, the roll as in the example). Spec
   with keyed or locked t/r is left and named. Unit-tested only through the existing suites (the animator: tests
   later, in bulk).
 
+- **…Snap weapon with the sword out of the hands, and the Weapon tab with no pose** (the same day, port 7005: «после
+  снапа рука свободно болтается ... в weapon функционал работает только с адитивной позой но он должен работать и
+  без неё. И наш новый функционал снапа тоже»). Read on the scene: the walker carried NO snap - Snap weapon had been
+  refused, because the rig pose's sword stood out of the hands (Connections > World, the hand on its proxy, the
+  animator's own 7006 setup) and `read` looked only for a weapon IN a hand. `snapweapon._hand_side`: the hand
+  holding it, else the rig's hand riding it through a Connections proxy (`skeldarHandProxy` = "<ns>:R"), the
+  nearest to the grip. The Weapon tab (`model.rigid_sides`, `_arm_overlap`): no longer gated on the additive pose,
+  and at full strength whatever the pose's share; with no pose Hold (on by default) holds only a hand the scene
+  gives a weapon, so a plain walk keeps its swing. The «no additive pose: the Weapon knobs do nothing» line is
+  gone. Four old tests asserting the old rule are skipped with the reason (tests later, in bulk).
+
 **…and the head aimed the same way** (the same day: «для головы сделаем такую-же систему фиксации как и для оружия»;
 asked: like Snap weapon, «создавать голове аим и контролировать ручкой насколько она смотрит туда»). Spec
 `docs/superpowers/specs/2026-11-11-walk-head-aim-design.md`. `SkeldarAnim/maya_walk/headaim.py`:

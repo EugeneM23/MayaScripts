@@ -1495,8 +1495,6 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     dialled = lambda names: any(abs(float(knobs.get(name + s, 0.0) or 0.0)) >= wm.OVERLAP_QUIET
                                 for name in names for s in ("", "_l", "_r"))
     aimed = any(float(knobs.get("weapon_aim" + s, 1.0)) < 1.0 - wm.AIM_QUIET for s in ("", "_l", "_r"))
-    if anim.pose is None and (dialled(("weapon_overlap", "weapon_shoulder")) or aimed):
-        text += " | no additive pose: the Weapon knobs do nothing"
     matched = result.info.get("leg_match") or {}
     if anim.pose is not None and matched.get("on"):
         text += " | legs matched x%.2f" % matched["keep"]

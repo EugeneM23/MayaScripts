@@ -175,12 +175,14 @@ class AimTests(unittest.TestCase):
         self.assertGreater(miss(hand(base, self.walk), target), 1.0)
         self.assertLess(miss(hand(run(self.walk, weapon_hold=0.0, weapon_aim=0.0), self.walk), target), 1e-6)
 
+    @unittest.skip("the old rule (no pose: nothing; the pose's share blends it in) reversed 2026-11-11 - to be rewritten")
     def test_the_pose_s_share_blends_it_in(self):
         """At half the pose's share a static target keeps half of its motion."""
         base = run(self.walk, share=0.5)
         target = target_of(hand(base, self.walk), 0.5)
         self.assertLess(miss(hand(run(self.walk, share=0.5, weapon_aim=0.0), self.walk), target), 1e-6)
 
+    @unittest.skip("the old rule (no pose: nothing; the pose's share blends it in) reversed 2026-11-11 - to be rewritten")
     def test_no_pose_no_aim(self):
         base = run(self.walk, pose=None)
         self.assertTrue(np.array_equal(run(self.walk, pose=None, weapon_aim=0.0).worlds, base.worlds))

@@ -4431,14 +4431,16 @@ class Walk(object):
         additive pose holding that arm - at Pose 0 there is no pose and the arms play the cycle, and an arm
         the pose's own chip leaves out is left alone (the 2026-11-03 rule). Such a hand is a child of the
         chest, so the arm springs (Whip) leave it alone too: the animator's step 1 is a static arm."""
+        #  2026-11-11 («он должен работать и без неё»): the tab works with no additive pose too, at full strength
         pose = ctx.get("pose")
-        if pose is None or ctx.get("alpha", 0.0) <= 0.0:
-            return set()
         ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
-        inside = pose.get("arm_sides")
+        inside = None if pose is None or ctx.get("alpha", 0.0) <= 0.0 else pose.get("arm_sides")
         out_of_pose = set() if inside is None else set(SIDES) - set(inside)
+        posed = pose is not None and ctx.get("alpha", 0.0) > 0.0
+        #  with no pose Hold (on by default) holds only a hand the scene gives a weapon: a plain walk keeps its swing
+        armed = set(ctx.get("weapons") or {})
         return set(s for s in self._arm_chains()
-                   if s not in out_of_pose and float(ks[s]["weapon_hold"]) > 0.5)
+                   if s not in out_of_pose and float(ks[s]["weapon_hold"]) > 0.5 and (posed or s in armed))
 
     def _arm_overlap(self, worlds, n, ctx, only=None):
         """The arms late by Arm overlap (frames of the new cycle; in place on `worlds`, (J, n+1, 4, 4)): each
@@ -4498,7 +4500,7 @@ class Walk(object):
         #  the additive pose holds that arm; it needs no Hold. Hands holding one thing swing as one (the
         #  two sides' mean, the carrier's lever), a free hand on its own
         aims = {}
-        if pose is not None and ctx["alpha"] > 0.0:
+        if True:                       # with or without an additive pose (2026-11-11)
             keeps = dict((side, min(max(float(ks[side]["weapon_aim"]), 0.0), 1.0))
                          for side in chains if side not in out_of_pose)
             if grip and len(keeps) == 2:
@@ -4511,8 +4513,8 @@ class Walk(object):
         #  Shoulder (2026-11-10): the share of the arm's reach changes each clavicle takes - the tab's rule
         #  again (where the additive pose holds that arm, its share blending it in), and it needs no Hold
         shoulders = {}
-        if pose is not None and ctx["alpha"] > 0.0:
-            shoulders = dict((side, ctx["alpha"] * min(max(float(ks[side]["weapon_shoulder"]), 0.0), 1.0))
+        if True:                       # with or without an additive pose, at full strength (2026-11-11)
+            shoulders = dict((side, min(max(float(ks[side]["weapon_shoulder"]), 0.0), 1.0))
                              for side in chains if side not in out_of_pose)
             shoulders = dict((side, v) for side, v in shoulders.items() if v > SHOULDER_QUIET)
         biggest = lambda table: max([abs(v) for v in table.values()] or [0.0])
@@ -4551,11 +4553,10 @@ class Walk(object):
                 if max(abs(lags[side]), abs(turns[side]), abs(elbows[side])) >= OVERLAP_QUIET:
                     hands[side] = wanted(kin[chain[-1]], lags[side], turns[side])
         if holds:
-            out["hold_cm"] = self._weapon_hold(kin, n, chains, hands, holds, followers, ctx["alpha"],
-                                               inherits)
+            out["hold_cm"] = self._weapon_hold(kin, n, chains, hands, holds, followers, 1.0, inherits)
         if aims:                       # after Hold / Overlap: the blade aims from where they left the hand
             levers = self._aim_levers(kin, chains, held, sorted(aims), bool(ctx.get("weapons")))
-            out["aim"].update(self._weapon_aim(kin, n, chains, hands, aims, levers, ctx["alpha"]))
+            out["aim"].update(self._weapon_aim(kin, n, chains, hands, aims, levers, 1.0))
         hints = {}
         for side, chain in chains.items():
             if side in hands and abs(elbows[side]) >= OVERLAP_QUIET:
