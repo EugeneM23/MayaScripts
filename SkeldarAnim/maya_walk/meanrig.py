@@ -417,7 +417,10 @@ def update(rekey=None):
         # its Aim Mode target and up moved on the rig are the snap's, which only Snap weapon used to read
         snap, snap_said = _snap_again(rig, edits.get("snap"))
         head, head_said = _head_again(rig, edits.get("head"))
-        if not moved and snap is None and head is None:
+        # the weapon's seat in the hand on the rig pose put on the walker's weapon (2026-11-11, port 7005: the
+        # sword turned in the rig pose's hand, Update, the walker's sword unmoved)
+        seated = seat_weapons(rig, root)
+        if not moved and snap is None and head is None and not seated:
             said = [s for s in ignored + [t for t in (snap_said, head_said) if t]]
             if said:
                 lines.append("mean pose of %s: nothing taken | %s" % (scene.walker_label(root), "; ".join(said)))
@@ -431,7 +434,7 @@ def update(rekey=None):
         scene.set_edits(root, edits)
         with scene.Unrecorded():
             _set_memo(rig, dict(memo, base=_flat(now)))
-        took = ([kp.describe(moved)] if moved else []) + ([snap_said] if snap is not None else []) +             ([head_said] if head is not None else [])
+        took = ([kp.describe(moved)] if moved else []) + ([snap_said] if snap is not None else []) +             ([head_said] if head is not None else []) + ([seated] if seated else [])
         line = "mean pose of %s: %s" % (scene.walker_label(root), ", ".join(took))
         if ignored:
             line += " | not taken: " + "; ".join(ignored)
@@ -446,6 +449,60 @@ def update(rekey=None):
 
 
 SNAP_TOL = 1e-4             # a snap read again within this of the one standing is the same snap
+SEAT_TOL = 1e-3             # cm / matrix element: a weapon's seat in the hand within this is the same seat
+
+
+def _hand_weapons(skeleton_root):
+    """{side: (weapon, hand)} - our weapons (bonedrive.MARKER) a hand of the skeleton under `skeleton_root` holds."""
+    cmds = _cmds()
+    try:
+        from maya_scenesetup import bonedrive, weaponspace
+        import maya_markers
+    except ImportError:
+        return {}
+    top = cmds.ls(skeleton_root, long=True)
+    if not top:
+        return {}
+    top = top[0]
+    out = {}
+    for weapon in maya_markers.find(bonedrive.MARKER, "transform", commands=cmds) or []:
+        hand = weaponspace.holding_hand(weapon)
+        hand = cmds.ls(hand, long=True)[0] if hand and cmds.objExists(hand) else None
+        if not hand or not (hand + "|").startswith(top + "|"):
+            continue
+        leaf = hand.rsplit("|", 1)[-1].split(":")[-1]
+        side = {"hand_r": "r", "hand_l": "l"}.get(leaf)
+        if side and side not in out:
+            out[side] = (weapon, hand)
+    return out
+
+
+def seat_weapons(rig, root):
+    """The weapon in each hand of the rig pose given the same seat in the walker's same hand: the walker's weapon
+    placed at (its seat in the rig's hand) . (the walker's hand), when that differs past SEAT_TOL. The weapons are
+    scene objects riding their hands (weapon spaces), not the walk's keys, so nothing is keyed; a weapon with keys
+    or locked channels is left and named. Returns the words for the line ("" when nothing moved)."""
+    cmds = _cmds()
+    world = lambda n: np.array(cmds.xform(n, query=True, worldSpace=True, matrix=True), float).reshape(4, 4)
+    on_rig, on_walker = _hand_weapons(rig.skeleton_root), _hand_weapons(root)
+    said = []
+    for side, (rig_weapon, rig_hand) in sorted(on_rig.items()):
+        if side not in on_walker:
+            continue
+        weapon, hand = on_walker[side]
+        seat = world(rig_weapon) @ np.linalg.inv(world(rig_hand))
+        want = seat @ world(hand)
+        if float(np.abs(want - world(weapon)).max()) <= SEAT_TOL:
+            continue
+        name = weapon.rsplit("|", 1)[-1].split(":")[-1]
+        stuck = [a for a in ("tx", "ty", "tz", "rx", "ry", "rz") if cmds.getAttr(weapon + "." + a, lock=True)
+                 or cmds.listConnections(weapon + "." + a, source=True, destination=False)]
+        if stuck:
+            said.append("%s not reseated (%s keyed or locked)" % (name, ", ".join(stuck)))
+            continue
+        cmds.xform(weapon, worldSpace=True, matrix=[float(v) for v in want.reshape(16)])
+        said.append("%s reseated in the %s hand" % (name, {"r": "right", "l": "left"}[side]))
+    return ", ".join(said)
 
 
 def _same_snap(a, b):

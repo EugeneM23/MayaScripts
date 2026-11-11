@@ -18454,6 +18454,14 @@ the hand rides the clavicle, the roll as in the example). Spec
   before); `verify_walk_snap_weapon.py` **11/11** (gates 8-9: the target moved 15 cm on the rig, Update, the
   walker's blade through the new point on every key, 0.00005 cm).
 
+- **…and the weapon's seat in the hand** (the same evening, port 7005, read only: a Fighter skeleton walking its
+  own cycle, its rig pose Manny_Rig, a Long Sword in each right hand and NO snap - the sword turned 10 cm / 1.6 deg in
+  the rig pose's hand, Update, the walker's sword unmoved; the fix above never ran there). Update now puts the
+  rig pose's weapon seat (`weapon world . hand world^-1`) on the walker's weapon in the same hand
+  (`meanrig.seat_weapons`, `_hand_weapons`): a scene object riding its weapon space, so nothing is keyed; a weapon
+  with keyed or locked t/r is left and named. Unit-tested only through the existing suites (the animator: tests
+  later, in bulk).
+
 **…and the head aimed the same way** (the same day: «для головы сделаем такую-же систему фиксации как и для оружия»;
 asked: like Snap weapon, «создавать голове аим и контролировать ручкой насколько она смотрит туда»). Spec
 `docs/superpowers/specs/2026-11-11-walk-head-aim-design.md`. `SkeldarAnim/maya_walk/headaim.py`:
