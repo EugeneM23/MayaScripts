@@ -72,6 +72,10 @@ KEY_CREATE_BTN = "skeldarWalkKeyCreate"
 KEY_DELETE_BTN = "skeldarWalkKeyDelete"
 KEY_RESET_BTN = "skeldarWalkKeyReset"
 MEAN_CAPTION = "skeldarWalkMeanCaption"
+#  Snap weapon (2026-11-11): the rig pose's weapon in Aim Mode, laid on the shoulder for the whole walk
+SNAP_CAPTION = "skeldarWalkSnapCaption"
+SNAP_BTN = "skeldarWalkSnap"
+UNSNAP_BTN = "skeldarWalkUnsnap"
 KEY_CAPTION = "skeldarWalkKeyCaption"
 #  Knobs shown as a checkbox (0 / 1), not a slider: In place, beside Pick
 CHECKS = {"in_place": IN_PLACE_BOX}
@@ -144,6 +148,10 @@ LABELS = {
 }
 TIPS = {}         # filled below
 TIPS = {
+    "snap_weapon": "Snap weapon: on the rig pose put the weapon in Aim Mode (Connections > Weapon), move its target "
+                   "onto the shoulder and the hand where it holds the weapon, then press - the hand rides the clavicle "
+                   "and the blade lies on that shoulder point through the whole walk.",
+    "unsnap": "Unsnap: the walker's snapped weapon dropped, the walk as it was.",
     "apply": "Pick: the walk well's active card on every selected skeleton (UE5/UE4, Mixamo, HumanIK, Unity, "
              "Biped ...), in its own proportions, from where it stands; each joins the list below. A skeleton's own "
              "animation is kept on it first (Restore the original keys puts it back). Right button: each on its "
@@ -1963,6 +1971,19 @@ def press_mean_update(*_):
     return _press(run)
 
 
+def press_snap(*_):
+    """Rig pose > Weapon > Snap weapon: the working walker's rig pose weapon in Aim Mode laid on the shoulder
+    (maya_walk.snapweapon)."""
+    from . import snapweapon
+    return _press(lambda: snapweapon.press(_working_root(), _rekey_root))
+
+
+def press_unsnap(*_):
+    """Rig pose > Weapon > Unsnap: the working walker's snap dropped."""
+    from . import snapweapon
+    return _press(lambda: snapweapon.unsnap(_working_root(), _rekey_root))
+
+
 def press_mean_delete(*_):
     """Rig pose > Delete: the working walker's rig out of the scene."""
     from . import meanrig
@@ -2378,7 +2399,9 @@ def _rig_pose_buttons():
         (KEY_CAPTION, "Key poses", ((KEY_CREATE_BTN, "Create", "secondary", "walk", "key_create", press_key_create),
                                     (KEY_RESET_BTN, "Reset", "secondary", "arrow-back-up", "key_reset", press_key_reset),
                                     (KEY_DELETE_BTN, "Delete", "danger", "trash", "key_delete", press_key_delete))),
-        (None, None, ((MEAN_UPDATE_BTN, "Update", "primary", "refresh", "mean_update", press_mean_update),)))
+        (None, None, ((MEAN_UPDATE_BTN, "Update", "primary", "refresh", "mean_update", press_mean_update),)),
+        (SNAP_CAPTION, "Weapon", ((SNAP_BTN, "Snap weapon", "secondary", "sword", "snap_weapon", press_snap),
+                                  (UNSNAP_BTN, "Unsnap", "secondary", "arrow-back-up", "unsnap", press_unsnap))))
     for caption, title, row in sections:
         if caption:
             hubstyle.mark(cmds.text(caption, label=title, align="left"), "heading")

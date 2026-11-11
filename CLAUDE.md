@@ -18408,3 +18408,33 @@ port 7005: «перерастягивается локоть при текущи
   Sword, read back off the joints (gate 1: Shoulder 0 reproduces their scene's 0.94). `tests/test_walk_weapon_shoulder.py`
   (24; the fixture's Overlap is 1 frame so the turn stays under the free 21 deg - at 3 frames the limit eases in
   and "one reach" reads 0.24 cm). **Not seen in a GUI Maya**; their scene on 7005 was only read.
+
+**…and Snap weapon: the weapon lies on the shoulder** (2026-11-11, an example on port 7006: a Long Sword in Aim
+Mode, `IKArm_R` and the aim target both riding Tools > Across knots inside `FKScapula_R`, the target moved ~52 cm
+down the blade onto the shoulder, the up left in Main; «сделали такой же функционал в нашем walk builder ...
+связать этот функционал с риг позой ... нажать кнопочку snap weapon»; asked: the shifted pivot is the target point,
+the hand rides the clavicle, the roll as in the example). Spec
+`docs/superpowers/specs/2026-11-11-walk-snap-weapon-design.md`.
+- **Rig pose tab > Weapon: Snap weapon / Unsnap** (`panel.press_snap` / `press_unsnap`). On the working walker's
+  mean pose rig the animator equips the weapon, Aim Mode (Connections), moves the target onto the shoulder and poses
+  the hand. No knots needed: `maya_walk/snapweapon.read` takes where things stand - the one weapon in Aim Mode in a
+  rig hand (refused by name otherwise), the hand in its clavicle's frame, the weapon (grip, the constraint's aim and
+  up axes) in the hand's, the target in the frame of the clavicle NEAREST it, the up in the game root's, the other
+  hand when within `GRIP_CM` 15 of the blade. Kept on the walker: `skeldarWalkEdits` gains `snap` (`sw.loads`
+  validates; an older build ignores it). Reset rig pose leaves it.
+- **On the walk** (`snapweapon.apply`, in `scene.animate` LAST - after the parameters, pose, physics and the rig
+  pose / key poses layer, before In place; that layer turns arm bones and would pull the hand off): the hand rides its
+  clavicle at its offset, swung about the grip so the weapon it carries aims at the clavicle point with its up axis
+  toward the up point carried by the root; the other hand rides the holding hand; `_arm_to_hand` + `_reattach`. A
+  weapon on a walker follows its hand rigidly, so the HAND takes the blade's roll (in the example the weapon turns in
+  the hand). Full strength whatever the pose share. The line: «weapon snapped: Long Sword 02 on the right shoulder,
+  right hand (rolled up to N deg)», «the hand N cm short» where the arm cannot reach.
+- Proof: `tests/test_walk_snap_weapon.py` (12, the synthetic walker as both rig and walker: the grip on the
+  clavicle to 1e-6 where the walk itself swings it over 1 cm, the blade's line through the point, the up in the aim
+  plane leaning toward the up point, bone lengths, fingers carried, body untouched, two hands, missing bones said);
+  `docs/superpowers/plans/walkparam/verify_walk_snap_weapon.py` **9/9 mayapy standalone** (a Manny UE5 skeleton
+  walking `asd` under the two-handed sword pose, its rig pose with a Long Sword in Aim Mode, the target 10 cm above
+  `clavicle_r`: refused without Aim Mode, on every key the grip on the clavicle 0.00004 cm and the blade's line
+  through the point 0.00004 cm, the upper arm's length 1e-6, Unsnap giving every joint curve back 0.0); 1168 walk
+  unit tests. **Not seen in a GUI Maya.** Not built: other attach points (chest, back, head), the target on a
+  control of its own, keying the weapon's own rotate in the hand.

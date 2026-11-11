@@ -28,6 +28,7 @@ from . import meanpose as mp
 from . import keyposes as kp
 from . import cards as wcards
 from . import gait
+from . import snapweapon as sw
 
 PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE = os.path.join(PLUGIN, "assets", "manny_skeleton_template.json")
@@ -62,7 +63,7 @@ class Refusal(Exception):
     """What a press does not do, and why (the status line shows it)."""
 
 
-REFUSALS = (Refusal, wm.Refusal, wf.Refusal, wt.Refusal, mp.Refusal, kp.Refusal, wcards.Refusal)
+REFUSALS = (Refusal, wm.Refusal, wf.Refusal, wt.Refusal, mp.Refusal, kp.Refusal, wcards.Refusal, sw.Refusal)
 #  The pose's bones as a walked skeleton last used them (packed, maya_walk.cards): the walk keeps walking when
 #  its Pose Library card is renamed or deleted (2026-10-15)
 POSE_COPY = "skeldarWalkPose"
@@ -920,12 +921,12 @@ def set_working(roots):
 
 
 def empty_edits(walk=""):
-    return {"walk": walk or "", "fix": mp.empty(), "keys": kp.empty(), "posture": False}
+    return {"walk": walk or "", "fix": mp.empty(), "keys": kp.empty(), "posture": False, "snap": None}
 
 
 def edits_empty(edits):
     return (not edits or (mp.is_empty(edits.get("fix") or mp.empty()) and kp.is_empty(edits.get("keys"))
-                          and not edits.get("posture")))
+                          and not edits.get("posture") and not edits.get("snap")))
 
 
 def edits_of(root):
@@ -951,6 +952,7 @@ def edits_of(root):
     except kp.Refusal:
         pass
     out["posture"] = bool(raw.get("posture", False))
+    out["snap"] = sw.loads(raw.get("snap"))     # Snap weapon (2026-11-11)
     return out
 
 
@@ -958,7 +960,8 @@ def set_edits(root, edits):
     """The walker `root`'s own edits written - unrecorded (Ctrl+Z is the rig's, or the press's own)."""
     cmds = _cmds()
     data = {"walk": (edits or {}).get("walk") or "", "fix": mp.dumps((edits or {}).get("fix") or mp.empty()),
-            "keys": kp.dumps((edits or {}).get("keys") or {}), "posture": bool((edits or {}).get("posture"))}
+            "keys": kp.dumps((edits or {}).get("keys") or {}), "posture": bool((edits or {}).get("posture")),
+            "snap": (edits or {}).get("snap") or None}
     with Unrecorded():
         if not cmds.attributeQuery(EDITS_ATTR, node=root, exists=True):
             cmds.addAttr(root, longName=EDITS_ATTR, dataType="string")
@@ -1001,6 +1004,8 @@ def edits_line(edits):
         parts.append("key poses: %s" % kp.summary(edits["keys"]))
     if edits and edits.get("posture"):
         parts.append("posture fixed")
+    if edits and edits.get("snap"):
+        parts.append("snapped: " + sw.summary(edits["snap"]))
     return " | ".join(parts)
 
 
@@ -1384,12 +1389,20 @@ def animate(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, pose_c
     rw = steps = None
     layer_note = ""
     weapons = weapons_in_hands(root)       # the hands' own weapons: who carries a hold, the blade Aim target aims
-    if kp.is_empty(keys) and not with_steps:
+    snap = edits.get("snap") or None
+    snap_note = ""
+    if kp.is_empty(keys) and not with_steps and not snap:
         result = evaluated(walk, knobs, pose, prepared, parts, weapons)
         moving = result.worlds if amount <= 0.0 else None
     else:
         base = evaluated(walk, dict(knobs, in_place=0.0), pose, prepared, parts, weapons)
-        moving, rw, steps, layer_note = kp.on_result(walk, base.worlds, keys)
+        if kp.is_empty(keys) and not with_steps:
+            moving = base.worlds
+        else:
+            moving, rw, steps, layer_note = kp.on_result(walk, base.worlds, keys)
+        if snap:            # Snap weapon (2026-11-11): last of everything, the rig pose's layer under it
+            moving, done = sw.apply(walk, moving, snap)
+            snap_note = sw.line(snap, done)
         worlds = kp.in_place(moving, walk, amount) if amount > 0.0 else moving
         result = wm.Result(worlds, base.frames, dict(base.info, knobs=dict(base.info["knobs"], in_place=amount),
                                                      in_place=amount))
@@ -1398,7 +1411,7 @@ def animate(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, pose_c
                      weapons=weapons,
                      pose_label=pose_label, pose_note=pose_note, packed=packed, parts=tuple(parts), edits=edits,
                      edits_note=edits_note, result=result, moving=moving, rw=rw, steps=steps,
-                     layer_note=layer_note, pose_card=pose_card)
+                     layer_note=layer_note, pose_card=pose_card, snap_note=snap_note)
 
 
 def walker_animation(root, with_steps=True):
@@ -1519,7 +1532,7 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     edited = edits_line(anim.edits)
     if edited:
         text += " | " + edited
-    for extra in (anim.edits_note, anim.layer_note):
+    for extra in (anim.edits_note, anim.layer_note, getattr(anim, "snap_note", "")):
         if extra:
             text += " | " + extra
     if report.changed:
