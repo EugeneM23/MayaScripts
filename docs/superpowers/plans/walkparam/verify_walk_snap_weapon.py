@@ -154,6 +154,24 @@ first, last = world("hand_r", TIMES[0]), world("hand_r", TIMES[-1])
 travel = first.copy()
 gate(True, "keyed %d frames (%s)" % (len(TIMES), line[:160]))
 
+# ---- the rig pose's Update reads the snapped weapon again (2026-11-11: «обновление позы не обновляет оружие») ----
+higher = clav[3, :3] + np.array([0.0, 25.0, 0.0])
+cmds.xform(ctrls["target"], worldSpace=True, translation=list(higher))
+cmds.currentTime(cmds.currentTime(query=True))
+line = meanrig.update(rekey)
+print(line)
+snap2 = sw.edits_of(B)["snap"]
+moved = float(np.linalg.norm(np.array(snap2["target"]) - np.array(snap["target"])))
+gate(abs(moved - 15.0) < 0.01, "Update takes the target moved on the rig: %.4f cm (15 asked)" % moved)
+miss2 = 0.0
+for t in TIMES:
+    H, C = R(world("hand_r", t)), R(world("clavicle_r", t))
+    G = np.array(snap2["grip"]) @ H[:3, :3] + H[3, :3]
+    T = np.array(snap2["target"]) @ C[:3, :3] + C[3, :3]
+    a = snapweapon._unit(np.array(snap2["aim"]) @ H[:3, :3])
+    miss2 = max(miss2, float(np.linalg.norm(np.cross(a, T - G))) if np.dot(a, T - G) > 0 else 1e9)
+gate(miss2 < 0.01, "after Update the walker's blade aims at the new point on every key: %.6f cm" % miss2)
+
 print(snapweapon.unsnap(B, rekey))
 AFTER = curves("B")
 worst = 0.0

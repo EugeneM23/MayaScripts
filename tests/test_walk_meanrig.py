@@ -401,7 +401,8 @@ class FakeScene(object):
     def _copy(edits):
         """Through their files' plain data, as the walker's attribute holds them."""
         return {"walk": edits.get("walk") or "", "fix": mp.loads(mp.dumps(edits.get("fix") or mp.empty())),
-                "keys": kp.loads(kp.dumps(edits.get("keys") or {})), "posture": bool(edits.get("posture"))}
+                "keys": kp.loads(kp.dumps(edits.get("keys") or {})), "posture": bool(edits.get("posture")),
+                "snap": edits.get("snap") or None}
 
     def apply(self, root, walk, knobs=None, pose=None, parts=(), record=True, pose_card=None, params=None):
         self.applied.append({"root": root, "walk": walk, "knobs": knobs, "pose": pose, "parts": parts,

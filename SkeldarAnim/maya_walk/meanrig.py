@@ -413,21 +413,62 @@ def update(rekey=None):
         # a mean pose has no foot in the air.
         inc, moved, ignored = kp.increment(kp.CYCLE, kp.measure(base, rw), kp.measure(now, rw), rw, 0,
                                            planted=True)
-        if not moved:
-            if ignored:
-                lines.append("mean pose of %s: nothing taken | %s" % (scene.walker_label(root), "; ".join(ignored)))
+        # a snapped weapon is read off the rig again (2026-11-11, «обновление позы не обновляет оружие»): its hand,
+        # its Aim Mode target and up moved on the rig are the snap's, which only Snap weapon used to read
+        snap, snap_said = _snap_again(rig, edits.get("snap"))
+        if not moved and snap is None:
+            said = [s for s in ignored + ([snap_said] if snap_said else [])]
+            if said:
+                lines.append("mean pose of %s: nothing taken | %s" % (scene.walker_label(root), "; ".join(said)))
             continue
-        edits["keys"] = kp.add(edits.get("keys") or {}, kp.CYCLE, inc)
+        if moved:
+            edits["keys"] = kp.add(edits.get("keys") or {}, kp.CYCLE, inc)
+        if snap is not None:
+            edits["snap"] = snap
         scene.set_edits(root, edits)
         with scene.Unrecorded():
             _set_memo(rig, dict(memo, base=_flat(now)))
-        line = "mean pose of %s: %s" % (scene.walker_label(root), kp.describe(moved))
+        took = ([kp.describe(moved)] if moved else []) + ([snap_said] if snap is not None else [])
+        line = "mean pose of %s: %s" % (scene.walker_label(root), ", ".join(took))
         if ignored:
             line += " | not taken: " + "; ".join(ignored)
+        if snap is None and snap_said:
+            line += " | " + snap_said
         lines.append(line + ((rekey or rekey_root)(root)))
     if not lines:
         return NOTHING_MOVED
     return " | ".join(lines)
+
+
+SNAP_TOL = 1e-4             # a snap read again within this of the one standing is the same snap
+
+
+def _same_snap(a, b):
+    """Two snaps alike to SNAP_TOL (their numbers) and in their words."""
+    for key in set(a) | set(b):
+        x, y = a.get(key), b.get(key)
+        if isinstance(x, (list, tuple)) and isinstance(y, (list, tuple)):
+            if len(x) != len(y) or any(abs(float(p) - float(q)) > SNAP_TOL for p, q in zip(x, y)):
+                return False
+        elif x != y:
+            return False
+    return True
+
+
+def _snap_again(rig, standing):
+    """(the snap read off `rig` when it differs from the walker's `standing` one, else None; words for the line).
+    A walker with no snap is never read for one: Snap weapon is what puts one on. A rig whose weapon is no longer
+    in Aim Mode keeps the walker's snap, and says so."""
+    if not standing:
+        return None, ""
+    from . import snapweapon as sw
+    try:
+        fresh = sw.read(rig)
+    except sw.Refusal as error:
+        return None, "the snapped weapon kept: %s" % error
+    if _same_snap(fresh, standing):
+        return None, ""
+    return fresh, "weapon snapped again: " + sw.summary(fresh)
 
 
 def rekey_root(root):
