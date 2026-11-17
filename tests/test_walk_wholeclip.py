@@ -137,5 +137,80 @@ class Legs(unittest.TestCase):
         self.assertLess(out[pelvis, f, 3, 1], raw.worlds[pelvis, f, 3, 1] - 3.0)
 
 
+def gripped(loop):
+    """The loop with its left hand held where it stands against the right one at frame 0, on every frame (a pose's
+    two-handed grip in the walk's result)."""
+    w = loop.worlds.copy()
+    r, l = loop.index["hand_r"], loop.index["hand_l"]
+    hold = w[l, 0] @ np.linalg.inv(w[r, 0])
+    # a third of the way from the right hand to the left shoulder: 20 cm apart, and in the left arm's reach
+    shoulder = loop.index["upperarm_l"]
+    hold[3, :3] = 0.3 * np.mean([(w[shoulder, f] @ np.linalg.inv(w[r, f]))[3, :3] for f in range(w.shape[1])], axis=0)
+    for f in range(w.shape[1]):
+        short = wcl._limb_fix(loop, w[:, f], hold @ w[r, f], ["upperarm_l", "lowerarm_l", "hand_l"], 1.0)
+        assert short < 1e-9, short
+    return ss.Clip(loop.names, loop.parents, w, loop.fps, "gripped"), hold
+
+
+class Grip(unittest.TestCase):
+    def test_the_walks_grip_is_found_and_a_free_walk_has_none(self):
+        loop = loop_clip()
+        res, hold = gripped(loop)
+        np.testing.assert_allclose(wcl.grip_hold(res, loop.index), wcl._rigid(hold), atol=1e-9)
+        self.assertIsNone(wcl.grip_hold(loop, loop.index))
+
+    def test_both_hands_hold_the_weapon_on_every_frame_of_the_clip(self):
+        raw = tiled(before=12, after=8)
+        loop = loop_clip()
+        res, hold = gripped(loop)
+        out, info = wcl.build(raw, loop, res)
+        self.assertTrue(info["grip"])
+        r, l = raw.index["hand_r"], raw.index["hand_l"]
+        for f in range(raw.F):
+            rel = wcl._rigid(out[l, f]) @ np.linalg.inv(wcl._rigid(out[r, f]))
+            np.testing.assert_allclose(rel[3, :3], hold[3, :3], atol=1e-6 + info["grip_short"])
+        for name in ("lowerarm_l", "hand_l", "lowerarm_r", "hand_r"):
+            j = raw.index[name]
+            q = raw.parents[j]
+            np.testing.assert_allclose(np.linalg.norm(out[j, :, 3, :3] - out[q, :, 3, :3], axis=1),
+                                       np.linalg.norm(raw.worlds[j, :, 3, :3] - raw.worlds[q, :, 3, :3], axis=1),
+                                       atol=1e-6, err_msg=name)
+
+    def test_the_weapon_rides_the_chest_as_the_walk_carries_it(self):
+        raw = tiled(before=0, after=0)
+        loop = loop_clip()
+        res, _hold = gripped(loop)
+        out, info = wcl.build(raw, loop, res)
+        r, c = raw.index["hand_r"], raw.index["clavicle_r"]
+        chest = raw.parents[c]
+        rc = ss.Cycle(res)
+        for f in range(info["walking"][0][0], info["walking"][-1][1]):
+            R = rc.sample(info["phases"][f])
+            want = (wcl._rigid(R[r]) @ np.linalg.inv(wcl._rigid(R[chest])))[3, :3]
+            got = (wcl._rigid(out[r, f]) @ np.linalg.inv(wcl._rigid(out[chest, f])))[3, :3]
+            np.testing.assert_allclose(got, want, atol=1e-4 + info["grip_short"])
+
+    def test_a_clip_that_holds_its_own_grip_is_left_to_the_difference(self):
+        loop, _hold = gripped(loop_clip())
+        frames = []
+        for k in range(3):                         # three strides of the held loop, standing first
+            for f in range(P):
+                m = loop.worlds[:, f].copy()
+                m[:, 3, 2] += k * TRAVEL
+                frames.append(m)
+        frames = [loop.worlds[:, 0]] * 12 + frames
+        raw = ss.Clip(loop.names, loop.parents, np.stack(frames, axis=1), 30.0, "raw")
+        out, info = wcl.build(raw, loop, loop)
+        self.assertFalse(info["grip"])
+        np.testing.assert_allclose(out[:, :, 3, :3], raw.worlds[:, :, 3, :3], atol=1e-4)
+
+    def test_a_walk_with_no_grip_leaves_the_arms_alone(self):
+        raw = tiled()
+        loop = loop_clip()
+        out, info = wcl.build(raw, loop, loop)
+        self.assertFalse(info["grip"])
+        np.testing.assert_allclose(out[raw.index["hand_l"]], raw.worlds[raw.index["hand_l"]], atol=1e-6)
+
+
 if __name__ == "__main__":
     unittest.main()

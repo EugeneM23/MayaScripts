@@ -29,6 +29,9 @@ JOLT = 1.0                 # cm a frame^2: the most the hand-over from a held po
 PACE_LOOK = 10             # frames past the fall the stance-to-walk distance is read over
 PACE_POINTS = ("pelvis", "spine_05", "head")
 LEGS = ("thigh", "calf", "foot")
+ARMS = ("upperarm", "lowerarm", "hand")
+GRIP_DIST = 30.0           # cm: two hands this near each other, holding still against each other, hold one thing
+GRIP_STILL = 0.5           # cm: how little the two hands may move against each other in the walk to count as held
 
 
 class Refusal(Exception):
@@ -242,8 +245,13 @@ def _leg_fix(clip, worlds, targets, side, reach=REACH):
     """The leg of `side` solved onto its foot target, in place (worlds (J, 4, 4)): the thigh and the calf turned the
     least way onto the two-bone IK's knee (toward the leg's own bend), the foot standing in its target's turn. The
     children of the three bones carried rigidly. Returns how far it fell short."""
+    return _limb_fix(clip, worlds, targets, ["%s_%s" % (b, side) for b in LEGS], reach)
+
+
+def _limb_fix(clip, worlds, targets, chain, reach=REACH):
+    """A three-joint chain (`chain` leaf names, root to end) solved onto `targets` (4x4, the end's world), in place."""
     ix = clip.index
-    th, ca, fo = (ix["%s_%s" % (b, side)] for b in LEGS)
+    th, ca, fo = (ix[n] for n in chain)
     hip, knee0, ankle0 = worlds[th, 3, :3], worlds[ca, 3, :3], worlds[fo, 3, :3]
     l1, l2 = float(np.linalg.norm(knee0 - hip)), float(np.linalg.norm(ankle0 - knee0))
     goal = targets[3, :3]
@@ -262,6 +270,29 @@ def _leg_fix(clip, worlds, targets, side, reach=REACH):
     new[fo] = foot
     _carry(clip, worlds, before, new)
     return float(short)
+
+
+def _chest(clip):
+    """The joint the right arm hangs from (its clavicle's parent), or None."""
+    j = clip.index.get("clavicle_r")
+    if j is None or clip.parents[j] < 0:
+        return None
+    return clip.parents[j]
+
+
+def grip_hold(result, names):
+    """The left hand in the right hand's frame (4x4, rigid) when Walk Builder's loop holds the two hands together -
+    near each other and still against each other on every frame (a pose's two-handed grip) - else None."""
+    ix = dict((n, i) for i, n in enumerate(result.names))
+    if "hand_r" not in ix or "hand_l" not in ix or "hand_r" not in names or "hand_l" not in names:
+        return None
+    w = np.asarray(result.worlds)
+    rel = np.array([_rigid(w[ix["hand_l"], f]) @ np.linalg.inv(_rigid(w[ix["hand_r"], f])) for f in range(w.shape[1])])
+    if float(np.linalg.norm(rel[:, 3, :3], axis=1).max()) > GRIP_DIST:
+        return None
+    if float(np.ptp(rel[:, 3, :3], axis=0).max()) > GRIP_STILL:
+        return None
+    return _rigid(rel[0])
 
 
 def _aimed(world, old_dir, new_dir, bend):
@@ -369,7 +400,34 @@ def build(raw, loop, result, statics=None, bones=None, parts=None, share=1.0, k=
             out[above, f, 3, 1] -= drop[f]
         for s in ss.SIDES:
             shorts[f] = max(shorts[f], _leg_fix(raw, out[:, f], targets[s][f], s))
+    # the hands last: a two-handed grip in the walk holds on every frame of the clip - the right hand carries the
+    # weapon and the left arm is solved by IK onto its hold (2026-11-17: in a whole clip the clip's own swinging arms
+    # under the walk's difference let the hands drift 64 cm apart)
+    # (a clip that holds its weapon two-handed already keeps its grip under the difference: left as it is, so the walk's
+    # own values still give the clip back)
+    hold = grip_hold(result, raw.index) if grip_hold(loop, raw.index) is None else None
+    grip_short = 0.0
+    if hold is not None:
+        hand_r = raw.index["hand_r"]
+        chest = _chest(raw)
+        widx = dict((n, i) for i, n in enumerate(result.names))
+        for f in range(F):
+            # the weapon where the walk carries it against the chest (its Hold, Inherit, Overlap...), the stance's
+            # where the body stands: the clip's own arm swing under the difference must not reach it
+            walk = 1.0 - float(still[f]) if stance is not None else 1.0
+            if walk > 0.0 and chest is not None:
+                R = result_cycle.sample(phases[f])
+                in_chest = _rigid(R[widx["hand_r"]]) @ np.linalg.inv(_rigid(R[widx[raw.names[chest]]]))
+                want = _mix(_rigid(out[hand_r, f]), in_chest @ _rigid(out[chest, f]), walk)
+                scale = np.linalg.norm(out[hand_r, f][:3, :3], axis=1)
+                want[:3, :3] = want[:3, :3] * scale[:, None]
+                grip_short = max(grip_short, _limb_fix(raw, out[:, f], want, ["%s_r" % b for b in ARMS], 1.0))
+            target = hold @ out[hand_r, f]
+            scale = np.linalg.norm(out[raw.index["hand_l"], f][:3, :3], axis=1)
+            target[:3, :3] = ss.orthonormal(target) * scale[:, None]
+            grip_short = max(grip_short, _limb_fix(raw, out[:, f], target, ["%s_l" % b for b in ARMS], 1.0))
     info = {"walking": walking, "phases": phases, "loop_speed": loop_speed, "still": still,
+            "grip": hold is not None, "grip_short": float(grip_short),
             "start": (0, walking[0][0] - 1) if walking[0][0] > 0 else None,
             "stop": (walking[-1][1], F - 1) if walking[-1][1] < F - 1 else None,
             "drop": float(drop.max()), "short": float(shorts.max()), "stance": stance is not None,

@@ -12542,6 +12542,18 @@ Measured on their clip and Unreal's OxGuard start, with their `LongSword_Idle_3P
 stance's own 0.35 / 0.58 / 0.74 cm a frame² (it was 3.8-7.3 the first try). Gate «the start's first frame is the
 card's pose» in the verify.
 
+**…and both hands on the weapon** (the same evening, port 7005: «руки должны быть привязаны как IK к оружию в этом
+режиме но сейчас они болтаются»). Read off their keys: under `LongSword_Idle_3P` the left hand wandered **64 cm**
+against the right over the whole clip - the walk's per-joint difference laid over the clip's own SWINGING arms does
+not hold a grip, and the arms in the chest's frame swung 32 cm where the walk's loop carries the weapon 12. Now
+(`wholeclip.build`, after the legs): when Walk Builder's loop holds the two hands together (`grip_hold`: within
+`GRIP_DIST` 30 cm and still against each other to `GRIP_STILL` 0.5 cm on every frame) and the cleaned source loop
+does not, the right hand goes where the walk carries it against the chest (its clavicle's parent) at each frame's
+phase, mixed toward the stance's by the stillness, and the left arm is solved by IK onto that hold (`_limb_fix`, the
+legs' solver made general). A source that already holds its weapon two-handed (OxGuard) is left to the difference,
+so the walk's own values still give it back. On their data: the hold exact (0.0), the arm bones whole, the weapon
+13 cm against the chest (the loop's 12). Tests `test_walk_wholeclip.Grip`.
+
 ## The Pose Library: our look, a folder button, a list at the smallest size (2026-10-22)
 
 The animator: «перерисовать библеотеку поз в нашем стиле и сделать само меню более компактным ...
