@@ -12478,6 +12478,48 @@ character and its own posemath / skeletonmap copies are gone (in git before this
   presses): after Check update. With no pose the card's default springs still trail the arms (58 cm at the
   fingers on the sprint stop).
 
+**…no jolt where a start goes into its steps** (the same day, the animator on port 7005: «в момент перехода к
+ходьбе она теперь дергается»; read on their scene, reproduced headless). Balance carried the pelvis frame by frame,
+and the carry jumped where the stance gave way to the run. The carry is smoothed over `CARRY_SIGMA` (2) frames
+and the frames are assembled again with it; a clip whose last frame repeats the one before keeps it so (`_speeds`
+takes the step before, and the result's last frame is its own before). Commit 4e577ed5.
+
+## Walk Builder on a whole clip: its start, its walk and its stop (2026-11-17)
+
+The animator, in the same breath: «можем ли мы так сделать что бы все настройки walk buidler работали пока наш
+персонаж идет, тоесть как-то определять где старт где стоп кусочек и где наш цикл ... научить walk builder рабоать
+с стартами и стопами». Asked: the same clip edited, **its own timing**, Start/Stop Builder kept for now, approach A
+(Walk Builder's change laid over the clip as a difference). Spec
+`docs/superpowers/specs/2026-11-17-walk-builder-whole-clip-design.md`.
+- **`SkeldarAnim/maya_walk/wholeclip.py`** (numpy): `build(raw, loop, result, statics, bones, parts, share, k)`.
+  - The walking part: strides at least `WALK_SHARE` (0.75) of the loop's speed; a clip with no whole walking stride
+    is aligned on a walking run of `MIN_RUN` (8) frames, else refused (`Refusal`).
+  - The phase: each walking frame's phase in the loop, found by POSE matching (`_align`, body points in the root's
+    ground frame), not by heel strikes - a strike read at the loop's seam put it a frame off.
+  - The difference: per joint, in its parent's frame, the turn `L_S^T L_R` and the offset delta of Walk Builder's
+    result against the cleaned loop at that phase, laid over the clip's own local; the top joint's by its heading.
+    At the parameters' own values it is the identity.
+  - The stance: Start/Stop Builder's `evaluate` with the same card and parts (`start=OWN_RUN`), weighted by the
+    body's stillness against the loop's speed, eased and spread over `STANCE_SIGMA` (4) frames.
+  - The legs: each contact moved by one rigid motion, two-bone IK, the hips sunk (`SINK_SIGMA` 3) only past
+    `max(REACH x length, the clip's own stretch)` - a clip walking on straighter legs is not sunk for it.
+  - `line(info)`: «start 0-32, walk 33-92 (2 strides), stop 92-97».
+- **`scene`**: `apply(..., whole=)` / `animate(..., whole=)`; `whole_applies` / `whole_clip(walk, Walk)` (an own clip
+  longer than its loop, frame count cached by the file's time); the timing knobs held at their own values
+  (`TIMING_KNOBS`: stride, tempo, ground time, duty, in place); keyed over the clip's own frames from its start,
+  place kept from the memo; the memo carries `whole`; the line leads with the parts.
+- **The card**: a «Whole clip» chip in the Pick row (`WHOLE_BOX`, remembered, on by default); while it applies,
+  Tempo, Step, Ground time, Speed and In place are greyed with «the clip keeps its own timing (Whole clip)»
+  (`_grey_timing`). The rig pose's re-key keeps `whole`.
+- Proof: `docs/superpowers/plans/walkparam/verify_walk_wholeclip.py <clip.pkl>` - **24 of 24 mayapy standalone** on
+  `AS_am_LongS_OxGuardL_Walk_Fwd_Start` and the animator's own start-and-walk (pickled from their scene, not
+  committed): every frame keyed, the walk's own values give the clip back (0.000 / 0.457 cm), Height +5 lands on
+  the walking frames exactly as on the loop at their phase (median 0.00 cm), no planted foot slides, bones keep
+  their length, no jolt above the clip's own, under the goblin card the stance where the body stands and no jolt
+  above the clip's or the stance's own, one undo, Restore exact. `tests/test_walk_wholeclip.py`. **Not seen in a
+  GUI Maya.** Not built: retiming the walking part, two walks in one clip, curved paths, a whole clip onto another
+  skeleton.
+
 ## The Pose Library: our look, a folder button, a list at the smallest size (2026-10-22)
 
 The animator: «перерисовать библеотеку поз в нашем стиле и сделать само меню более компактным ...

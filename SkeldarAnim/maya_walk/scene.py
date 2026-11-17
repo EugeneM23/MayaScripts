@@ -1354,8 +1354,22 @@ class Animation(object):
         self.__dict__.update(kw)
 
 
+# the knobs that change a cycle's timing or travel: a whole clip keeps its own (2026-11-17)
+TIMING_KNOBS = {"stride": 1.0, "tempo": 0.0, "ground_time": 1.0, "duty": 0.0, "in_place": 0.0}
+
+
+def _whole_knobs(knobs):
+    """The model's knobs with the timing ones at the walk's own (each side's too): a whole clip keeps its timing."""
+    out = dict(knobs)
+    for name, own in TIMING_KNOBS.items():
+        for key in (name, name + "_l", name + "_r"):
+            if key in out or key == name:
+                out[key] = own
+    return out
+
+
 def animate(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, pose_card=None, params=None,
-            with_steps=False):
+            with_steps=False, whole=False):
     """The walker `root`'s animation of the saved walk `walk_name` (an Animation), nothing written: the walk read
     under its clean knobs and the walker's own edits (walker_edits: its Fix posture, its mean pose correction),
     evaluated with the parameters (or the model's knobs in `given`), the pose `pose_card` / `pose_name`'s `parts`;
@@ -1374,6 +1388,8 @@ def animate(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, pose_c
         knobs, values_asked = params_knobs(walk, params)
     else:
         knobs, values_asked = model_knobs(given), None
+    if whole:
+        knobs = _whole_knobs(knobs)
     pose = prepared = None
     pose_label, pose_note, packed = pose_name or "", "", None
     if not pose_card and pose_name:         # an old pose name: its card when it was moved into the library
@@ -1435,7 +1451,63 @@ def walker_animation(root, with_steps=True):
                    params=memo_params(root, memo, translate=False), with_steps=with_steps)
 
 
-def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=True, pose_card=None, params=None):
+def whole_applies(walk_name, anim):
+    """Whether the walker's own clip is longer than the loop the clean cut out of it (a start, a stop, more
+    strides): only then has a whole clip anything the loop has not (2026-11-17)."""
+    return whole_clip(walk_name, anim.walk)
+
+
+def _clip_frames(path):
+    """The frame count of the walk file at `path`, kept by its time (the card asks on every refresh)."""
+    try:
+        stamp = os.path.getmtime(path)
+    except OSError:
+        return 0
+    kept = _state().setdefault("clip_frames", {})
+    if kept.get(path, (None,))[0] != stamp:
+        try:
+            kept[path] = (stamp, int(np.asarray(wf.load(path)["worlds"]).shape[1]))
+        except (wf.Refusal, KeyError, ValueError):
+            kept[path] = (stamp, 0)
+    return kept[path][1]
+
+
+def whole_clip(walk_name, walk):
+    """Whether `walk_name` is a walker's own clip longer than the loop `walk` was read from (a start, a stop, more
+    strides) - the clip a Whole clip press keys whole, its timing its own."""
+    if not is_own(walk_name):
+        return False
+    # the cached file as it stands - never written from the scene here (the card asks on every refresh)
+    return _clip_frames(_own_cache(walk_name[len(OWN):])) > int(walk.clip.worlds.shape[1]) + 2
+
+
+def _whole(anim, walk_name):
+    """(worlds (J, F, 4, 4) of the raw clip, its names, the wholeclip info): the walker's own clip whole, the walk's
+    change laid over its walking frames, the stance where it stands (maya_walk.wholeclip)."""
+    from . import wholeclip
+    from maya_startstop import model as ss
+    data = wf.load(walk_path(walk_name))
+    raw = ss.Clip(data["names"], data["parents"], np.asarray(data["worlds"], float), data["fps"], data.get("name", ""))
+    loop_clip = anim.walk.clip
+    loop = ss.Clip(loop_clip.names, loop_clip.parents, np.asarray(loop_clip.worlds, float), loop_clip.fps, "loop")
+    moving = anim.moving if anim.moving is not None else anim.result.worlds
+    result = ss.Clip(anim.walk.names, [loop_clip.parents[loop_clip.names.index(n)] if n in loop_clip.names else -1
+                                       for n in anim.walk.names],
+                     np.asarray(moving, float), loop_clip.fps, "result")
+    if list(anim.walk.names) != list(loop_clip.names):     # the result in the loop's own joint order
+        order = [list(anim.walk.names).index(n) for n in loop_clip.names]
+        result = ss.Clip(loop_clip.names, loop_clip.parents, np.asarray(moving, float)[order], loop_clip.fps, "result")
+    bones = wcards.unpack(anim.packed) if anim.packed is not None else None
+    share = float(wm.knobs(**anim.knobs).get("pose", 1.0))
+    try:
+        worlds, info = wholeclip.build(raw, loop, result, data["statics"], bones, anim.parts, share)
+    except wholeclip.Refusal as error:
+        raise Refusal(str(error))
+    return worlds, raw.names, info
+
+
+def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=True, pose_card=None, params=None,
+          whole=False):
     """The saved walk `walk_name` - read under the clean knobs in `given` and the walker's own edits - keyed onto
     the skeleton under `root` with the model's knobs in `given` (and the pose `pose_name`'s `parts` - walkpose.PARTS
     - at the knob `pose`'s share), from the place it stood when a walk was first put on it (else where it
@@ -1448,15 +1520,32 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     started = time.time()
     root = _long(root)
     parts = wp.parts_read(parts)        # the memo below is written with this build's names for them
-    anim = animate(root, walk_name, given, pose_name, parts, pose_card, params)
+    whole = bool(whole) and is_own(walk_name)
+    anim = animate(root, walk_name, given, pose_name, parts, pose_card, params, whole=whole)
+    whole = whole and whole_applies(walk_name, anim)
     walk, statics, start, report = anim.walk, anim.statics, anim.start, anim.report
     given, params, result = anim.given, anim.params, anim.result
     bones, note = read_bones(root)
     memo = memo_of(root)
-    retarget = wt.Retarget(walk, statics, bones, memo.get("place"))
-    knee_pops = True if params is None else bool(params.get("knee_pops", True))
-    frames, info = retarget.frames(result, knee_pops=knee_pops)
-    written, translated = retarget.written(), set(retarget.translated())
+    whole_info = None
+    if whole:          # the walker's own clip whole: its frames, the walk's change laid over them (2026-11-17)
+        worlds, names, whole_info = _whole(anim, walk_name)
+        written = [n for n in names if n in bones]
+        translated = set(written)
+        rows = [names.index(n) for n in written]
+        om = _om()
+        frames = [dict((n, om.MMatrix([float(v) for v in worlds[j, f].reshape(16)])) for n, j in zip(written, rows))
+                  for f in range(worlds.shape[1])]
+        info = {"drop": [whole_info["drop"]], "short": whole_info["short"], "scale": 1.0, "pops": {},
+                "pairs": len(written), "frames": worlds.shape[1] - 1}
+        place = memo.get("place")
+        start = int(wf.load(walk_path(walk_name)).get("start", start))
+    else:
+        retarget = wt.Retarget(walk, statics, bones, memo.get("place"))
+        knee_pops = True if params is None else bool(params.get("knee_pops", True))
+        frames, info = retarget.frames(result, knee_pops=knee_pops)
+        written, translated = retarget.written(), set(retarget.translated())
+        place = wt.pm.flat(retarget.place)
     values, static = channel_values(bones, frames, written, translated)
     with (_Chunk("skeldarWalkApply") if record else Unrecorded()):
         _, driven = write_curves(values, static, start, in_place=not record)
@@ -1467,7 +1556,7 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
         stored = {"walk": walk_name, "pose": anim.pose_label or "", "pose_card": anim.pose_card or "",
                   "parts": list(parts),
                   "knobs": dict(result.info["knobs"], **wc.knobs(given)),
-                  "place": wt.pm.flat(retarget.place), "start": start, "version": VERSION,
+                  "place": place, "start": start, "version": VERSION, "whole": bool(whole),
                   "listed": True, "keys": keys_print(root), "working": bool(memo.get("working"))}
         if params is not None:
             stored["params"] = plain_params(params)
@@ -1480,6 +1569,13 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     text = ("%s on %s, %d bones x%.2f | %d fr (%d-%d), stride %.0f cm, %.2f m/s"
             % (walk_label(walk_name), _short(root), len(written), info["scale"], result.frames, start, start + result.frames,
                target_stride, result.info["speed"] * info["scale"]))
+    if whole_info is not None:          # the whole clip: its own frames and parts lead the line
+        from . import wholeclip
+        text = "%s on %s, whole clip %d fr (%d-%d): %s" % (
+            walk_label(walk_name), _short(root), info["frames"] + 1, start, start + info["frames"],
+            wholeclip.line(whole_info))
+        if whole_info["stance"]:
+            text += ", the stance where it stands"
     if anim.pose is not None:
         text += " | pose %s x%.2f%s" % (anim.pose_label, result.info["knobs"]["pose"],
                                          "" if tuple(parts) == ALL_PARTS else " (%s)" % (", ".join(parts) or "no part"))
@@ -1552,6 +1648,8 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     if note:
         text += " | " + note
     info["clean"] = report
+    if whole_info is not None:
+        info["whole"] = whole_info
     if params is not None:
         info["values"] = anim.values_asked
         try:

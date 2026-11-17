@@ -279,7 +279,7 @@ class CardTests(unittest.TestCase):
             return FakeReport(), "Fix posture: %s foot_l out: mirrored" % name, True
         scene.fix_posture = fix_posture
 
-        def apply(root, walk, given, pose, parts, pose_card=None, record=True, params=None):
+        def apply(root, walk, given, pose, parts, pose_card=None, record=True, params=None, whole=False):
             self.applied.append((root, walk, given, pose_card, parts, params))
             self.state["target"] = "uuid-" + root
             memo = dict(self.memos.get(root, {}), walk=walk, knobs=dict(given), listed=True, parts=list(parts),
@@ -409,7 +409,7 @@ class CardTests(unittest.TestCase):
         chips = [c[1] for c in self.made("checkBox")]
         toggles = [panel._control(p.name) for key, _, names in panel.GROUPS for p in gait.PARAMS
                    if p.name in names and p.kind == "toggle"]
-        self.assertEqual(chips, [panel._part_control(p) for p, _ in panel.PART_LABELS] + [panel.IN_PLACE_BOX]
+        self.assertEqual(chips, [panel._part_control(p) for p, _ in panel.PART_LABELS] + [panel.IN_PLACE_BOX, panel.WHOLE_BOX]
                          + toggles + [panel.PHYSICS_BOX, panel.KNEE_POPS_BOX])
         self.assertTrue(all(marks[c][0] == "chip" for c in chips))
         tabs = [(c[1], c[2]["collection"]) for c in self.made("iconTextRadioButton")]

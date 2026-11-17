@@ -555,7 +555,7 @@ def rekey_root(root):
     scene.apply(root, memo["walk"], memo.get("knobs"), memo.get("pose") or None,
                 tuple(memo.get("parts", scene.ALL_PARTS)), record=False,
                 pose_card=memo.get("pose_card") or None,
-                params=scene.memo_params(root, memo, translate=False))
+                params=scene.memo_params(root, memo, translate=False), whole=bool(memo.get("whole")))
     return " -> %s keyed again" % scene.walker_label(root)
 
 

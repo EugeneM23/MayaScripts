@@ -404,7 +404,7 @@ class FakeScene(object):
                 "keys": kp.loads(kp.dumps(edits.get("keys") or {})), "posture": bool(edits.get("posture")),
                 "snap": edits.get("snap") or None, "head": edits.get("head") or None}
 
-    def apply(self, root, walk, knobs=None, pose=None, parts=(), record=True, pose_card=None, params=None):
+    def apply(self, root, walk, knobs=None, pose=None, parts=(), record=True, pose_card=None, params=None, whole=False):
         self.applied.append({"root": root, "walk": walk, "knobs": knobs, "pose": pose, "parts": parts,
                              "record": record, "pose_card": pose_card, "params": params})
 

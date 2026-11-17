@@ -61,6 +61,7 @@ SIDE_TABS = "skeldarWalkSides"
 FIX_BTN = "skeldarWalkFixPosture"
 CLEAN_REPORT = "skeldarWalkCleanReport"
 IN_PLACE_BOX = "skeldarWalkInPlace"
+WHOLE_BOX = "skeldarWalkWhole"        # Whole clip (2026-11-17): a walker's own clip keyed whole, its start and stop too
 #  The Rig pose tab (2026-10-15): the walk's mean pose on a Manny rig, its edit taken by Update
 MEAN_CREATE_BTN = "skeldarWalkMeanCreate"
 MEAN_UPDATE_BTN = "skeldarWalkMeanUpdate"
@@ -1035,8 +1036,31 @@ def show_values():
             cmds.floatSliderGrp(STRENGTH, edit=True, value=params["strength"])
         if cmds.checkBox(PHYSICS_BOX, exists=True):
             cmds.checkBox(PHYSICS_BOX, edit=True, value=params["physics"])
+        _grey_timing(whole_on() and scene.whole_clip(active[0], walk))
     finally:
         _QUIET[0] = quiet
+
+
+TIMING_PARAMS = ("tempo", "step", "ground_time")
+WHOLE_TIP = "the clip keeps its own timing (Whole clip)"
+
+
+def _grey_timing(whole):
+    """Tempo, Step, Ground time, Speed and In place greyed out while a whole clip is keyed: it keeps its timing."""
+    cmds = _cmds()
+    controls = [(_control(n), cmds.floatSliderGrp) for n in TIMING_PARAMS] + [(SPEED, cmds.floatSliderGrp),
+                                                                           (IN_PLACE_BOX, cmds.checkBox)]
+    for control, command in controls:
+        if not command(control, exists=True):
+            continue
+        tip = command(control, query=True, annotation=True) or ""
+        if tip != WHOLE_TIP:
+            _KEPT_TIPS[control] = tip
+        command(control, edit=True, enable=not whole,
+                annotation=WHOLE_TIP if whole else _KEPT_TIPS.get(control, tip))
+
+
+_KEPT_TIPS = {}
 
 
 def _set_key(key, value, own):
@@ -1507,7 +1531,7 @@ def _apply_to(root, walk=None):
     walk = walk or active
     _remember("parts", json.dumps(list(chosen_parts())))
     result, info, text = scene.apply(root, walk, values(), None, chosen_parts(), pose_card=chosen_card(),
-                                     params=card_params())
+                                     params=card_params(), whole=whole_on())
     if info.get("clean") is not None and walk == active:
         show_report(info["clean"])
     _show_findings(root, walk, info)
@@ -1705,6 +1729,23 @@ def walk_changed(*_):
     if _QUIET[0]:
         return None
     return _press(lambda: _walk_taken(chosen_walk()))
+
+
+def whole_on():
+    """The Whole clip chip (remembered; on by default): a walker's own clip that does not loop by itself keyed whole
+    - its start, its strides and its stop - with the walk's change laid over its walking frames."""
+    return float(_stored("whole", 1.0) or 0.0) >= 0.5
+
+
+def whole_changed(*_):
+    """The Whole clip chip: remembered, the selected walkers keyed again."""
+    if _QUIET[0]:
+        return None
+    cmds = _cmds()
+    if cmds.checkBox(WHOLE_BOX, exists=True):
+        _remember("whole", 1.0 if cmds.checkBox(WHOLE_BOX, query=True, value=True) else 0.0)
+    show_values()
+    return slider_changed()
 
 
 def in_place_changed(*_):
@@ -1931,7 +1972,7 @@ def _rekey_root(root):
         return meanrig.rekey_root(root)
     memo = scene.memo_of(root)
     scene.apply(root, memo["walk"], values(), None, chosen_parts(), record=False, pose_card=chosen_card(),
-                params=card_params())
+                params=card_params(), whole=whole_on())
     return " -> %s keyed again" % scene.walker_label(root)
 
 
@@ -2466,8 +2507,9 @@ def build_panel():
     for part, label in PART_LABELS:
         chip(part, label)
     cmds.setParent("..")
-    hubstyle.mark(cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
-                                 columnAttach=[(1, "both", 0), (2, "both", 4), (3, "both", 4)]), "fill", layout=True)
+    hubstyle.mark(cmds.rowLayout(numberOfColumns=4, adjustableColumn=1,
+                                 columnAttach=[(1, "both", 0), (2, "both", 4), (3, "both", 4), (4, "both", 4)]),
+                  "fill", layout=True)
     pick = hubstyle.mark(cmds.button(APPLY_BTN, label="Pick", height=hubstyle.height("button", 28),
                                      annotation=TIPS["apply"], command=lambda *_: press_apply()), "primary", "walk")
     cmds.popupMenu(parent=pick, button=3)
@@ -2479,6 +2521,11 @@ def build_panel():
     hubstyle.mark(cmds.checkBox(IN_PLACE_BOX, label="In place", annotation=TIPS["in_place"],
                                 value=float(_stored("knob_in_place", 0.0) or 0.0) >= 0.5,
                                 changeCommand=in_place_changed), "chip")
+    hubstyle.mark(cmds.checkBox(WHOLE_BOX, label="Whole clip", annotation=(
+        "A walker's own clip that does not loop by itself - a start, more strides, a stop - is keyed whole: the "
+        "walk's settings on its strides, the pose's stance where it stands. It keeps its own timing: Step, Tempo, "
+        "Speed, Ground time and In place do nothing on it"),
+        value=whole_on(), changeCommand=whole_changed), "chip")
     cmds.setParent("..")
     _walker_list()
     side = side_mode()
