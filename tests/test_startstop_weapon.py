@@ -88,6 +88,15 @@ class Tab(unittest.TestCase):
         np.testing.assert_allclose(out[self.hand, :30], self.clip.worlds[self.hand, :30], atol=1e-6)
         self.assertGreater(float(np.abs(out[self.hand, 30:] - self.clip.worlds[self.hand, 30:]).max()), 1e-6)
 
+    def test_where_the_body_stands_hold_keeps_the_hand_where_it_is(self):
+        # 2026-11-17: the slow part reaching into the run put a start's hands 12-20 cm off its pose
+        still = np.zeros(self.F)
+        still[:10] = 1.0
+        out, _info, _held = w.apply(self.a, self.clip.worlds, self.knobs(), alpha=np.ones(self.F), still=still)
+        H, C = self.clip.worlds[self.hand], self.clip.worlds[self.chest]
+        np.testing.assert_allclose(rel(out[self.hand], out[self.chest])[:10], rel(H, C)[:10], atol=1e-6)
+        np.testing.assert_allclose(rel(out[self.hand], out[self.chest])[10:], w.slow_mats(rel(H, C))[10:], atol=1e-6)
+
     def test_a_hand_with_a_weapon_is_held_with_no_pose(self):
         weapons = {"r": {"grip": (0.0, 0.0, 0.0), "tip": (0.0, 0.0, 80.0)}}
         out, info, held = w.apply(self.a, self.clip.worlds, self.knobs(), alpha=np.zeros(self.F), weapons=weapons)

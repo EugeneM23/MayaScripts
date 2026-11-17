@@ -12520,6 +12520,28 @@ The animator, in the same breath: «можем ли мы так сделать �
   GUI Maya.** Not built: retiming the walking part, two walks in one clip, curved paths, a whole clip onto another
   skeleton.
 
+**…and a start begins IN the pose** (the same day, port 7005, read only: «стартовая поза очень отличается от айдловой
+которую я накидываю через walk builder но мы должны стартовать из указаной позы»). Their clip moves from frame 0,
+so the body's speed gave the pose 0.78 there, and the stance model's own Weapon Hold averaged the hand on the chest
+over 8 frames reaching into the run: at frame 0 the hands stood **24-30 cm** off `LongSword_Idle_3P`. Three fixes,
+measured on their own clip dumped from the scene and run on the repo's code:
+- `ss.Analysis.hold_reference` (set by `wholeclip.build` only): the clip's own standing frames (its reference,
+  here 0-4) count as standing whatever the body does, and let go over `HOLD_RAMP` (10) frames - an eased ramp
+  joined softly with the speed curve (`ramp + (1 - ramp) x held`), never under it;
+- `startstop.weapon.apply(still=)`: where the body stands Hold keeps the hand's own place on the chest (the
+  pose's), the slow part taking over as it moves - Start/Stop Builder takes it too;
+- the whole-clip weight is never under the stillness itself, joined softly (its blur alone left frame 0 at 0.93);
+- the stance wears the pose all through (`ss.evaluate` with no start pose): the walk it hands over to wears the same
+  pose, and the clip's own run between them sent a goblin through the plain clip and back in a few frames;
+- **the hand-over's length follows the distance** (`_paced`): a smoothstep over T frames jolts about
+  `6 D / T² + 3 V / T` for D cm between the stance and the walk parting at V cm a frame (pelvis, chest, head), so T
+  is where that is `JOLT` (1 cm a frame²). The goblin's crouch is 85 cm off its walk at the head: it fades over ~20
+  frames, into the first walking stride; the animator's idle card, close to its walk, over ~8.
+Measured on their clip and Unreal's OxGuard start, with their `LongSword_Idle_3P` and the goblin: frame 0 within
+**2-2.3 cm** of the card (hands, elbows, head, chest in the hips' frame), the posed jolt over the clip's or the
+stance's own 0.35 / 0.58 / 0.74 cm a frame² (it was 3.8-7.3 the first try). Gate «the start's first frame is the
+card's pose» in the verify.
+
 ## The Pose Library: our look, a folder button, a list at the smallest size (2026-10-22)
 
 The animator: «перерисовать библеотеку поз в нашем стиле и сделать само меню более компактным ...

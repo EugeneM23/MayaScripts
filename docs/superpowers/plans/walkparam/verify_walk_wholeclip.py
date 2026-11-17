@@ -82,6 +82,29 @@ def lengths(clip, w):
     return worst
 
 
+POINTS = ("head", "hand_r", "hand_l", "lowerarm_r", "lowerarm_l", "spine_05")
+
+
+def _hips_frame(get):
+    p = get("pelvis")
+    s = get("thigh_l") - get("thigh_r")
+    s[1] = 0.0
+    s /= np.linalg.norm(s)
+    up = np.array([0.0, 1.0, 0.0])
+    r = np.stack([s, up, np.cross(s, up)])
+    return dict((n, r @ (get(n) - p)) for n in POINTS)
+
+
+def in_pose(clip, card_path, f):
+    """The worst distance (cm) of the head, hands, elbows and chest at frame `f` from where the pose card has them,
+    both read in the hips' own frame."""
+    from maya_walk import cards as wcards
+    _n, bones = wcards.read_card(card_path)
+    want = _hips_frame(lambda n: np.array(bones[n]["world"], float).reshape(4, 4)[3, :3])
+    got = _hips_frame(lambda n: clip.worlds[clip.index[n], f, 3, :3])
+    return max(float(np.linalg.norm(got[n] - want[n])) for n in POINTS)
+
+
 def params(**changes):
     return ws.normal_params({"changes": dict((k, v) for k, v in changes.items()), "physics": False})
 
@@ -137,6 +160,11 @@ def check(label, root, card):
         f0 = int(np.argmax(still))
         moved = float(np.abs(posed.worlds[:, f0, 3, :3] - source.worlds[:, f0, 3, :3]).max())
         gate("%s: the pose's stance where the body stands" % label, moved > 1.0, "%.1f cm at frame %d" % (moved, f0))
+        # a start begins IN the pose (2026-11-17, «мы должны стартовать из указаной позы»): its first frame's hands,
+        # elbows and head where the card has them, in the hips' own frame
+        if whole_info.get("start") is not None and whole_info["start"][0] == 0:
+            off = in_pose(posed, card, 0)
+            gate("%s: the start's first frame is the card's pose" % label, off < 3.0, "%.1f cm at worst" % off)
         gate("%s: posed, no planted foot slides" % label, slide(source, a, posed.worlds) < 0.05,
              "%.4f cm a frame" % slide(source, a, posed.worlds))
         # the pose's own stance (Start/Stop Builder's model on this clip) changes posture as the body picks up

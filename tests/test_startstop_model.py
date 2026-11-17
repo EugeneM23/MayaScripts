@@ -465,7 +465,7 @@ class TwoPoses(unittest.TestCase):
         # comes in as it stops
         a = pc.Analysis(self.clip)          # its own: the synthetic stop barely moves, so its run is set here
         e = np.clip((np.arange(self.clip.F) - 20.0) / 10.0, 0.0, 1.0)          # running to 20, stood from 30
-        a._stillness[round(30.0, 6)] = e
+        a._stillness[(round(30.0, 6), False)] = e
         k = pc.knobs(final_speed=30.0, leg_match=0.0, **STILL)
         result = pc.evaluate(a, self.low, k=k, start=pc.OWN_RUN)
         self.assertEqual(result.info["start_kind"], "own")
@@ -968,6 +968,17 @@ class Starts(unittest.TestCase):
             self.assertEqual(self.a.stance_contact(side), 0)
             c0, c1 = self.a.feet[side]["contacts"][0]
             self.assertEqual(c0, 0)
+
+    def test_a_held_reference_stands_whole_and_lets_go_smoothly(self):
+        # Walk Builder's whole clip (2026-11-17): a start begins in its pose even when the body moves at frame 0
+        a = pc.Analysis(self.clip)
+        a.hold_reference = True
+        held = a.stillness_at(30.0)
+        r0, r1 = a.reference
+        np.testing.assert_allclose(held[r0:r1 + 1], 1.0)
+        plain = pc.Analysis(self.clip).stillness_at(30.0)
+        self.assertTrue(np.all(held >= plain - 1e-9))
+        self.assertLess(float(np.abs(np.diff(held, 2)).max()), max(0.1, float(np.abs(np.diff(plain, 2)).max())) + 1e-9)          # no cliff where it lets go
 
     def test_share_zero_is_the_clip(self):
         result = pc.evaluate(self.a, self.pose, share=0.0, motion=1.0)

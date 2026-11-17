@@ -28,6 +28,7 @@ STILL_SPEED = 1.5      # cm a frame: every body bone slower than this - the body
 STILL_MIN = 8          # frames: the least still stretch that is a reference
 END_SHARE = 0.4        # a clip with no still stretch: an end this much slower than its middle is where it stands
 END_FRAMES = 3         # (judged on the end's first frames; measured 2026-11-17 on Unreal's starts, stops and loops)
+HOLD_RAMP = 10.0       # frames: a held reference (Walk Builder's whole clip) lets go of the pose over these
 FOOT_STILL = 2.0       # cm a frame: the ankle or the ball slower than this - the foot is planted
 FOOT_NEAR = 4.0        # cm: the ankle or the ball this near its level in the reference - the foot is down
 SETTLE = 10            # frames: two feet that stay down hand the weight over to half each in this long
@@ -610,6 +611,7 @@ class Analysis(object):
         # its balance over its feet - is how it STANDS, and comes in as the body slows
         self.com_speed = _speeds(self.com[:, [0, 2]]) * clip.fps                  # cm/s
         self._stillness = {}
+        self.hold_reference = False
         self.stillness = self.stillness_at(STANCE_SPEED)
         self.support = support_path(self.weights, dict((s, self.feet[s]["pivot"]) for s in SIDES))
         off = self.com - self.support
@@ -645,10 +647,26 @@ class Analysis(object):
             self.follows[h] = best[1]
 
     def stillness_at(self, speed):
-        """How still the body is a frame (1 standing, 0 at `speed` cm/s and over), blurred over 3 frames."""
-        key = round(float(speed), 6)
+        """How still the body is a frame (1 standing, 0 at `speed` cm/s and over), blurred over 3 frames. With
+        `hold_reference` set, the reference frames of a start or a stop count as standing whatever the body does
+        there (Walk Builder's whole clip: a start begins in its pose, 2026-11-17)."""
+        key = (round(float(speed), 6), bool(self.hold_reference))
         if key not in self._stillness:
-            self._stillness[key] = np.clip(_blur(1.0 - self.com_speed / max(speed, 1e-6), 3.0), 0.0, 1.0)
+            raw = 1.0 - self.com_speed / max(speed, 1e-6)
+            if self.hold_reference and self.still:
+                a, b = self.reference
+                raw = raw.copy()
+                raw[a:b + 1] = 1.0
+                pad = 9
+                held = _blur(np.concatenate([np.full(pad, raw[0]), raw, np.full(pad, raw[-1])]), 3.0)[pad:-pad]
+                # the reference stands whole, and lets go over HOLD_RAMP frames (an eased ramp, joined softly: no cliff) - never
+                # under what the body's own speed says
+                f = np.arange(len(raw), dtype=float)
+                away = np.maximum(a - f, f - b).clip(min=0.0) / HOLD_RAMP
+                ramp = np.array([1.0 - _smooth(float(u)) for u in away])
+                self._stillness[key] = np.clip(ramp + (1.0 - ramp) * held, 0.0, 1.0)
+            else:
+                self._stillness[key] = np.clip(_blur(raw, 3.0), 0.0, 1.0)
         return self._stillness[key]
 
     def stance_contact(self, side):
@@ -2462,7 +2480,8 @@ def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS, k=None, st
     else:
         start_arms = plan.start.share_arms if plan.start_kind in ("pose", "cycle") else 0.0
         alpha = plan.e * final_arms + (1.0 - plan.e) * start_arms
-    out, weapon_info, held = wpn.apply(a, out, k, alpha=alpha, grip=grip_on, weapons=weapons)
+    out, weapon_info, held = wpn.apply(a, out, k, alpha=alpha, grip=grip_on, weapons=weapons,
+                                       still=a.stillness_at(k["stance_speed"]))
     if held:
         k = dict(k)
         for s in held:

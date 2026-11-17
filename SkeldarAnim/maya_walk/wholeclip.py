@@ -25,6 +25,9 @@ MIN_RUN = 8                # frames: the least walking run a clip with no whole 
 REACH = 0.999              # a leg reaches no further than this share of its length
 SINK_SIGMA = 3.0           # frames: the hips' sink smoothed
 STANCE_SIGMA = 4.0         # frames: the stance's weight spread
+JOLT = 1.0                 # cm a frame^2: the most the hand-over from a held pose to the walk may jolt the body
+PACE_LOOK = 10             # frames past the fall the stance-to-walk distance is read over
+PACE_POINTS = ("pelvis", "spine_05", "head")
 LEGS = ("thigh", "calf", "foot")
 
 
@@ -296,6 +299,9 @@ def build(raw, loop, result, statics=None, bones=None, parts=None, share=1.0, k=
     rest}) and `bones` the pose card's bones (None: no pose - the stance stays the clip's own); `parts` the pose's
     parts (walk Builder's names), `share` its share; `k` Start/Stop's knobs for the stance."""
     raw_a = ss.Analysis(raw)
+    # the clip's own standing frames stand in the pose whatever the body does there: a start begins in it, a stop
+    # ends in it (Unreal's starts move from frame 0, 2026-11-17)
+    raw_a.hold_reference = True
     loop_a = ss.Analysis(loop)
     loop_cycle = ss.Cycle(loop)
     result_cycle = ss.Cycle(result)
@@ -310,8 +316,12 @@ def build(raw, loop, result, statics=None, bones=None, parts=None, share=1.0, k=
     # where the body is slower than the walk
     # the stance's weight: how still the body is against the walk's own speed, eased (smoothstep) and spread over
     # STANCE_SIGMA frames - a start reaching walking pace in 8 frames turned a crouched pose into a guard in as many
-    still = ss._blur(np.array([ss._smooth(float(x)) for x in raw_a.stillness_at(loop_speed)]), STANCE_SIGMA)
-    still = np.clip(still, 0.0, 1.0)
+    eased = np.array([ss._smooth(float(x)) for x in raw_a.stillness_at(loop_speed)])
+    pad = int(3 * STANCE_SIGMA) + 1          # the ends held as they are: the clip's first frame stands in the pose
+    still = ss._blur(np.concatenate([np.full(pad, eased[0]), eased, np.full(pad, eased[-1])]), STANCE_SIGMA)
+    # never under the weight itself (joined softly): the spread only lengthens a stance into the walk, never takes the pose off
+    # the clip's own standing frames (the blur alone left frame 0 of a start at 0.93)
+    still = np.clip(eased + (1.0 - eased) * still[pad:pad + len(eased)], 0.0, 1.0)
     stance = None
     if bones is not None and share > 0.0:
         kk = dict(k or {})
@@ -321,7 +331,10 @@ def build(raw, loop, result, statics=None, bones=None, parts=None, share=1.0, k=
             kk["share_" + part] = share if on else 0.0
         kk["final_speed"] = kk["stance_speed"] = loop_speed
         pose = ss.prepare(raw_a, statics, bones)
-        stance = ss.evaluate(raw_a, pose, k=ss.knobs(**kk), start=ss.OWN_RUN).worlds
+        # the pose all through (the walk it hands over to wears the same pose; the clip's own run between them sent
+        # a goblin through the plain clip and back in a few frames)
+        stance = ss.evaluate(raw_a, pose, k=ss.knobs(**kk)).worlds
+        still = _paced(raw, lr, lo, stance, still)
     out = np.zeros_like(raw.worlds)
     for f in range(F):
         scales = _scales(raw.worlds[:, f])
@@ -363,6 +376,46 @@ def build(raw, loop, result, statics=None, bones=None, parts=None, share=1.0, k=
             "stance_worlds": stance, "names": list(raw.names),
             "transition": raw_a.transition}
     return out, info
+
+
+def _paced(raw, lr, lo, stance, still):
+    """The stance's weight `still` with each end that stands in the pose (a start's first frames, a stop's last) let
+    go over long enough that the body's jolt stays under JOLT: a smoothstep over T frames jolts about 6 D / T^2 + 3 V / T
+    for D cm between the stance and the walk parting at V cm a frame (2026-11-17: the goblin's crouch is 85 cm off its walk
+    at the head, which 8 frames made a 6 cm a frame^2 jolt). Joined softly, never under `still`."""
+    F = raw.F
+    points = [raw.index[n] for n in PACE_POINTS if n in raw.index]
+    if not points:
+        return still
+    walk_pos = np.zeros((len(points), F, 3))
+    for f in range(F):
+        w = _fk(raw, lr[:, f], lo[:, f], _scales(raw.worlds[:, f]))
+        walk_pos[:, f] = w[points, 3, :3]
+    apart = walk_pos - stance[points, :, 3, :3]                                       # (P, F, 3) cm
+    gap = np.linalg.norm(apart, axis=2).max(axis=0)                                  # (F,) cm
+    drift = np.linalg.norm(np.gradient(apart, axis=1), axis=2).max(axis=0)          # (F,) cm a frame
+    out = np.array(still, float)
+    for forward in (True, False):
+        s = out if forward else out[::-1]
+        g = gap if forward else gap[::-1]
+        v = drift if forward else drift[::-1]
+        if s[0] < 0.999:
+            continue
+        hold = int(np.argmax(s < 0.999)) - 1 if np.any(s < 0.999) else F - 1
+        if hold >= F - 1:
+            continue
+        rest = s[hold:]
+        fall = int(np.argmax(rest < 0.01)) if np.any(rest < 0.01) else len(rest)
+        window = slice(hold, min(F, hold + fall + PACE_LOOK))
+        reach, speed = float(g[window].max()), float(v[window].max())
+        # jolt ~ 6 D / T^2 + 3 V / T (the two apart by D cm, parting at V cm a frame): T where it is JOLT
+        span = max(float(fall), (3.0 * speed + math.sqrt(9.0 * speed * speed + 24.0 * reach * JOLT)) / (2.0 * JOLT))
+        f = np.arange(F, dtype=float)
+        ramp = np.array([1.0 - ss._smooth(float(u)) for u in np.clip((f - hold) / span, 0.0, 1.0)])
+        ramp[:hold] = 1.0
+        joined = np.clip(ramp + (1.0 - ramp) * s, 0.0, 1.0)
+        out = joined if forward else joined[::-1]
+    return out
 
 
 def _under(clip, top):

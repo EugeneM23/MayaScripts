@@ -251,10 +251,12 @@ def _shoulder(clip, kin, side_chain, want, share):
     return carried, most
 
 
-def apply(a, worlds, k, alpha=None, grip=False, weapons=None):
+def apply(a, worlds, k, alpha=None, grip=False, weapons=None, still=None):
     """Walk Builder's Weapon tab on the frames (J, F, 4, 4) of a start or a stop. `alpha` (F,) how much a pose holds
-    the arms a frame (Hold blends in by it; a hand the scene gives a weapon is held whole). Returns (worlds, info,
-    the sides held - their arm springs to be left off)."""
+    the arms a frame (Hold blends in by it; a hand the scene gives a weapon is held whole). `still` (F,) how still
+    the body stands a frame: where it stands the hand keeps its own place on the chest (the pose's), the slow part
+    taking over as it moves - a Gaussian reaching into the run put a start's hands 12-20 cm off its pose
+    (2026-11-17). Returns (worlds, info, the sides held - their arm springs to be left off)."""
     F = np.asarray(worlds).shape[1]
     alpha = np.zeros(F) if alpha is None else np.clip(np.asarray(alpha, float), 0.0, 1.0)
     posed = bool(alpha.max() > 0.0)
@@ -293,7 +295,10 @@ def apply(a, worlds, k, alpha=None, grip=False, weapons=None):
             lag = sum(float(ks[s]["weapon_overlap"]) for s in riders) / len(riders) * fps / 1000.0
             keep = sum(min(max(float(ks[s]["weapon_inherit"]), 0.0), 1.0) for s in riders) / len(riders)
             H = np.array(kin[chains_[side][3]])
-            offset = slow_mats(_in(H, C))
+            own = _in(H, C)
+            offset = slow_mats(own)
+            if still is not None:
+                offset = np.array([m.blend_matrix(offset[f], own[f], float(still[f])) for f in range(F)])
             want = _on(_on(offset, late(keeping(Cr, keep), lag)), root)
             weight = np.ones(F) if any(s in (weapons or {}) for s in riders) else alpha
             want = np.array([m.blend_matrix(H[f], want[f], float(weight[f])) for f in range(F)])
