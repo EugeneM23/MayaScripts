@@ -360,9 +360,13 @@ class Synthesis(unittest.TestCase):
         support = pc.support_path(a.weights, pivots)
         new = com - support
         old = a.com - a.support + a.stillness[:, None] * plan_offset
+        # within a centimetre, not exact: the carry is smoothed over CARRY_SIGMA frames since 2026-11-17 - solved
+        # exactly frame by frame it jolted the hips where the support passes between the feet
+        worst = 0.0
         for f in range(self.clip.F):
             if a.feet["l"]["down"][f] or a.feet["r"]["down"][f]:
-                self.assertLess(float(np.linalg.norm((new[f] - old[f])[[0, 2]])), 0.05, "frame %d" % f)
+                worst = max(worst, float(np.linalg.norm((new[f] - old[f])[[0, 2]])))
+        self.assertLess(worst, 1.0)
 
     def test_the_final_stance_and_the_height_rule(self):
         f = self.clip.F - 1
@@ -1048,3 +1052,35 @@ class EndRun(unittest.TestCase):
         clip = synthetic_start()
         a = pc.Analysis(clip)
         self.assertEqual(a.transition, "start")
+
+
+class Smooth(unittest.TestCase):
+    """The animator's walk start, 2026-11-17: the balance's carry jumped where the support passed between the
+    feet, and a repeated last frame brought the stance back."""
+
+    def test_a_repeated_last_frame_takes_the_speed_before_it(self):
+        path = np.array([[0.0, 0, 0], [5.0, 0, 0], [10.0, 0, 0], [10.0, 0, 0]])
+        np.testing.assert_allclose(pc._speeds(path), [5.0, 5.0, 5.0, 5.0])
+        still = np.array([[0.0, 0, 0], [0.01, 0, 0], [0.01, 0, 0]])
+        self.assertEqual(pc._speeds(still)[-1], 0.0)
+
+    def test_the_carry_is_smooth_over_time(self):
+        clip = synthetic_stop()
+        a = pc.Analysis(clip)
+        pose = pc.prepare(a, statics_of(clip), pose_from(synthetic_stop(lean_end=0.3), clip.F - 1))
+        res = pc.evaluate(a, pose, k=pc.knobs(torso_drag=0.0, head_drag=0.0, arm_drag=0.0))
+        p = res.worlds[clip.index["pelvis"], :, 3, :3]
+        q = clip.worlds[clip.index["pelvis"], :, 3, :3]
+        jerk = np.linalg.norm(p[2:] - 2 * p[1:-1] + p[:-2], axis=1)
+        own = np.linalg.norm(q[2:] - 2 * q[1:-1] + q[:-2], axis=1)
+        self.assertLess(float((jerk - own).max()), 0.5)
+
+    def test_a_repeated_last_frame_repeats_in_the_result(self):
+        clip = synthetic_stop()
+        worlds = clip.worlds.copy()
+        worlds[:, -1] = worlds[:, -2]
+        twin = pc.Clip(clip.names, clip.parents, worlds, clip.fps, clip.name)
+        a = pc.Analysis(twin)
+        pose = pc.prepare(a, statics_of(twin), pose_from(synthetic_stop(lean_end=0.3), clip.F - 1))
+        res = pc.evaluate(a, pose, k=pc.knobs())
+        np.testing.assert_array_equal(res.worlds[:, -1], res.worlds[:, -2])

@@ -39,6 +39,7 @@ REACH_TOL = 0.02       # cm: a foot that is down this near its reach is reached
 STANCE_SPEED = 240.0   # cm/s: an earlier step takes none of the pose's extra width at this speed, all of it still
 LEAN_LIMIT = 90.0      # degrees: the trunk's forward lean (pelvis to neck_01 from up) never past this - horizontal
 CARRY_TOL = 0.005      # cm: the balance's carry stops this near the target
+CARRY_SIGMA = 2.0      # frames: the carry smoothed over time (each frame's own solve jumps where the support switches)
 CARRY_STEPS = 8
 # Walk Builder's (maya_walk/model.py) for its knobs here (spec addendum 4)
 GRAVITY = 981.0        # cm / s^2
@@ -523,8 +524,13 @@ def trunk_lean(v):
 
 
 def _speeds(path):
-    """(F,) how far a point moves into each frame (the first frame: into the second)."""
+    """(F,) how far a point moves into each frame (the first frame: into the second). A last frame that repeats
+    the one before it exactly (an export's closing frame) takes the speed before it: read as a stop it brought
+    the stance back on the clip's last frame (2026-11-17, a start walking at 200 cm/s)."""
     step = np.linalg.norm(np.diff(path, axis=0), axis=1)
+    if len(step) > 1 and step[-1] < 1e-9 and step[-2] > 0.05:
+        step = step.copy()
+        step[-1] = step[-2]
     return np.concatenate([step[:1], step])
 
 
@@ -2429,6 +2435,15 @@ def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS, k=None, st
         frames = None
     if frames is None:
         frames = [_balanced(plan, f, uppers[f], float(drop[f])) for f in range(F)]
+    # the carry smoothed over time: each frame's balance is solved on its own, and its target jumps where the
+    # support passes from one foot to the other - the hips, the chest and the head jolted 3.5-4 cm a frame at a
+    # start's first steps (2026-11-17, read on the animator's walk start). The legs are solved again under it.
+    raw = np.array([item[2] for item in frames])
+    if F > 2 and np.abs(raw).max() > CARRY_TOL:
+        smooth = np.stack([_blur(raw[:, i], CARRY_SIGMA) for i in range(3)], axis=1)
+        frames = [_assemble(plan, f, uppers[f], np.array([0.0, -float(drop[f]), 0.0]) + smooth[f]) + (smooth[f],)
+                  for f in range(F)]
+        frames = [(r_, p_, c_, s_) for r_, p_, s_, c_ in frames]
     out = np.zeros((a.clip.J, F, 4, 4))
     carries, shorts = np.zeros(F), np.zeros(F)
     for f in range(F):
@@ -2471,4 +2486,9 @@ def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS, k=None, st
             "legs": {"hips": float(np.degrees(np.abs(plan.hips_turn).max())) if len(plan.hips_turn) else 0.0,
                      "knee": dict((s, float(np.degrees(np.abs(plan.knee_turn[s]).max()))) for s in SIDES),
                      "toe": dict((s, float(np.degrees(np.abs(plan.toe_turn[s]).max()))) for s in SIDES)}}
+    # a last frame repeating the one before (an export's closing frame) repeats in the result: the body stops
+    # dead there, and the hold and the springs carried the hands on through it (6.7 cm in one frame)
+    src = a.clip.worlds
+    if not started and F > 2 and float(np.abs(src[:, -1, 3, :3] - src[:, -2, 3, :3]).max()) < 1e-6:
+        out[:, -1] = out[:, -2]
     return Result(out, info)
