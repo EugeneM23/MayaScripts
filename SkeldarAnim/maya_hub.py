@@ -171,6 +171,10 @@ SECTIONS = (
     Section("idle", "Idle Builder", "maya_idle.panel",
             "build_panel", "skeldarHubFrameIdle",
             "animation", "user"),
+    #  2026-11-17: Pose on clip in the rail - a start or a stop rebuilt on pose cards, keyed onto the skeleton.
+    Section("startstop", "Start/Stop Builder", "maya_startstop.panel",
+            "build_panel", "skeldarHubFrameStartStop",
+            "animation", "run"),
     #  2026-10-13: handheld filming and an impact on a layer each, out of its standalone script.
     Section("camshake", "Camera Shake", "maya_camshake",
             "build_panel", "skeldarHubFrameCamShake",

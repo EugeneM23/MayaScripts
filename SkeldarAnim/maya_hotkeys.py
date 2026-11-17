@@ -260,6 +260,19 @@ def _walk(func):
     return message if module.is_open() else _report(message)
 
 
+def _startstop_module():
+    from maya_startstop import panel
+    return panel
+
+
+def _startstop(func):
+    """Press a Start/Stop Builder button (2026-11-17). Its presses read the remembered knobs and cards when the
+    card is closed, and then say their line in the viewport."""
+    module = _startstop_module()
+    message = getattr(module, func)()
+    return message if module.is_open() else _report(message)
+
+
 def _camshake_module():
     import maya_camshake
     return maya_camshake
@@ -1144,6 +1157,12 @@ _OURS = (
     ("walk.apply", "Walk Builder", "Pick walk",
      "The card's walk, pose and knobs onto the selected skeleton",
      partial(_walk, "press_apply")),
+    ("window.startstop", "Windows", "Start/Stop Builder",
+     "Open the Start/Stop Builder section: a start or a stop rebuilt on pose cards",
+     partial(_show, "maya_startstop.panel", "show_window")),
+    ("startstop.apply", "Start/Stop Builder", "Apply Start/Stop Builder",
+     "The selected skeletons' starts and stops rebuilt on the card's poses and knobs",
+     partial(_startstop, "press_apply")),
     ("window.camshake", "Windows", "Camera Shake",
      "Open the Camera Shake section: handheld filming or an impact, on a layer of its own",
      partial(_show, "maya_camshake", "show_window")),

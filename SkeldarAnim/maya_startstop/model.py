@@ -1,16 +1,21 @@
-"""poseclip - our poses onto a locomotion clip (a stop first): the model. numpy and the copied posemath
+"""maya_startstop.model - our poses onto a start or a stop: the model. numpy and the plugin's posemath
 (maya.api.OpenMaya) - no maya.cmds.
 
 The animator (2026-10-14): «Давай попробуем сделать инструмент который будет насаживать наши позы на
 локомоушен циклы такие как вот стоп.» Walk Builder's pose machinery for a clip that is not a cycle: the pose
-takes the place of the clip's REFERENCE (its still stretch - a stop's idle), the clip's motion about the
-reference rides on top (the torso and head in world axes, the arms in locals), and the constraints are solved
-again - each planted foot moved by one rigid motion of space (the stop's last contacts onto the pose's
-stance), the legs by IK, the pelvis's height in proportion, sunk where a planted foot is out of reach, and
-carried so the centre of mass keeps its place over the feet.
+takes the place of the clip's REFERENCE (its still stretch - a stop's idle, a start's first stance), the clip's
+motion about the reference rides on top (the torso and head in world axes, the arms in locals), and the
+constraints are solved again - each planted foot moved by one rigid motion of space (the steps the body stands
+on - a stop's last, a start's first - onto the pose's stance), the legs by IK, the pelvis's height in
+proportion, sunk where a planted foot is out of reach, and carried so the centre of mass keeps its place over
+the feet.
+
+Pose on clip until 2026-11-17 (docs/superpowers/plans/poseclip, a standalone window); the Start/Stop Builder
+card's since (`maya_startstop`), with starts: «У нас где-то был инструмент который обрабытвал старты и стопы
+анимаций можешь встроить его в реил?»
 
 Row vectors (`world = local . parent`), centimetres, Y up.
-Spec: docs/superpowers/specs/2026-10-14-pose-on-clip-design.md
+Spec: docs/superpowers/specs/2026-10-14-pose-on-clip-design.md, 2026-11-17-start-stop-builder-design.md
 """
 import math
 
@@ -21,6 +26,8 @@ SIDES = ("l", "r")
 
 STILL_SPEED = 1.5      # cm a frame: every body bone slower than this - the body stands still (the reference)
 STILL_MIN = 8          # frames: the least still stretch that is a reference
+END_SHARE = 0.4        # a clip with no still stretch: an end this much slower than its middle is where it stands
+END_FRAMES = 3         # (judged on the end's first frames; measured 2026-11-17 on Unreal's starts, stops and loops)
 FOOT_STILL = 2.0       # cm a frame: the ankle or the ball slower than this - the foot is planted
 FOOT_NEAR = 4.0        # cm: the ankle or the ball this near its level in the reference - the foot is down
 SETTLE = 10            # frames: two feet that stay down hand the weight over to half each in this long
@@ -343,6 +350,40 @@ def still_run(speeds, threshold=STILL_SPEED, least=STILL_MIN):
     return best
 
 
+def end_run(speeds, share=END_SHARE, frames=END_FRAMES, least=STILL_MIN):
+    """A start or a stop that never stands still for `least` frames: the end - (0, b) at the start or (a, F-1)
+    at the end - whose end frame moves slower than `share` of the clip's median speed, the run under that speed
+    from the end on, at most `least` long; the slower end (its first `frames` frames' mean) when both qualify;
+    else None.
+    Unreal's starts begin already moving (the weight shift at frame 0: 1.2 cm a frame against 7.8 mid-clip) and
+    a short stop never settles, while a loop's ends move as fast as its middle (at least 0.54 of it, measured).
+    A last frame repeating the one before (an export's closing frame, 0 speed) is not counted."""
+    v = np.asarray(speeds, float)
+    F = len(v)
+    tail = F
+    while tail > 1 and v[tail - 1] < 1e-6:
+        tail -= 1
+    v = v[:tail]
+    if len(v) < 2 * frames + 2:
+        return None
+    limit = share * float(np.median(v))
+    if limit <= 0.0:
+        return None
+    best = None
+    for head in (True, False):
+        series = v if head else v[::-1]
+        if series[0] >= limit:
+            continue
+        n = 0
+        while n < min(least, len(series)) and series[n] < limit:
+            n += 1
+        run = (0, n - 1) if head else (tail - n, F - 1)
+        score = float(series[:frames].mean())
+        if best is None or score < best[0]:
+            best = (score, run)
+    return best[1] if best else None
+
+
 def _padded(values, count, periodic):
     if periodic:
         return np.concatenate([np.resize(values[::-1], count)[::-1], values, np.resize(values, count)])
@@ -509,7 +550,7 @@ class Analysis(object):
         step = np.linalg.norm(np.diff(self.pos[body], axis=1), axis=2)            # (B, F-1)
         self.speeds = np.concatenate([step[:, :1], step], axis=1).max(axis=0)     # (F,)
         if reference is None:
-            found = still_run(self.speeds)
+            found = still_run(self.speeds) or end_run(self.speeds)
             reference = found or (0, F - 1)
             # a clip with no still stretch (a cycle) has no stance to end in: its reference is its whole mean
             self.still = found is not None
@@ -518,6 +559,9 @@ class Analysis(object):
         self.reference = (int(reference[0]), int(reference[1]))
         a, b = self.reference
         self.mid = (a + b) // 2
+        # a stop runs INTO its still stretch, a start runs OUT of it (more of the clip after it than before);
+        # a clip with no still stretch is a cycle (2026-11-17, Start/Stop Builder)
+        self.transition = "cycle" if not self.still else ("stop" if a > F - 1 - b else "start")
         turn = self.rot[root, self.mid].T @ self.rot[root]                         # (F, 3, 3)
         self.heading = np.array([yaw(yaw_of(t)) for t in turn])
         self.rel = self.rot @ np.swapaxes(self.heading, -1, -2)[None]
@@ -601,6 +645,19 @@ class Analysis(object):
             self._stillness[key] = np.clip(_blur(1.0 - self.com_speed / max(speed, 1e-6), 3.0), 0.0, 1.0)
         return self._stillness[key]
 
+    def stance_contact(self, side):
+        """The index of the foot's contact the body stands on - the one overlapping the reference the most: a
+        stop's last, a start's first - or None (a cycle, or no contact over the still stretch)."""
+        if not self.still:
+            return None
+        ra, rb = self.reference
+        best = None
+        for i, (c0, c1) in enumerate(self.feet[side]["contacts"]):
+            overlap = min(c1, rb) - max(c0, ra) + 1
+            if overlap > 0 and (best is None or overlap > best[0]):
+                best = (overlap, i)
+        return best[1] if best else None
+
 
 # ---- the pose against the reference ----
 
@@ -633,7 +690,7 @@ def prepare(analysis, statics, pose_bones):
     {leaf: {"parent", "canonical", "rest"}}, `pose_bones` the pose's {leaf: {"parent", "canonical", "rest",
     "world"}} (16 floats each). Carried by posemath.Transfer onto the clip's skeleton placed on the root at the
     reference's middle frame - the legs' ratio for the size, 1 for a twin."""
-    import posemath as pm
+    from maya_poselib import posemath as pm
     clip, a = analysis.clip, analysis
     target_rest = {}
     first = {}
@@ -786,6 +843,13 @@ KNOBS = (
     # Weight
     ("balance", 1.0, 0.0, 1.0),            # how far the pelvis is carried to put the centre of mass on its target
     ("exaggeration", 1.0, 0.0, 2.0),       # x every motion of the clip (spine, pelvis, bob, head, arms)
+    # Weapon - Walk Builder's tab (2026-11-17, `weapon`): Hold the hand on the chest (with a pose holding the arm,
+    # or a weapon in the hand), Inherit the chest's motion, Overlap the chest's age, Aim target, Shoulder
+    ("weapon_hold", 1.0, 0.0, 1.0),
+    ("weapon_inherit", 1.0, 0.0, 1.0),
+    ("weapon_overlap", 0.0, -500.0, 500.0),     # ms
+    ("weapon_aim", 1.0, 0.0, 1.0),
+    ("weapon_shoulder", 0.0, 0.0, 1.0),
 )
 DEFAULTS = dict((n, d) for n, d, lo, hi in KNOBS)
 RANGES = dict((n, (lo, hi)) for n, d, lo, hi in KNOBS)
@@ -793,7 +857,7 @@ OVERLAP = ("torso_drag", "head_drag", "arm_drag")
 #  The knobs a body part with two sides has (Walk Builder's): "<name>_l" / "<name>_r" set that side alone,
 #  without them both sides take "<name>".
 SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex", "arms", "elbow",
-         "arm_drag", "arm_bounce")
+         "arm_drag", "arm_bounce", "weapon_hold", "weapon_inherit", "weapon_overlap", "weapon_aim", "weapon_shoulder")
 SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in SIDES)
 
 
@@ -829,6 +893,7 @@ def knobs_from(share=1.0, motion=1.0, parts=PARTS):
     given.update(spine=motion, pelvis_rot=motion, bob=motion, head=motion, arms=motion, leg_match=0.0,
                  knee_foot=0.0)
     given.update((n, 0.0) for n in OVERLAP)
+    given["weapon_hold"] = 0.0                 # nor the Weapon tab (2026-11-17)
     return knobs(**given)
 
 
@@ -983,8 +1048,9 @@ class _Motions(object):
             extra = (pose["width"] + pose["ref_spread"]) * stance_s - pose["ref_spread"]
             fo = foot["joints"][2]
             sign = 1.0 if s == "l" else -1.0
-            # a stop ends in the pose's stance; a clip with no still stretch (a cycle) has none to end in
-            last = len(cts) - 1 if (a.still and cts[-1][1] >= ra) else None
+            # the steps the body stands on take the pose's stance - a stop's last, a start's first; a clip with no
+            # still stretch (a cycle) has none
+            last = a.stance_contact(s)
             self.final_contact[s] = last
             motions = []
             for k_, (c0, c1) in enumerate(cts):
@@ -1881,7 +1947,8 @@ def overlap(a, worlds, k, grip=None):
             both = dict(k)               # hands holding one thing move as one: the two sides' mean spring
             both["arm_drag"] = sum(ks[s]["arm_drag"] for s in SIDES) / 2.0
             both["arm_bounce"] = sum(ks[s]["arm_bounce"] for s in SIDES) / 2.0
-            new = _grip_motion(a, body.kin, chains, both)
+            if all(ks[s]["arm_drag"] > 0.0 for s in SIDES):    # a held hand (the Weapon tab) takes no spring
+                new = _grip_motion(a, body.kin, chains, both)
         else:
             for side, chain in chains.items():
                 if ks[side]["arm_drag"] > 0.0:        # each arm its own side's spring
@@ -2069,10 +2136,29 @@ class Cycle(object):
         laps2, i2 = divmod(k + 1, P)
         b = self.frames[:, i2].copy()
         b[:, 3, :3] += laps2 * self.travel
+        # between two frames each bone's LOCAL turn slerped and its offset turned, its length kept: a world
+        # position lerped per joint is a chord (a foot 1.4 mm short half way, measured 2026-11-17)
         ra, rb = _rots(a), _rots(b)
         out = a.copy()
-        out[:, :3, :3] = ra @ exp_rot(frac * log_rot(np.swapaxes(ra, -1, -2) @ rb))
-        out[:, 3, :3] = (1.0 - frac) * a[:, 3, :3] + frac * b[:, 3, :3]
+        rots = np.zeros_like(ra)
+        clip = self.clip
+        for j in clip.order:
+            p = clip.parents[j]
+            if p < 0:
+                rots[j] = ra[j] @ exp_rot(frac * log_rot(ra[j].T @ rb[j]))
+                out[j, 3, :3] = (1.0 - frac) * a[j, 3, :3] + frac * b[j, 3, :3]
+                continue
+            la, lb = ra[j] @ ra[p].T, rb[j] @ rb[p].T
+            rots[j] = (la @ exp_rot(frac * log_rot(la.T @ lb))) @ rots[p]
+            oa = (a[j, 3, :3] - a[p, 3, :3]) @ ra[p].T
+            ob = (b[j, 3, :3] - b[p, 3, :3]) @ rb[p].T
+            off = (1.0 - frac) * oa + frac * ob
+            size = float(np.linalg.norm(off))
+            if size > 1e-9:
+                off = off * (((1.0 - frac) * float(np.linalg.norm(oa)) + frac * float(np.linalg.norm(ob))) / size)
+            out[j, 3, :3] = off @ rots[p] + out[p, 3, :3]
+        scale = np.linalg.norm(a[:, :3, :3], axis=2)[:, :, None]       # each row's own scale kept
+        out[:, :3, :3] = rots * scale
         return out
 
 
@@ -2160,6 +2246,52 @@ def start_on_cycle(a, worlds, cycle, k, window=6, step=0.25):
     return out, info
 
 
+class _Reversed(object):
+    """An analysis read backwards in time - what `start_on_cycle` reads of it (the clip, the joints' kinds, the
+    pelvis, the root, the floor, the feet's contacts and joints) - so a start ENDS on a cycle by the stop's own
+    rule (2026-11-17)."""
+
+    def __init__(self, a):
+        F = a.clip.F
+        c = a.clip
+        self.clip = Clip(c.names, c.parents, np.ascontiguousarray(c.worlds[:, ::-1]), c.fps, c.name)
+        self.kind, self.pelvis, self.root, self.floor = a.kind, a.pelvis, a.root, a.floor
+        self.feet = {}
+        for s in SIDES:
+            foot = dict(a.feet[s])
+            foot["contacts"] = [(F - 1 - c1, F - 1 - c0) for c0, c1 in reversed(a.feet[s]["contacts"])]
+            self.feet[s] = foot
+
+
+class _Backwards(object):
+    """A Cycle played backwards: sampled at -u, its travel the other way."""
+
+    def __init__(self, cycle):
+        self.cycle = cycle
+        self.clip, self.period, self.fps, self.frames = cycle.clip, cycle.period, cycle.fps, cycle.frames
+        self.travel = -cycle.travel
+
+    def sample(self, u):
+        return self.cycle.sample(-u)
+
+
+def end_on_cycle(a, worlds, cycle, k):
+    """A start's last `from_cycle` frames taken from the cycle: `start_on_cycle` on the clip read backwards, the
+    result read forwards again - the start's LAST frame is a frame of the cycle (its `phase`), the frames before it
+    going from the start to the cycle. Returns (worlds, info), info["end"] True."""
+    out, info = start_on_cycle(_Reversed(a), np.ascontiguousarray(worlds[:, ::-1]), _Backwards(cycle), k)
+    if info:
+        # the phase read forwards and wound into the loop; `place` moved by the laps that winding took, so
+        # cycle.sample(phase) . place is the start's last frame
+        back = -float(info["phase"])
+        phase = back % cycle.period
+        laps = int(round((phase - back) / float(cycle.period)))
+        shift = np.eye(4)
+        shift[3, :3] = -laps * cycle.travel
+        info = dict(info, phase=phase, place=shift @ info["place"], end=True)
+    return np.ascontiguousarray(out[:, ::-1]), info
+
+
 def _blend_ankles(a, worlds, aligned, weights):
     """{side: the ankle a frame of the blend goes to}: a foot the STOP has planted keeps the stop's place (at
     frame 0 the cycle's - the cycle is put there - so nothing slides however the cycle's foot moves); a foot in
@@ -2218,7 +2350,12 @@ def _blend_frame(a, stop, cyc, w, ankles=None):
             continue
         cp_rot = orthonormal(cyc[p][:3, :3])
         local = slerp(c_rot @ cp_rot.T, s_rot[j] @ s_rot[p].T, w)
-        off = (1.0 - w) * ((c[3, :3] - cyc[p][3, :3]) @ cp_rot.T) + w * ((stop[j, 3, :3] - stop[p, 3, :3]) @ s_rot[p].T)
+        oc = (c[3, :3] - cyc[p][3, :3]) @ cp_rot.T
+        os_ = (stop[j, 3, :3] - stop[p, 3, :3]) @ s_rot[p].T
+        off = (1.0 - w) * oc + w * os_
+        size = float(np.linalg.norm(off))
+        if size > 1e-9:               # the bone's length lerped, not the chord (a lerped offset is shorter)
+            off = off * (((1.0 - w) * float(np.linalg.norm(oc)) + w * float(np.linalg.norm(os_))) / size)
         rots[j] = local @ rots[p]
         poss[j] = off @ rots[p] + poss[p]
     # the legs: IK to the ankles `_blend_ankles` chose (a foot the stop has planted stays on its place)
@@ -2269,12 +2406,11 @@ def _start_frames(e):
     return (int(held[0]), int(held[-1])) if len(held) else None
 
 
-def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS, k=None, start=None, cycle=None):
+def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS, k=None, start=None, cycle=None, weapons=None):
     """The clip with the pose: Result(worlds (J, F, 4, 4), info). The knobs `k` (`knobs()`), else the first
     version's share, motion and parts. `pose` is `prepare`'s final pose (None: the clip with its own motion
     scaled), `start` the start pose's (None: the final all along; a `CyclePosture`: the cycle's posture; OWN_RUN:
-    the clip's own run), `cycle`
-    a `Cycle` the stop starts on."""
+    the clip's own run), `cycle` a `Cycle` a stop starts on (a start ends on it)."""
     a = analysis
     k = k if k is not None else knobs_from(share, motion, parts)
     plan = _Plan(a, pose, k, start)
@@ -2300,13 +2436,29 @@ def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS, k=None, st
         out[:, f] = _finish(plan, f, rots, poss)
         carries[f] = float(np.linalg.norm(carry[[0, 2]]))
         shorts[f] = max([v for s, v in short.items() if a.feet[s]["down"][f]] or [0.0])
+    # Walk Builder's Weapon tab (2026-11-17): a held hand rides the chest - and takes no arm spring after
+    from . import weapon as wpn
+    grip_on = bool(plan.final.grip or (plan.start is not None and plan.start.grip)) and plan.share_arms > 0.0
+    # how much a pose holds the arms a frame: the stand pose's arms share as the body stands, the run pose's as it
+    # runs (the clip's own run holds nothing) - Walk Builder's "where the additive pose holds that arm"
+    final_arms = plan.final.share_arms if pose is not None else 0.0
+    if plan.start is None:
+        alpha = np.full(F, final_arms)
+    else:
+        start_arms = plan.start.share_arms if plan.start_kind in ("pose", "cycle") else 0.0
+        alpha = plan.e * final_arms + (1.0 - plan.e) * start_arms
+    out, weapon_info, held = wpn.apply(a, out, k, alpha=alpha, grip=grip_on, weapons=weapons)
+    if held:
+        k = dict(k)
+        for s in held:
+            k["arm_drag_" + s] = 0.0
     springs = {}
-    if k["torso_drag"] > 0.0 or k["head_drag"] > 0.0 or any(plan.ks[s]["arm_drag"] > 0.0 for s in SIDES):
+    if k["torso_drag"] > 0.0 or k["head_drag"] > 0.0 or any(sided(k)[s]["arm_drag"] > 0.0 for s in SIDES):
         grip = np.array([plan.grip(f)[0] * plan.share_arms for f in range(F)])
         out, springs = overlap(a, out, k, grip if grip.any() else None)
     started = {}
-    if cycle is not None:
-        out, started = start_on_cycle(a, out, cycle, k)
+    if cycle is not None:                 # a stop starts on a frame of the cycle, a start ends on one
+        out, started = (end_on_cycle if a.transition == "start" else start_on_cycle)(a, out, cycle, k)
     info = {"carry": float(carries.max()), "drop": float(drop.max()), "short": float(shorts.max()),
             "moved": dict(plan.motions.moved), "final": dict(plan.motions.final_contact),
             "stance": dict(plan.motions.stance), "reference": a.reference, "still": a.still, "knobs": dict(k),
@@ -2315,7 +2467,7 @@ def evaluate(analysis, pose=None, share=1.0, motion=1.0, parts=PARTS, k=None, st
             "forward": plan.forward(F - 1), "lean": (a.lean_ref, plan.final.lean),
             "two_poses": plan.start is not None, "start_kind": plan.start_kind, "overlap": springs,
             "start_frames": _start_frames(plan.e) if plan.start is not None else None,
-            "cycle": started,
+            "cycle": started, "transition": a.transition, "weapon": weapon_info,
             "legs": {"hips": float(np.degrees(np.abs(plan.hips_turn).max())) if len(plan.hips_turn) else 0.0,
                      "knee": dict((s, float(np.degrees(np.abs(plan.knee_turn[s]).max()))) for s in SIDES),
                      "toe": dict((s, float(np.degrees(np.abs(plan.toe_turn[s]).max()))) for s in SIDES)}}

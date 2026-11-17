@@ -1,21 +1,18 @@
-"""poseclip (docs/superpowers/plans/poseclip): our poses onto a locomotion clip - the model.
+"""maya_startstop.model: our poses onto a start or a stop - the model (Pose on clip until 2026-11-17).
 
-Spec: docs/superpowers/specs/2026-10-14-pose-on-clip-design.md. The model is numpy + the copied posemath
-(maya.api.OpenMaya), so these run under mayapy."""
+Spec: docs/superpowers/specs/2026-10-14-pose-on-clip-design.md, 2026-11-17-start-stop-builder-design.md. The model
+is numpy + the plugin's posemath (maya.api.OpenMaya), so these run under mayapy."""
 import json
 import math
 import os
-import sys
 import unittest
 
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-FOLDER = os.path.normpath(os.path.join(HERE, "..", "docs", "superpowers", "plans", "poseclip"))
-if FOLDER not in sys.path:
-    sys.path.insert(0, FOLDER)
+from maya_startstop import model as pc  # noqa: E402
 
-import poseclip as pc  # noqa: E402
+TEMPLATE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(pc.__file__))), "assets",
+                        "manny_skeleton_template.json")
 
 RNG = np.random.default_rng(7)
 
@@ -75,7 +72,7 @@ class Toolkit(unittest.TestCase):
 
 
 def _template():
-    with open(os.path.join(FOLDER, "manny_skeleton_template.json")) as handle:
+    with open(TEMPLATE) as handle:
         joints = json.load(handle)["joints"]
     names = [j["name"] for j in joints]
     index = dict((n, i) for i, n in enumerate(names))
@@ -935,5 +932,119 @@ class CyclePostureStart(unittest.TestCase):
         np.testing.assert_allclose(np.array(bones["hand_l"]["world"]).reshape(4, 4)[3, :3], offset, atol=1e-6)
 
 
+# ---- starts (2026-11-17, Start/Stop Builder): standing first, then running ----
+
+def synthetic_start(**given):
+    """The synthetic stop played backwards: standing still at its bind (0..19), then off into the small move."""
+    stop = synthetic_stop(**given)
+    return pc.Clip(stop.names, stop.parents, np.ascontiguousarray(stop.worlds[:, ::-1]), 30.0, "synthetic_start")
+
+
+class Starts(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.clip = synthetic_start()
+        cls.a = pc.Analysis(cls.clip)
+        cls.statics = statics_of(cls.clip)
+        other = synthetic_stop(wide=8.0, drop_end=12.0, lean_end=0.4)
+        cls.other = other
+        cls.pose = pc.prepare(cls.a, cls.statics, pose_from(other, other.F - 1))
+
+    def test_a_stop_a_start_and_a_cycle(self):
+        self.assertEqual(pc.Analysis(synthetic_stop()).transition, "stop")
+        self.assertEqual(self.a.transition, "start")
+        moving = synthetic_stop().worlds[:, :20]
+        self.assertEqual(pc.Analysis(pc.Clip(self.clip.names, self.clip.parents, moving, 30.0, "c")).transition,
+                         "cycle")
+
+    def test_the_stance_contact_is_the_one_over_the_still_stretch(self):
+        stop = pc.Analysis(synthetic_stop())
+        for side in pc.SIDES:
+            self.assertEqual(stop.stance_contact(side), len(stop.feet[side]["contacts"]) - 1)
+            self.assertEqual(self.a.stance_contact(side), 0)
+            c0, c1 = self.a.feet[side]["contacts"][0]
+            self.assertEqual(c0, 0)
+
+    def test_share_zero_is_the_clip(self):
+        result = pc.evaluate(self.a, self.pose, share=0.0, motion=1.0)
+        np.testing.assert_allclose(result.worlds, self.clip.worlds, atol=1e-4)
+
+    def test_the_first_steps_stand_on_the_poses_stance(self):
+        result = pc.evaluate(self.a, self.pose, k=pc.knobs(**STILL))
+        ix = self.clip.index
+        self.assertEqual(result.info["final"], {"l": 0, "r": 0})
+        for side in pc.SIDES:
+            j = ix["foot_" + side]
+            np.testing.assert_allclose(result.worlds[j, 0, 3, :3], self.pose["feet"][side][3, :3], atol=1e-4)
+            # and stays there over the still stretch
+            ra, rb = self.a.reference
+            np.testing.assert_allclose(result.worlds[j, ra:rb + 1, 3, :3],
+                                       np.repeat(result.worlds[j, :1, 3, :3], rb - ra + 1, axis=0), atol=1e-4)
+
+    def test_planted_feet_stay_planted(self):
+        result = pc.evaluate(self.a, self.pose, k=pc.knobs(**STILL))
+        for side in pc.SIDES:
+            j = self.clip.index["foot_" + side]
+            new, old = result.worlds[j, :, 3, :3], self.clip.worlds[j, :, 3, :3]
+            for c0, c1 in self.a.feet[side]["contacts"]:
+                for f in range(c0 + 1, c1 + 1):
+                    self.assertLessEqual(float(np.linalg.norm(new[f] - new[f - 1])),
+                                         float(np.linalg.norm(old[f] - old[f - 1])) + 1e-4, "%s %d" % (side, f))
+
+    def test_a_cycle_that_is_the_start_moved_aside_lands_on_the_start(self):
+        F = self.clip.F
+        moved = self.clip.worlds[:, F - 20:].copy()
+        moved[:, :, 3, :3] += np.array([40.0, 0.0, -25.0])
+        cycle = pc.Cycle(pc.Clip(self.clip.names, self.clip.parents, moved, 30.0, "cycle"))
+        out, info = pc.end_on_cycle(self.a, self.clip.worlds, cycle, pc.knobs(from_cycle=8))
+        self.assertTrue(info["end"])
+        np.testing.assert_allclose(out, self.clip.worlds, atol=1e-5)
+
+    def test_the_last_frame_is_the_cycles_and_the_rest_the_starts(self):
+        F = self.clip.F
+        other = synthetic_start(lean_end=0.3, drop_end=5.0)
+        cycle = pc.Cycle(pc.Clip(other.names, other.parents, other.worlds[:, 0:20], 30.0, "cycle"))
+        out, info = pc.end_on_cycle(self.a, self.clip.worlds, cycle, pc.knobs(from_cycle=6))
+        self.assertGreaterEqual(info["phase"], 0.0)
+        self.assertLess(info["phase"], cycle.period)
+        aligned = cycle.sample(info["phase"]) @ info["place"]
+        np.testing.assert_allclose(out[:, F - 1], aligned, atol=1e-6)
+        np.testing.assert_allclose(out[:, :F - 6], self.clip.worlds[:, :F - 6], atol=1e-12)
+        self.assertEqual(info["frames"], 6)
+
+    def test_evaluate_ends_a_start_on_its_cycle(self):
+        F = self.clip.F
+        cycle = pc.Cycle(pc.Clip(self.clip.names, self.clip.parents, self.clip.worlds[:, F - 20:], 30.0, "cycle"))
+        result = pc.evaluate(self.a, self.pose, k=pc.knobs(**dict(STILL, from_cycle=6)),
+                             cycle=cycle)
+        self.assertTrue(result.info["cycle"].get("end"))
+        self.assertEqual(result.info["transition"], "start")
+        aligned = cycle.sample(result.info["cycle"]["phase"]) @ result.info["cycle"]["place"]
+        np.testing.assert_allclose(result.worlds[:, F - 1], aligned, atol=1e-6)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class EndRun(unittest.TestCase):
+    """A start that begins already moving, a stop that never settles (Unreal's, measured 2026-11-17)."""
+
+    def test_a_start_slow_at_its_first_frames_stands_there(self):
+        speeds = [1.2, 1.2, 1.3, 1.5, 1.7, 2.0, 2.3, 2.6, 3.0, 3.3] + [8.0] * 40 + [0.0]
+        self.assertEqual(pc.end_run(speeds), (0, 7))
+
+    def test_a_stop_slowing_at_its_end_stands_there_past_a_repeated_frame(self):
+        speeds = [14.0] * 25 + [7.6, 6.5, 5.1, 2.9, 0.0]
+        a, b = pc.end_run(speeds)
+        self.assertEqual(b, 29)
+        self.assertLess(a, 29)
+
+    def test_a_loop_has_no_end_to_stand_at(self):
+        speeds = [17.5, 17.5, 16.6, 15.4, 13.6, 11.2, 7.4, 6.1, 6.6, 7.1] + [11.0] * 80 + [16.1, 17.1, 0.0]
+        self.assertIsNone(pc.end_run(speeds))
+
+    def test_a_clip_slow_from_frame_0_reads_as_a_start(self):
+        clip = synthetic_start()
+        a = pc.Analysis(clip)
+        self.assertEqual(a.transition, "start")

@@ -94,12 +94,13 @@ class TheTable(unittest.TestCase):
         Tail Builder (the physical stop) the same day, after Tools; Walk Builder
         (the parametric walk) on 2026-10-13, after Tail Builder; Camera Shake the
         same day, after Walk Builder; Ragdoll (a fall by physics) on 2026-10-16, after Camera Shake;
-        Dynamics (chains that swing) on 2026-10-26, after Tail Builder."""
+        Dynamics (chains that swing) on 2026-10-26, after Tail Builder; Start/Stop Builder (Pose on clip in
+        the rail) on 2026-11-17, after Idle Builder."""
         self.assertEqual([s.label for s in hub.SECTIONS],
                          ["Animation Setup", "Inventory", "Connections", "Shared",
                           "Stash", "Chat", "Retarget", "Graph Overlay",
                           "Center of Mass", "Pose Library", "Tools", "Tail Builder",
-                          "Dynamics", "Walk Builder", "Idle Builder", "Camera Shake", "Ragdoll", "Moveset", "Studio", "Colour", "Radial Menu", "Hotkeys",
+                          "Dynamics", "Walk Builder", "Idle Builder", "Start/Stop Builder", "Camera Shake", "Ragdoll", "Moveset", "Studio", "Colour", "Radial Menu", "Hotkeys",
                           "Update"])
 
     def test_the_pose_library_card(self):
@@ -164,7 +165,7 @@ class TheTable(unittest.TestCase):
             ("retarget", "animation"),
             ("graphoverlay", "animation"), ("com", "animation"),
             ("poses", "animation"), ("tools", "animation"),
-            ("tailbuilder", "animation"), ("dynamics", "animation"), ("walk", "animation"), ("idle", "animation"),
+            ("tailbuilder", "animation"), ("dynamics", "animation"), ("walk", "animation"), ("idle", "animation"), ("startstop", "animation"),
             ("camshake", "animation"), ("ragdoll", "animation"), ("moveset", "animation"),
             ("studio", "look"),
             ("colour", "look"), ("radial", "settings"), ("hotkeys", "settings"),
@@ -186,7 +187,7 @@ class TheTable(unittest.TestCase):
         self.assertEqual([s.key for s in hub.card_sections()],
                          ["characters", "weapons", "connections", "shared",
                           "stash", "chat", "retarget", "graphoverlay", "com", "poses",
-                          "tools", "tailbuilder", "dynamics", "walk", "idle", "camshake", "ragdoll", "moveset", "studio", "colour",
+                          "tools", "tailbuilder", "dynamics", "walk", "idle", "startstop", "camshake", "ragdoll", "moveset", "studio", "colour",
                           "radial", "update"])
 
     def test_every_section_names_a_real_module_and_builder(self):
@@ -206,6 +207,7 @@ class TheTable(unittest.TestCase):
             "dynamics": ("maya_dynamics.panel", "build_panel"),
             "walk": ("maya_walk.panel", "build_panel"),
             "idle": ("maya_idle.panel", "build_panel"),
+            "startstop": ("maya_startstop.panel", "build_panel"),
             "camshake": ("maya_camshake", "build_panel"),
             "ragdoll": ("maya_ragdoll.panel", "build_panel"),
             "moveset": ("maya_moveset.panel", "build_panel"),
@@ -767,7 +769,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
             ("card", "connections"), ("card", "shared"), ("card", "stash"),
             ("card", "chat"), ("card", "retarget"), ("card", "graphoverlay"), ("card", "com"),
             ("card", "poses"), ("card", "tools"), ("card", "tailbuilder"),
-            ("card", "dynamics"), ("card", "walk"), ("card", "idle"), ("card", "camshake"), ("card", "ragdoll"), ("card", "moveset"), ("card", "studio"),
+            ("card", "dynamics"), ("card", "walk"), ("card", "idle"), ("card", "startstop"), ("card", "camshake"), ("card", "ragdoll"), ("card", "moveset"), ("card", "studio"),
             ("card", "colour"), ("card", "radial"), ("card", "update")])
         self.assertEqual(self.fake.frames, {})
         self.assertEqual(hub._SKIN.jumps, [s.key for s in hub.card_sections()])

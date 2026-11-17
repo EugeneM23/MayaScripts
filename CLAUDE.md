@@ -12441,6 +12441,43 @@ its frames, each pose a share plus part chips; spec addendum 4 and its "What the
      writing `skeldarClipLabel` dies on «is locked or connected». The verify's Manny had no label and passed;
      the live scene's, imported through the bridge, had one. Give a verify the furniture the real scene has.
 
+## Start/Stop Builder: Pose on clip in the rail, starts too, and the Weapon tab (2026-11-17)
+
+The animator: «У нас где-то был инструмент который обрабытвал старты и стопы анимаций можешь встроить его в
+реил?», then «Сразу давай перенесем новый функционал из вкладки wepoan ... новую систему захлестов ... Все
+отличие стартов и стопов это в том что тут нет цикла и средней позы тяжело вычислить, но все остальное должно
+работать по тем же принципам». Asked, all the recommendation: stops AND starts, the result on the skeleton
+itself (Walk / Idle Builder's way, its own keys kept), the poses Pose Library cards in wells, the card
+«Start/Stop Builder». Spec `docs/superpowers/specs/2026-11-17-start-stop-builder-design.md` (its addendum).
+**This replaces the standalone Pose on clip of the section above**: its window, its copies beside the
+character and its own posemath / skeletonmap copies are gone (in git before this commit); two pictures stay.
+
+- **`SkeldarAnim/maya_startstop/`** (a payload row): `model.py` (the old `poseclip.py`, on the plugin's own
+  `maya_poselib.posemath`), `weapon.py`, `scene.py`, `panel.py`. Hub section `startstop` (Animation, after Idle
+  Builder, icon `run`); hotkey rows `window.startstop`, `startstop.apply`.
+- **A start**: `Analysis.transition` stop / start / cycle (a stop runs into its still stretch, a start out of
+  it); a start's stance is the contact overlapping the reference most (`stance_contact`); a cycle set on the
+  card, a stop STARTS on its frame and a start ENDS on one (`end_on_cycle`: `start_on_cycle` on the clip read
+  backwards, `_Reversed` / `_Backwards`).
+- **A start or stop that never stands still** (`end_run`): Unreal's starts begin moving at frame 0, so an end
+  slower than 0.4 of the clip's median is where it stands. **`Cycle.sample` keeps bone lengths** between frames
+  (it lerped world positions: 1.4 mm short).
+- **Onto the skeleton**: its keys kept on the top joint (`skeldarStartStopSource`, gzip + base64 of every
+  channel), every press keys from them (FK, `maya_walk.scene.write_curves`, one undo chunk, a weapon's link let
+  go and taken back), **Restore** gives them back; the memo `skeldarStartStop`; the working list on `sys`.
+- **The card**: Stand pose well + Share + part chips; Run pose `[Stand | Clip | Card]` (Clip: the cycle's posture
+  with a cycle, else the clip's own run); Cycle (Use selected / Clear); the knob groups
+  `[Timing | Legs | Pelvis | Chest] / [Arms | Weapon | Weight]`, `[Both | Left | Right]`; Apply / Restore /
+  Reset; the Skeletons list.
+- **The Weapon tab with no cycle** (`weapon.py`): Hold (a chip), Inherit, Overlap ms, Aim target, Shoulder as
+  Walk Builder's, with each offset's **slow part** (a Gaussian over 8 frames) standing for the cycle's mean and
+  the root's frame for its travel line; Hold per frame by the pose's arm share, fully on a hand the scene gives
+  a weapon, a held hand without arm spring.
+- Proof: `docs/superpowers/plans/verify_startstop.py` **21/21 mayapy standalone** (numbers in the spec);
+  `tests/test_startstop_model.py`, `_weapon.py`, `_panel.py`. **Not seen in a GUI Maya** (the card, real
+  presses): after Check update. With no pose the card's default springs still trail the arms (58 cm at the
+  fingers on the sprint stop).
+
 ## The Pose Library: our look, a folder button, a list at the smallest size (2026-10-22)
 
 The animator: «перерисовать библеотеку поз в нашем стиле и сделать само меню более компактным ...
