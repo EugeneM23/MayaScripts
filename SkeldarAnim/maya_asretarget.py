@@ -363,6 +363,26 @@ def drive_plan(controls, bones, schema=UE5, rotation=False, scaled=False, keep_l
     return drives, missing
 
 
+def chain_drives(drives, ours, bones, rig_bones, schema):
+    """Pure: the FK spine and neck drives of a UE-named clip onto a rig whose game skeleton
+    numbers them differently, chain onto chain (`skelmap.chain_pairs`). The Fighter's rig
+    (2026-11-17) drives spine_01..04 from FKSpine1..4 (its Spine5 a ghost) and took the
+    clip's spine_04 on its chest: 01, 02, 04, 05 drive its 01..04 now. Each control keeps
+    the game bone it drives (`ours`) and takes the clip bone that bone pairs with."""
+    if schema.side_before or getattr(schema, "rest", "") == "given":
+        return drives
+    remap = skelmap.chain_pairs(list(bones), list(rig_bones))
+    if not remap:
+        return drives
+    out = []
+    for d in drives:
+        game = ours.get(d.control)
+        if not d.own and game in remap and d.control.startswith("FK"):
+            d = d._replace(bone=remap[game])
+        out.append(d)
+    return out
+
+
 def pole_joints(control):
     """Pure: the FKX upper, mid and lower joint of a pole control's limb."""
     base, side = control[:-2], control[-2:]
@@ -1524,6 +1544,7 @@ def _plan(source_root=None, rig=None, bones_mode=None):
     drives, missing = drive_plan(controls, list(bones), schema, rotation=rotation,
                                  scaled=scaled, pelvis=pelvis)
     drives = [d for d in drives if ours.get(d.control) in rig_bones]
+    drives = chain_drives(drives, ours, bones, rig_bones, schema)
     # an own drive needs the rig's FKX joints -- the whole limb, for a pole
     drives = [d for d in drives if not d.own or (
         cmds.objExists(_n(rig, d.bone)) and (not d.control.startswith("Pole") or all(

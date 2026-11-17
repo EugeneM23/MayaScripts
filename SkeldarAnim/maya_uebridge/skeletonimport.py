@@ -80,6 +80,9 @@ def pair_bones(source_leaves, target_leaves):
         wanted = UE4_SPINE.get(name, name) if ue4 else name
         if wanted in source:
             out[name] = wanted
+    if not ue4:     # a spine / neck numbered differently: chain onto chain (the Fighter's 4)
+        from maya_skeletonmap import chain_pairs
+        out.update(chain_pairs(source, target))
     return out
 
 

@@ -408,6 +408,30 @@ def distribute(sources, targets):
                 for i in range(n))
 
 
+def numbered_chain(names, prefix):
+    """The joints of one numbered chain (`spine_01`, `spine_02`...) in order. Pure."""
+    found = [n for n in names if n.startswith(prefix) and n[len(prefix):].isdigit()]
+    return sorted(found, key=lambda n: int(n[len(prefix):]))
+
+
+def chain_pairs(source, target, prefixes=("spine_", "neck_")):
+    """{target: source} for UE-named chains numbered differently on the two
+    skeletons, chain onto chain with both ends kept (`distribute`); a chain of
+    the same count is left to the name pairing. Pure.
+
+    2026-11-17: the Fighter's spine is spine_01..04, a UE / Creep clip's
+    spine_01..05. Paired by name his chest (spine_04) took the clip's
+    spine_04 and the clip's top vertebra was lost - the chest stood 23-28 deg
+    off the clip's chest on AS_Creep_Attack1. Chain onto chain 01, 02, 04, 05
+    drive his 01..04."""
+    out = {}
+    for prefix in prefixes:
+        src, dst = numbered_chain(source, prefix), numbered_chain(target, prefix)
+        if src and dst and len(src) != len(dst):
+            out.update(distribute(src, dst))
+    return out
+
+
 # ---------------------------------------------------------------- recognition
 
 def _labels(paths, parents, convention):

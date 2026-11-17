@@ -218,6 +218,9 @@ print("   ", text.splitlines()[0][:200])
 POINT = ("upperarm_r", "lowerarm_l", "thigh_l", "calf_r")
 WHOLE = ("pelvis", "spine_01", "spine_03", "spine_04", "neck_01", "head", "clavicle_l", "hand_l", "hand_r",
          "foot_l", "ball_r", "middle_02_r", "thumb_02_l")
+# his four-joint spine takes a five-joint clip's chain onto chain (2026-11-17, `chain_pairs`): his
+# spine_03 is the clip's spine_04, his chest (spine_04) the clip's chest (spine_05)
+CHAIN = {"spine_03": "spine_04", "spine_04": "spine_05"} if "spine_05" in S else {}
 worst_rot, worst_dir, worst_len, moved, worst_at, worst_len_at = 0.0, 0.0, 0.0, 0.0, "", ""
 
 
@@ -230,8 +233,9 @@ def direction(B, k):
 for t in range(int(first), int(last) + 1, max(1, int((last - first) / 12))):
     cmds.currentTime(t)
     for k in WHOLE:
-        if k in S:
-            a_ = ang(rot(wm(S[k])), rot(wm(H[k])))
+        k_src = CHAIN.get(k, k)
+        if k_src in S:
+            a_ = ang(rot(wm(S[k_src])), rot(wm(H[k])))
             if a_ > worst_rot:
                 worst_rot, worst_at = a_, "%s at %d" % (k, t)
     for k in POINT:

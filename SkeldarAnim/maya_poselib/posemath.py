@@ -386,6 +386,8 @@ def _by_leaf(source, target):
         wanted = UE4_SPINE.get(leaf, leaf) if ue4 else leaf
         if wanted in source:
             out[leaf] = wanted
+    if not ue4:     # a spine / neck numbered differently: chain onto chain (the Fighter's 4)
+        out.update(skelmap.chain_pairs(source, target))
     return out
 
 
