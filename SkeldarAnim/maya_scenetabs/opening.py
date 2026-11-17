@@ -217,6 +217,9 @@ def _import(path, namespace):
               preserveReferences=True, executeScriptNodes=False, mergeNamespacesOnClash=False,
               ignoreVersion=True)
     _sweep(namespace)
+    #  an import gives every node a new UUID: our knot / aim markers pointed again
+    from maya_tools import relink
+    relink.heal(namespace)
     _tidy_file(namespace, os.path.basename(path))
     return unit, (_ranges_of(namespace) or session.current_ranges())
 

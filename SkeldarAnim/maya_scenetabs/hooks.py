@@ -239,6 +239,9 @@ def _undone():
 
 def _scene_opened():
     """A scene opened by any road: a session file brings its tabs back."""
+    #  a file saved from an imported tab carries markers naming UUIDs it no longer has
+    from maya_tools import relink
+    relink.heal_quietly()
     state = _st()
     if _bypassed():
         state["seen"] = True

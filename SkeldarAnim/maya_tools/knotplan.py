@@ -379,6 +379,8 @@ SNAPSHOT_NOTHING = "select the objects to snapshot"
 SNAPSHOT_COMPONENTS = "components are not snapshotted - select the object"
 OFFSET_ONE = "Knot Offset takes one object - select one"
 BAKE_NOTHING = "select a knot, or an object riding one, to bake it"
+BAKE_LOST = ("%s: the object it drives is not found (its link was lost) - nothing baked, "
+             "the knot kept")
 REMOVE_NOTHING = "select a knot, a waiting pivot, or an object riding a knot"
 
 

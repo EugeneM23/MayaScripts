@@ -2171,6 +2171,8 @@ def _press_apply_body(*_args):
 def aim_mode(rig=None, weapon=None, on=True):
     """Aim Mode (`on`) or Default on the chosen weapon of the rig (2026-10-21,
     `weaponaim`). The status line."""
+    from maya_tools import relink
+    relink.heal_quietly()
     rig, refusal = _rig(rig)
     if rig is None:
         return refusal
@@ -2455,6 +2457,8 @@ def _press_aim_pick(choice):
     def go(*_args):
         if _MENU_QUIET["on"]:
             return None
+        from maya_tools import relink
+        relink.heal_quietly()
         rig, refusal = maya_rigs.current_rig()
         if rig is None:
             return _status(refusal)

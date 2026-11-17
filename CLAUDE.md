@@ -18608,3 +18608,27 @@ Relationship still kept full node paths in memory, so in another file or scene t
 - Proof: `tests/test_atbar.py` `XformClipboardAcrossScenes`, `tests/test_atbar_core.py` `Xform` (two new
   cross-scene cases); mayapy standalone 4/4 (copy, `file -new`, paste onto `Manny_Rig1` beside a decoy rig,
   rigid follow to 0.001, one undo). Not seen in a GUI Maya.
+
+## Knots and Aim Mode find their nodes again after an import (2026-11-17)
+
+«не можу забейкати ейм»: in a dagger scene opened through Scene Tabs, Connections showed Default over
+a weapon in Aim Mode (its check had nothing to apply) and Tools > Bake knots deleted the dagger's Knot
+Offset WITHOUT baking it - the animation fell back to the dagger's own keys. Every marker that names a
+node by UUID (`skeldarKnotSource`, `skeldarKnotOf`, `skeldar1PArm`, `skeldarWeaponAim`, `...AimOf`)
+named a UUID no node had. Cause, measured in mayapy: **`cmds.file(i=True)` gives every imported node a
+new UUID** (twice imported, twice new; an open keeps them), and Scene Tabs bring every tab after the
+first in by import. A tab saved to a file carries the dead markers into it.
+
+`maya_tools/relink.py` reads what a dead marker meant back from the scene graph: a knot's constraint ->
+the knot of its target; a knot -> what its own constraint drives; a double knot's inner -> the knot it
+lies in; an Aim Mode group -> the node it was named after (`<node>_aim`, an EMPTY leftover group is
+skipped so a weapon never gets two); its aimConstraint -> the node of its controllers' group. A marker
+the graph does not answer with exactly one node stays. It runs on a tab's import (`opening._import`), on
+every scene open (`hooks._scene_opened`), and before Bake / Remove and the Connections aim pick / press -
+out of the undo queue (an undo would kill the markers again). Bake now refuses (`BAKE_LOST`) a knot whose
+object it cannot name while a constraint still follows it, instead of deleting it unbaked.
+
+Proof: `docs/superpowers/plans/relink/verify_relink_import.py` 10/10 mayapy standalone (import kills the
+markers, heal gives all four back and skips the leftover, a second heal finds nothing, Bake refuses and
+keeps the lost knot); `tests/test_tools_relink.py`. The animator's live scenes (9.0034, 9.0035) were
+mended by the same rules before the module existed. Not yet seen in a GUI Maya with the build.

@@ -1355,9 +1355,15 @@ def bake(selection=None):
     """The objects baked where their knots carry them; the knots gone. A snapshot drives nothing:
     nothing to bake, it is deleted too (2026-10-15, «После нажатия бейк если были выделены
     какие-то наши knot то они должны удалиться»). The line."""
+    from maya_tools import relink
+    relink.heal_quietly()
     tops, _waiting = _picked(selection)
     if not tops:
         return plan.BAKE_NOTHING
+    #  a knot that still drives something it cannot name would be deleted unbaked (2026-11-17)
+    lost = [t for t in _with_riders(tops) if _drives_unnamed(t)]
+    if lost:
+        return plan.BAKE_LOST % ", ".join(plan.leaf(t) for t in lost)
     from maya_tools import layered
     layer = None
     if any(o and layered.is_layered(o) for o in (source_of(t) for t in tops)):
@@ -1390,6 +1396,17 @@ def bake(selection=None):
     return plan.baked_message(names, snaps)
 
 
+def _drives_unnamed(top):
+    """True when `top` is no snapshot, its object is not found, yet a constraint follows it."""
+    if is_snapshot(top) or source_of(top):
+        return False
+    own = set(cmds.ls(cmds.listRelatives(top, allDescendents=True, fullPath=True) or [],
+                      long=True) or [])
+    followers = cmds.ls(cmds.listConnections(nodes_of(top), source=False, destination=True,
+                                             type="constraint") or [], long=True) or []
+    return any(f not in own for f in followers)
+
+
 def _unkey(obj, ch, value):
     """A channel we keyed at creation: cut while it still holds only that value, the value
     written back (cutKey leaves whatever was last evaluated, trap 58)."""
@@ -1418,6 +1435,8 @@ def _unkey(obj, ch, value):
 def remove(selection=None):
     """The knots deleted and their objects' own animation back; waiting pivots dropped; a
     snapshot deleted (with any knot riding it)."""
+    from maya_tools import relink
+    relink.heal_quietly()
     tops, waiting_pivots = _picked(selection)
     if not tops and not waiting_pivots:
         return plan.REMOVE_NOTHING
