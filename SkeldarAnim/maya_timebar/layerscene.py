@@ -652,20 +652,90 @@ def _named(layer, stem, first=1):
     return layer
 
 
+def _under_layers(plug):
+    """The plug feeding `plug` from beneath every layer: each layer's blend node is passed
+    through its input A (`output` -> `inputA`, `outputX` -> `inputAX`). None for nothing."""
+    seen = set()
+    while plug and plug not in seen:
+        seen.add(plug)
+        found = cmds.listConnections(plug, source=True, destination=False, plugs=True,
+                                     skipConversionNodes=True) or []
+        if not found:
+            return None
+        source = found[0]
+        node, _dot, attr = source.partition(".")
+        if not cmds.nodeType(node).startswith("animBlendNode"):
+            return source
+        plug = "%s.inputA%s" % (node, attr[len("output"):])
+    return None
+
+
+def _constraint_fed(node):
+    return bool(node) and cmds.objectType(node, isAType="constraint")
+
+
+def held_plugs(plugs):
+    """The plugs of `plugs` a constraint drives - a knot's, the rig's, anyone's - directly or
+    through Maya's pairBlend, and a constraint's switch (`blendParent1`) a node drives (a knot's
+    `attach`). A layer on such a plug sits between the constraint and the channel, and a merge
+    into the base bakes the constraint away for good (2026-11-18: the 1P chest knot lost
+    FKSpine3_M to a Merge with BaseAnimation, and the chest turned 107 degrees with every
+    layer muted)."""
+    out = []
+    for plug in plugs:
+        source = _under_layers(plug)
+        if not source:
+            continue
+        node, _dot, attr = source.partition(".")
+        kind = cmds.nodeType(node)
+        if kind == "pairBlend":
+            if any(_constraint_fed((cmds.listConnections("%s.%s" % (node, a), source=True,
+                                                          destination=False) or [None])[0])
+                   for a in ("inTranslateX2", "inTranslateY2", "inTranslateZ2",
+                             "inRotateX2", "inRotateY2", "inRotateZ2")):
+                out.append(plug)
+        elif _constraint_fed(node):
+            out.append(plug)
+        elif plug.rpartition(".")[2].startswith("blendParent") and \
+                not cmds.objectType(node, isAType="animCurve"):
+            out.append(plug)
+    return out
+
+
+def release_held(layers):
+    """Every held plug (`held_plugs`) taken off `layers`: the constraint drives it again, as
+    it did before the layer (measured: the pairBlend and the knot's `attach` come back, the pose
+    unchanged). How many."""
+    count = 0
+    for layer in layers:
+        plugs = cmds.animLayer(layer, q=True, attribute=True) or []
+        for plug in held_plugs(plugs):
+            cmds.animLayer(layer, e=True, removeAttribute=plug)
+            count += 1
+    return count
+
+
+def _held_words(count):
+    return "" if not count else " (%d channel%s a constraint drives left out)" % (
+        count, "" if count == 1 else "s")
+
+
 def create_anim():
     from . import scene
     with _chunk():
         if cmds.ls(selection=True):
             name = cmds.animLayer("AnimLayer1", addSelectedObjects=True)
+            held = release_held([name])
         else:
             name = cmds.animLayer("AnimLayer1")
+            held = 0
         #  in a scene tab the new layer belongs under the tab's own root, not the session's
         root = _anim_names()[0]
         if root and cmds.animLayer(name, q=True, parent=True) != root:
             cmds.animLayer(name, e=True, parent=root)
         name = _named(name, "AnimLayer")
         scene.pick_layer(name)
-    return True, "%s made" % _label(name)
+    return True, "%s made%s" % (_label(name), _held_words(held))
 
 
 def add_selection(name):
@@ -673,7 +743,8 @@ def add_selection(name):
         return False, "nothing selected"
     with _chunk():
         cmds.animLayer(name, e=True, addSelectedObjects=True)
-    return True, ""
+        held = release_held([name])
+    return True, _held_words(held).strip(" ()")
 
 
 def remove_selection(name):
@@ -711,6 +782,7 @@ def merge_down(name):
         cmds.optionVar(intValue=(opt, value))
     try:
         with _chunk():
+            release_held([under, name])
             mel.eval('animLayerMerge({"%s", "%s"})' % (under, name))
             made = [n for n in (r["name"] for r in anim_layers()) if n not in before]
             if made:
@@ -794,6 +866,9 @@ def _maya_merge(layers, root):
     order = _ordered(curves_root)
     layers = [n for n in order if n in set(layers)]
     merging_base = bool(layers) and layers[0] == root
+    #  a constraint's channel is never baked: the merge would put its result on the base in place
+    #  of the constraint (`held_plugs`); the base keeps none of it, so only the layers are cleared
+    release_held([n for n in layers if n not in (root, curves_root)])
     if merging_base:
         new_base = cmds.animLayer("BaseCopy", override=True)
         if cmds.animLayer(new_base, q=True, parent=True) != root:

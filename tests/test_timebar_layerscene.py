@@ -391,5 +391,77 @@ class TabBase(unittest.TestCase):
         S.lane_set_key("tab_x:AnimLayerRoot")
         self.assertEqual(seen, [{"animLayer": "BaseAnimation"}])
 
+
+class GraphCmds(object):
+    """A knot's graph (2026-11-18, the 1P chest): FKSpine3's rotateX through a layer's blend to
+    Maya's pairBlend, whose input 2 is the knot's constraint; its blendParent1 through the layer
+    to the knot's `attach`; a plain keyed channel; a channel a constraint drives directly."""
+
+    edges = {
+        "spine.rotateX": "spine_rotate_Lay.outputX",
+        "spine_rotate_Lay.inputAX": "pairBlend1.outRotateX",
+        "pairBlend1.inRotateX2": "spine_parentConstraint1.constraintRotateX",
+        "spine.blendParent1": "spine_blendParent1_Lay.output",
+        "spine_blendParent1_Lay.inputA": "Chest_1P_ctrl.attach",
+        "arm.rotateX": "arm_rotate_Lay.outputX",
+        "arm_rotate_Lay.inputAX": "arm_rotateX.output",
+        "extra.translateX": "extra_parentConstraint1.constraintTranslateX",
+        "cube.blendParent1": "cube_blendParent1.output",
+    }
+    kinds = {"spine_rotate_Lay": "animBlendNodeAdditiveRotation", "pairBlend1": "pairBlend",
+             "spine_parentConstraint1": "parentConstraint", "spine_blendParent1_Lay": "animBlendNodeAdditiveDA",
+             "Chest_1P_ctrl": "transform", "arm_rotate_Lay": "animBlendNodeAdditiveRotation",
+             "arm_rotateX": "animCurveTA", "extra_parentConstraint1": "parentConstraint",
+             "cube_blendParent1": "animCurveTU"}
+
+    def __init__(self):
+        self.removed = []
+
+    def listConnections(self, plug, source=True, destination=False, plugs=False, skipConversionNodes=False):
+        found = self.edges.get(plug)
+        if not found:
+            return []
+        return [found] if plugs else [found.split(".")[0]]
+
+    def nodeType(self, node):
+        return self.kinds[node]
+
+    def objectType(self, node, isAType=None):
+        kind = self.kinds[node]
+        return {"constraint": kind.endswith("Constraint"), "animCurve": kind.startswith("animCurve")}[isAType]
+
+    def animLayer(self, name=None, q=False, e=False, **kw):
+        if q and kw.get("attribute"):
+            return ["spine.rotateX", "spine.blendParent1", "arm.rotateX", "extra.translateX",
+                    "cube.blendParent1"]
+        if e and "removeAttribute" in kw:
+            self.removed.append(kw["removeAttribute"])
+
+
+class HeldPlugs(unittest.TestCase):
+    """A layer never stands between a constraint and its channel: a merge into the base would bake
+    the constraint away (the 1P chest knot lost FKSpine3_M that way)."""
+
+    def setUp(self):
+        self.cmds = GraphCmds()
+        self.old = S.cmds
+        S.cmds = self.cmds
+        self.addCleanup(setattr, S, "cmds", self.old)
+
+    def test_a_constraint_s_channels_and_its_switch_are_held_keys_are_not(self):
+        held = S.held_plugs(["spine.rotateX", "spine.blendParent1", "arm.rotateX", "extra.translateX",
+                             "cube.blendParent1"])
+        self.assertEqual(held, ["spine.rotateX", "spine.blendParent1", "extra.translateX"])
+
+    def test_release_takes_them_off_the_layer(self):
+        self.assertEqual(S.release_held(["Lay"]), 3)
+        self.assertEqual(self.cmds.removed, ["spine.rotateX", "spine.blendParent1", "extra.translateX"])
+
+    def test_the_words_count_them(self):
+        self.assertEqual(S._held_words(0), "")
+        self.assertEqual(S._held_words(1), " (1 channel a constraint drives left out)")
+        self.assertEqual(S._held_words(31), " (31 channels a constraint drives left out)")
+
+
 if __name__ == "__main__":
     unittest.main()
