@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -606,6 +607,130 @@ class Borrow(unittest.TestCase):
 
     def test_a_form_that_does_not_exist_is_no_record(self):
         self.assertIsNone(self.holder.take("Attribute Editor", "Nope", self.page_layout))
+
+
+def _flush_deletes():
+    QT.QtCore.QCoreApplication.sendPostedEvents(None, QT.QtCore.QEvent.Type.DeferredDelete)
+
+
+def _drop_park(holder):
+    for w in QT.QtWidgets.QApplication.topLevelWidgets():
+        if w.objectName() == holder.PARK:
+            w.deleteLater()
+    _flush_deletes()
+    holder._homes().clear()
+    sys.__dict__.pop("_skeldar_sidepanel_park", None)
+
+
+@unittest.skipIf(QT is None, "no Qt")
+class Rescue(Borrow):
+    """2026-11-19, live: Maya's Channel Box and Attribute Editor were deleted with our
+    panel («в Ченел бок немає даних») - a borrowed form left in a widget of ours when
+    that widget went died with it. Maya's forms never die with ours: they wait hidden
+    in the park and go home, or are borrowed again, from there."""
+
+    def setUp(self):
+        super(Rescue, self).setUp()
+        self.addCleanup(_drop_park, self.holder)
+
+    def valid(self, w):
+        return QT.shiboken.isValid(w)
+
+    def test_rescue_takes_maya_s_form_out_of_a_widget_about_to_go(self):
+        self.holder.take("Attribute Editor", "MainAttributeEditorLayout", self.page_layout)
+        self.assertEqual(self.holder.rescue(self.page), 1)
+        self.page.deleteLater()
+        _flush_deletes()
+        self.assertTrue(self.valid(self.form))
+        self.assertEqual(self.form.parentWidget().objectName(), self.holder.PARK)
+        self.assertFalse(self.form.isVisibleTo(self.form.parentWidget()))
+
+    def test_rescue_of_a_widget_without_maya_s_forms_moves_nothing(self):
+        self.assertEqual(self.holder.rescue(self.page), 0)
+        self.assertIs(self.form.parentWidget(), self.inner)
+
+    def test_give_with_no_way_home_parks_the_form_alive(self):
+        record = self.holder.take("Attribute Editor", "MainAttributeEditorLayout",
+                                  self.page_layout)
+        record["ws"] = ""
+        self.holder.dock_control = lambda component: ""
+        with mock.patch.object(self.holder, "print", lambda *a, **k: None, create=True):
+            self.assertFalse(self.holder.give(record))
+        self.page.deleteLater()
+        _flush_deletes()
+        self.assertTrue(self.valid(self.form))
+        self.assertEqual(self.form.parentWidget().objectName(), self.holder.PARK)
+
+    def test_give_finds_maya_s_control_again_when_the_record_lost_it(self):
+        record = self.holder.take("Attribute Editor", "MainAttributeEditorLayout",
+                                  self.page_layout)
+        record["ws"] = ""
+        self.assertTrue(self.holder.give(record))
+        self.assertIs(self.form.parentWidget(), self.inner)
+
+    def test_a_parked_form_goes_home_on_unpark(self):
+        self.holder.take("Attribute Editor", "MainAttributeEditorLayout", self.page_layout)
+        self.holder.rescue(self.page)
+        self.assertEqual(self.holder.unpark(), 1)
+        self.assertIs(self.form.parentWidget(), self.inner)
+        self.assertEqual(self.inner.layout().indexOf(self.form), 1)
+        self.assertTrue(self.form.isVisibleTo(self.ws))
+        self.assertTrue(self.ws_state["AttributeEditor"])
+        self.assertEqual(self.holder.unpark(), 0)
+
+    def test_a_parked_form_borrowed_again_keeps_its_home(self):
+        self.holder.take("Attribute Editor", "MainAttributeEditorLayout", self.page_layout)
+        self.holder.rescue(self.page)
+        self.ws_state["AttributeEditor"] = True          # Maya showed its empty control meanwhile
+        page2 = QT.QtWidgets.QWidget()
+        self.addCleanup(page2.deleteLater)
+        record = self.holder.take("Attribute Editor", "MainAttributeEditorLayout",
+                                  QT.QtWidgets.QVBoxLayout(page2))
+        self.assertIs(self.form.parentWidget(), page2)
+        self.assertEqual((record["parent"], record["index"], record["shown"]), ("AEInner", 1, True))
+        self.assertTrue(self.holder.give(record))
+        self.assertIs(self.form.parentWidget(), self.inner)
+
+
+@unittest.skipIf(QT is None, "no Qt")
+class EdgeKeepsMayaForms(unittest.TestCase):
+    """The panel's host deleted - by destroy or destroy_all - with Maya's form still in
+    a page: the form lives on in the park."""
+
+    def setUp(self):
+        from maya_sidepanel import edge, holder, panel
+        self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
+        self.edge_module, self.holder = edge, holder
+
+        def make(parent, on_tab, on_pin, on_width):
+            return panel.make(parent, 1.0, maya_hubstyle.TOKENS, motion=False,
+                              on_tab=on_tab, on_pin=on_pin, on_width=on_width)
+        self.edge = edge.SideEdge(make, width=340, scale=1.0,
+                                  window_rect=lambda: tuple(WINDOW), cursor=lambda: (900, 500),
+                                  buttons=lambda: False, app_active=lambda: True,
+                                  over_maya=lambda: True, motion=False)
+        self.addCleanup(self.edge.destroy)
+        self.form = QT.QtWidgets.QWidget()
+        self.form.setObjectName("MainChannelsLayersLayout")
+        self.edge.panel.pages["channels"].addWidget(self.form)
+        saved = holder.widget
+        holder.widget = lambda name: self.form if name == "MainChannelsLayersLayout" else None
+        self.addCleanup(setattr, holder, "widget", saved)
+        self.addCleanup(_drop_park, holder)
+
+    def test_destroy_keeps_maya_s_form(self):
+        with mock.patch.object(self.holder, "print", lambda *a, **k: None, create=True):
+            self.edge.destroy()
+        _flush_deletes()
+        self.assertTrue(QT.shiboken.isValid(self.form))
+        self.assertEqual(self.form.parentWidget().objectName(), self.holder.PARK)
+
+    def test_destroy_all_keeps_maya_s_form(self):
+        with mock.patch.object(self.holder, "print", lambda *a, **k: None, create=True):
+            self.edge_module.destroy_all()
+        _flush_deletes()
+        self.assertTrue(QT.shiboken.isValid(self.form))
+        self.assertEqual(self.form.parentWidget().objectName(), self.holder.PARK)
 
 
 if __name__ == "__main__":

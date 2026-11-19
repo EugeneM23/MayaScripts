@@ -583,6 +583,32 @@ class Mount(StateCase):
         self.assertIs(cb._state()["box"], built)
         self.assertTrue(any("first read" in str(a) for a in printed))
 
+    def test_unmount_with_its_page_gone_keeps_maya_s_form(self):
+        """2026-11-19: the hidden holder went with Maya's Channel Box still in it."""
+        import maya_hubqt
+        q = maya_hubqt.qt()
+        QtWidgets = self.QtWidgets
+        self.form.setObjectName("MainChannelsLayersLayout")
+
+        class Box(QtWidgets.QWidget):
+            def refresh(self, effects=True):
+                pass
+        self.holder.widget = lambda name: self.form if name in ("F", "MainChannelsLayersLayout") else None
+        self.box_module.make = lambda link, ui, tokens, parent=None, motion=None: Box(parent)
+        self.assertIsNotNone(cb.mount(self.panel, [{"form": "F"}]))
+        cb._state()["page"] = None
+        with mock.patch.object(self.holder, "print", lambda *a, **k: None, create=True):
+            cb.unmount()
+        q.QtCore.QCoreApplication.sendPostedEvents(None, q.QtCore.QEvent.Type.DeferredDelete)
+        self.assertTrue(q.shiboken.isValid(self.form))
+        self.assertEqual(self.form.parentWidget().objectName(), self.holder.PARK)
+        self.form.deleteLater()
+        for w in QtWidgets.QApplication.topLevelWidgets():
+            if w.objectName() == self.holder.PARK:
+                w.deleteLater()
+        self.holder._homes().clear()
+        sys.__dict__.pop("_skeldar_sidepanel_park", None)
+
 
 class NoOpenMaya(StateCase):
 

@@ -129,6 +129,8 @@ def unmount():
                     if w is not None:
                         page.layout().addWidget(w)   # out of ours BEFORE ours goes
                         w.show()
+            from maya_sidepanel import holder
+            holder.rescue(kept)                       # no page to go back to: parked, alive
             kept.setParent(None)
             kept.deleteLater()
         if box is not None and q.shiboken.isValid(box):

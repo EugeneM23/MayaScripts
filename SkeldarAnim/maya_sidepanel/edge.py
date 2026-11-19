@@ -21,7 +21,7 @@ import traceback
 import maya_edgerules as rules
 import maya_hubqt as hubqt
 
-from . import look
+from . import holder, look
 from maya_timebar.edge import main_window
 
 HOST = "skeldarSidePanelHost"
@@ -100,6 +100,7 @@ def destroy_all():
     for widget in list(q.QtWidgets.QApplication.topLevelWidgets()):
         try:
             if widget.objectName() in (HOST, SENSOR):
+                holder.rescue(widget)              # Maya's editors never go with ours
                 widget.hide()
                 widget.deleteLater()
                 gone += 1
@@ -560,6 +561,7 @@ class SideEdge(object):
                 pass
         for w in (self.sensor, self.host):
             try:
+                holder.rescue(w)                   # Maya's editors never go with ours
                 w.hide()
                 w.deleteLater()
             except RuntimeError:

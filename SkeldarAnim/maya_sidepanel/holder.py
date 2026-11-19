@@ -11,6 +11,7 @@ the panel (look.MEL_OVERRIDE): the Attribute Editor refreshes only while that is
 and showEditor (Ctrl+A) would otherwise restore the empty workspaceControl.
 """
 
+import sys
 import traceback
 
 import maya_hubqt as hubqt
@@ -84,6 +85,106 @@ def _set_ws(name, visible):
         pass
 
 
+#  2026-11-19, live: Maya's Channel Box and Attribute Editor were deleted with our panel
+#  - a form still inside a widget of ours dies when that widget goes. Before anything of
+#  ours is deleted its Maya forms are moved to the park, a hidden window never deleted;
+#  from there they go home (unpark) or are borrowed again with the home they had.
+MAYA_FORMS = tuple(sorted(set(form for tab in look.TABS for sep in (False, True)
+                              for _component, form in look.forms(tab, sep))))
+PARK = "skeldarSidePanelParked"
+
+
+def _homes():
+    """form -> the record of where Maya keeps it, from its first take until it is home."""
+    homes = getattr(sys, "_skeldar_sidepanel_homes", None)
+    if homes is None:
+        homes = {}
+        sys._skeldar_sidepanel_homes = homes
+    return homes
+
+
+def _the_park(create=True):
+    q = hubqt.qt()
+    if q is None:
+        return None
+    for w in q.QtWidgets.QApplication.topLevelWidgets():
+        try:
+            if w.objectName() == PARK:
+                return w
+        except RuntimeError:
+            pass
+    if not create:
+        return None
+    park_widget = q.QtWidgets.QWidget()
+    park_widget.setObjectName(PARK)
+    lay = q.QtWidgets.QVBoxLayout(park_widget)
+    lay.setObjectName(PARK + "Layout")             # trap 278: no unnamed layout above Maya's
+    park_widget.hide()
+    #  a parentless widget made in Python dies with its last Python reference - and
+    #  takes the parked forms with it (measured: the first test parked, then lost it)
+    sys._skeldar_sidepanel_park = park_widget
+    return park_widget
+
+
+def _in_park(w):
+    try:
+        parent = w.parentWidget()
+        return parent is not None and parent.objectName() == PARK
+    except RuntimeError:
+        return False
+
+
+def park(w):
+    """Maya's form `w` out of ours, hidden and alive. True when it went."""
+    holder_widget = _the_park()
+    if holder_widget is None or w is None:
+        return False
+    holder_widget.layout().addWidget(w)
+    w.hide()
+    return True
+
+
+def rescue(root):
+    """Every Maya form inside `root` (a widget of ours about to be deleted) parked.
+    How many went."""
+    q = hubqt.qt()
+    if q is None or root is None:
+        return 0
+    try:
+        if not q.shiboken.isValid(root):
+            return 0
+    except Exception:                                        # noqa: BLE001
+        return 0
+    moved = 0
+    for name in MAYA_FORMS:
+        w = widget(name)
+        if w is None or w is root:
+            continue
+        try:
+            if root.isAncestorOf(w) and park(w):
+                moved += 1
+        except RuntimeError:
+            pass
+    if moved:
+        print("SkeldarAnim: %d of Maya's editors kept alive as the side panel went" % moved)
+    return moved
+
+
+def unpark():
+    """Every parked form given back home. How many went."""
+    gone = 0
+    for form, record in list(_homes().items()):
+        w = widget(form)
+        if w is None or not _in_park(w):
+            continue
+        try:
+            if give(record):
+                gone += 1
+        except Exception:                                    # noqa: BLE001
+            print(traceback.format_exc())
+    return gone
+
+
 def take(component, form, layout):
     """Move `form` into the Qt `layout`; the record of where it was, or None."""
     ws = dock_control(component)
@@ -94,15 +195,20 @@ def take(component, form, layout):
         w = widget(form)
     if w is None:
         return None
-    parent = w.parentWidget()
-    index = -1
-    parent_name = ""
-    if parent is not None:
-        parent_name = parent.objectName()
-        if parent.layout() is not None:
-            index = parent.layout().indexOf(w)
-    record = {"component": component, "form": form, "ws": ws, "shown": shown,
-              "parent": parent_name, "index": index}
+    home = _homes().get(form) if _in_park(w) else None
+    if home:
+        record = dict(home, component=component, ws=ws or home.get("ws", ""))
+    else:
+        parent = w.parentWidget()
+        index = -1
+        parent_name = ""
+        if parent is not None:
+            parent_name = parent.objectName()
+            if parent.layout() is not None:
+                index = parent.layout().indexOf(w)
+        record = {"component": component, "form": form, "ws": ws, "shown": shown,
+                  "parent": parent_name, "index": index}
+    _homes()[form] = dict(record)
     layout.addWidget(w)
     w.show()
     if ws:
@@ -132,7 +238,15 @@ def give(record):
     if w is None:
         return False
     parent = _parent_for(record)
+    if parent is None:                     # the control renamed or rebuilt: asked again
+        ws = dock_control(record.get("component"))
+        if ws:
+            record = dict(record, ws=ws)
+            parent = _parent_for(record)
     if parent is None:
+        park(w)
+        print("SkeldarAnim: Maya's %s found no way home - kept hidden, borrowed again "
+              "next time" % record.get("form"))
         return False
     layout = parent.layout()
     if layout is not None:
@@ -147,6 +261,7 @@ def give(record):
     w.show()
     if record.get("ws") and record.get("shown"):
         _set_ws(record["ws"], True)
+    _homes().pop(record.get("form"), None)
     return True
 
 

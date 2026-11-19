@@ -225,6 +225,10 @@ def give_back():
                     gone += 1
             except Exception:                                # noqa: BLE001
                 print(traceback.format_exc())
+    try:                                    # a form parked earlier goes home too
+        gone += holder.unpark()
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
     holder.uninstall()
     from . import skin
     skin.channel_box(False)
@@ -242,6 +246,10 @@ def _show_hidden():
         if _cmds().workspaceControl(name, exists=True):
             holder._set_ws(name, True)
     _cmds().optionVar(remove=HIDDEN_VAR)
+    try:
+        holder.unpark()
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
 
 
 def ensure_edge():
