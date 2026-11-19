@@ -1,6 +1,6 @@
 """Side panel: Maya's Channel Box / Layer Editor and Attribute Editor in a panel that
-slides out of the right edge of Maya's window, the Time Bar's bottom edge on its side
-(2026-10-17). ⋮ -> Side panel ▸ Maya's / Right edge (Maya's by default); hotkey rows
+comes out of the right edge of Maya's window, the Time Bar's bottom edge on its side
+(2026-10-17), at once (2026-11-19). ⋮ -> Side panel ▸ Maya's / Right edge (Maya's by default); hotkey rows
 window.sidepanel, sidepanel.channels, sidepanel.attributes.
 
 Nothing heavy at import: MEL asks `holds(tab)` on every selection.
@@ -253,13 +253,12 @@ def ensure_edge():
         return edge
     drop_edge()
     from . import edge as edge_module, look, panel
-    import maya_hubmotion
     import maya_hubstyle
     edge_module.destroy_all()
     ui = cmds.mayaDpiSetting(q=True, realScaleValue=True) or 1.0
 
     def make(parent, on_tab, on_pin, on_width):
-        return panel.make(parent, ui, maya_hubstyle.TOKENS, motion=maya_hubmotion.enabled(),
+        return panel.make(parent, ui, maya_hubstyle.TOKENS,
                           on_tab=on_tab, on_pin=on_pin, on_width=on_width)
 
     def on_tab(value):
@@ -281,7 +280,7 @@ def ensure_edge():
         _start_job()
         if pinned():
             controller.set_pinned(True)
-            controller.reveal(instant=True)
+            controller.reveal()
         controller.selection_changed()          # something selected already: out
     except Exception:                                        # noqa: BLE001
         print("SkeldarAnim: the side panel could not take Maya's editors - Maya's are back")

@@ -146,58 +146,13 @@ class Hold(unittest.TestCase):
         self.assertFalse(hold.press_outside())
 
 
-class Slide(unittest.TestCase):
+class NoMotion(unittest.TestCase):
+    """Out and back are at once since 2026-11-19: no slide timing is left."""
 
-    def test_in_from_off_the_edge_to_zero(self):
-        self.assertEqual(rules.slide_x(0.0, 540, True), -540)
-        self.assertEqual(rules.slide_x(1.0, 540, True), 0)
-        xs = [rules.slide_x(i / 20.0, 540, True) for i in range(21)]
-        self.assertEqual(xs, sorted(xs))
-
-    def test_out_from_zero_off_the_edge(self):
-        self.assertEqual(rules.slide_x(0.0, 540, False), 0)
-        self.assertEqual(rules.slide_x(1.0, 540, False), -540)
-        xs = [rules.slide_x(i / 20.0, 540, False) for i in range(21)]
-        self.assertEqual(xs, sorted(xs, reverse=True))
-
-    def test_eased(self):
-        # ease-out in: more than half way at half time
-        self.assertGreater(rules.slide_x(0.5, 100, True), -50)
-
-    def test_a_quick_frame_and_the_hub_close_behind(self):
-        # 2026-10-09: the hub 1.5 x the first build's 180 («замедлить на
-        # 50%»); then «уменьшим задержку между выездами частей и увеличим
-        # скорость выезда фоновой подложки»: the frame 150, the hub 80 after it
-        self.assertEqual((rules.FRAME_MS, rules.HUB_DELAY_MS, rules.IN_MS),
-                         (150, 80, 270))
-        self.assertEqual(rules.OUT_MS, 150)
-        self.assertEqual(rules.reveal_ms(), 80 + 270)
-
-
-class RevealAt(unittest.TestCase):
-    """The frame and the hub along one reveal from rest."""
-
-    def test_the_ends(self):
-        self.assertEqual(rules.reveal_at(0, 540), (0, -540))
-        self.assertEqual(rules.reveal_at(rules.reveal_ms(), 540), (540, 0))
-
-    def test_the_frame_is_out_by_its_time(self):
-        self.assertEqual(rules.reveal_at(rules.FRAME_MS, 540)[0], 540)
-
-    def test_the_hub_waits_its_delay(self):
-        self.assertEqual(rules.reveal_at(rules.HUB_DELAY_MS, 540)[1], -540)
-        self.assertGreater(rules.reveal_at(rules.HUB_DELAY_MS + 20, 540)[1],
-                           -540)
-
-    def test_the_frame_always_leads_the_hub(self):
-        for ms in range(0, rules.reveal_ms() + 1, 5):
-            frame, x = rules.reveal_at(ms, 540)
-            self.assertGreaterEqual(frame, 540 + x, ms)
-
-    def test_both_only_come_out(self):
-        steps = [rules.reveal_at(ms, 540)
-                 for ms in range(0, rules.reveal_ms() + 1, 5)]
-        self.assertEqual(steps, sorted(steps))
+    def test_no_slide_timing(self):
+        for name in ("slide_x", "reveal_ms", "reveal_at", "FRAME_MS",
+                     "HUB_DELAY_MS", "IN_MS", "OUT_MS"):
+            self.assertFalse(hasattr(rules, name), name)
 
 
 class Contains(unittest.TestCase):

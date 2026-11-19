@@ -2940,12 +2940,12 @@ class OurLook(WindowCase):
         self.win.size.setValue(look.CELL_DEFAULT)
         self.assertFalse(canvas.listing)
 
-    def test_a_row_is_hovered_not_grown_and_picked_by_a_click(self):
+    def test_a_row_is_hovered_and_picked_by_a_click(self):
         self.win.size.setValue(look.CELL_MIN)
         canvas = self.win.canvas
         point = self.card_point(self.fist, local=True)
         self.mouse(canvas, "move", point, QT.QtCore.Qt.NoButton, QT.QtCore.Qt.NoButton)
-        self.assertEqual(canvas._zooms, {})
+        self.assertEqual(canvas._hover, self.win.cards_shown().index(self.fist))
         self.mouse(canvas, "press", point, QT.QtCore.Qt.LeftButton)
         self.mouse(canvas, "release", point, QT.QtCore.Qt.LeftButton)
         self.assertEqual(self.win.picked, self.fist)

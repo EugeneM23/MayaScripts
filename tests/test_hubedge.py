@@ -2,8 +2,8 @@
 
 Every timer is driven by calling the controller's handlers directly; the
 cursor, the mouse buttons, the work area and whether Maya is the active
-application come through the constructor's seams. Animations are off unless
-the test is about the slide.
+application come through the constructor's seams. Since 2026-11-19 nothing
+slides: the panel is out or off the edge at once.
 
 Spec: docs/superpowers/specs/2026-10-08-hub-compact-and-edge-panel-design.md
 """
@@ -35,7 +35,7 @@ class EdgeCase(unittest.TestCase):
         self.active = True
         self.widths = []
         self.edge = hubedge.Edge(
-            scale=1.0, width=360, motion=lambda: False,
+            scale=1.0, width=360,
             on_width=self.widths.append,
             work_area=lambda: (0, 0, 1600, 900),
             cursor=lambda: self.point, buttons=lambda: self.down,
@@ -321,7 +321,7 @@ class EdgeCase(unittest.TestCase):
         self.assertFalse(self.edge._watching)
 
     def test_destroy_all_finds_them_by_name(self):
-        other = hubedge.Edge(scale=1.0, motion=lambda: False,
+        other = hubedge.Edge(scale=1.0,
                              work_area=lambda: (0, 0, 800, 600),
                              cursor=lambda: (0, 0), buttons=lambda: False,
                              app_active=lambda: True)
@@ -350,7 +350,7 @@ class Place(unittest.TestCase):
 
     def test_a_screen_on_the_left_and_a_display_scale(self):
         _app()
-        edge = hubedge.Edge(scale=1.5, width=360, motion=lambda: False,
+        edge = hubedge.Edge(scale=1.5, width=360,
                             work_area=lambda: (-1920, 40, 1920, 1000),
                             cursor=lambda: (0, 0), buttons=lambda: False,
                             app_active=lambda: True)
@@ -384,7 +384,7 @@ class DefaultSeams(unittest.TestCase):
 
     def test_an_edge_with_no_seams_builds_and_goes(self):
         _app()
-        edge = hubedge.Edge(motion=lambda: False)
+        edge = hubedge.Edge()
         try:
             self.assertEqual(edge.host.height(),
                              hubedge._maya_work_area()[3])
@@ -394,200 +394,57 @@ class DefaultSeams(unittest.TestCase):
         self.assertFalse(edge.alive())
 
 
-class Slide(unittest.TestCase):
+class Instant(unittest.TestCase):
+    """2026-11-19 (the animator: «удаляем все подсветки и анимации из плагина»):
+    the panel is out or off the edge at once - the frame whole or gone, the slot
+    on its place, nothing left running."""
 
-    def test_a_slide_moves_the_slot_in_from_off_the_edge(self):
+    def _edge(self):
         _app()
-        edge = hubedge.Edge(scale=1.0, motion=lambda: True,
-                            work_area=lambda: (0, 0, 800, 600),
+        return hubedge.Edge(scale=1.0, work_area=lambda: (0, 0, 800, 600),
                             cursor=lambda: (0, 10), buttons=lambda: False,
                             app_active=lambda: True)
+
+    def test_a_reveal_is_out_at_once(self):
+        edge = self._edge()
         try:
             edge.reveal()
-            self.assertTrue(edge.sliding())
-            xs = []
-            loop_until = QtCore.QDeadlineTimer(1500)
-            while edge.sliding() and not loop_until.hasExpired():
-                QtWidgets.QApplication.processEvents()
-                xs.append(edge.slot.x())
             self.assertEqual(edge.slot.x(), 0)
-            self.assertEqual(xs, sorted(xs))
-            self.assertLess(xs[0], 0)
-        finally:
-            edge.destroy()
-
-    def test_a_slide_out_hides_the_host_at_its_end(self):
-        _app()
-        edge = hubedge.Edge(scale=1.0, motion=lambda: True,
-                            work_area=lambda: (0, 0, 800, 600),
-                            cursor=lambda: (0, 10), buttons=lambda: False,
-                            app_active=lambda: True)
-        try:
-            edge.reveal()
-            loop_until = QtCore.QDeadlineTimer(1500)
-            while edge.sliding() and not loop_until.hasExpired():
-                QtWidgets.QApplication.processEvents()
-            edge.conceal()
-            self.assertTrue(edge.sliding())
-            self.assertTrue(edge.host.isVisible())     # until the slide ends
-            xs = []
-            loop_until = QtCore.QDeadlineTimer(1500)
-            while edge.sliding() and not loop_until.hasExpired():
-                QtWidgets.QApplication.processEvents()
-                xs.append(edge.slot.x())
-            self.assertEqual(xs, sorted(xs, reverse=True))
-            self.assertEqual(edge.slot.x(), -edge.host.width())
-            self.assertFalse(edge.host.isVisible())
-            self.assertTrue(edge.sensor.isVisible())
-        finally:
-            edge.destroy()
-
-    def test_a_reveal_mid_slide_out_turns_back_from_where_it_stands(self):
-        _app()
-        edge = hubedge.Edge(scale=1.0, motion=lambda: True,
-                            work_area=lambda: (0, 0, 800, 600),
-                            cursor=lambda: (0, 10), buttons=lambda: False,
-                            app_active=lambda: True)
-        try:
-            edge.reveal()
-            loop_until = QtCore.QDeadlineTimer(1500)
-            while edge.sliding() and not loop_until.hasExpired():
-                QtWidgets.QApplication.processEvents()
-            edge.conceal()
-            loop_until = QtCore.QDeadlineTimer(1500)
-            while (edge.slot.x() > -100 and edge.sliding()
-                   and not loop_until.hasExpired()):
-                QtWidgets.QApplication.processEvents()
-            stood = edge.slot.x()
-            self.assertTrue(edge.sliding())               # caught mid-way
-            self.assertGreater(stood, -edge.host.width())
-            edge.reveal()
-            xs = [edge.slot.x()]
-            loop_until = QtCore.QDeadlineTimer(1500)
-            while edge.sliding() and not loop_until.hasExpired():
-                QtWidgets.QApplication.processEvents()
-                xs.append(edge.slot.x())
-            self.assertGreaterEqual(xs[0], stood - 1)    # no jump back out
-            self.assertEqual(xs, sorted(xs))
-            self.assertEqual(edge.slot.x(), 0)
-            self.assertTrue(edge.host.isVisible())
-        finally:
-            edge.destroy()
-
-
-class Frame(unittest.TestCase):
-    """2026-10-09, the animator: «сперва появляется фоновая рамка и вот она
-    появляется сильно резко я хочу что бы она выезжала анимацией плавно ...
-    А потом выезжала основная панель»: the host shows only its `frame`, which
-    slides out first; the hub follows; the frame leaves with the hub."""
-
-    def _edge(self, motion=True):
-        _app()
-        return hubedge.Edge(scale=1.0, motion=lambda: motion,
-                            work_area=lambda: (0, 0, 800, 600),
-                            cursor=lambda: (0, 10), buttons=lambda: False,
-                            app_active=lambda: True)
-
-    def _run(self, edge, sample, until=None):
-        seen = []
-        loop_until = QtCore.QDeadlineTimer(3000)
-        while edge.sliding() and not loop_until.hasExpired():
-            QtWidgets.QApplication.processEvents()
-            seen.append(sample())
-            if until is not None and until():
-                break
-        return seen
-
-    def test_the_frame_leads_and_the_hub_follows_close_behind(self):
-        edge = self._edge()
-        try:
-            w = edge.host.width()
-            edge.reveal()
-            self.assertLess(edge.frame, w)                 # not whole at once
-            seen = self._run(edge, lambda: (edge.frame, edge.slot.x()))
-            frames = [f for f, _x in seen]
-            self.assertEqual(frames, sorted(frames))
-            #  the frame starts alone ...
-            early = [x for f, x in seen if f < w // 2]
-            self.assertTrue(early)
-            self.assertTrue(all(x == -w for x in early))
-            #  ... the hub comes out while the frame is still coming
-            self.assertTrue([x for f, x in seen if f < w and x > -w])
-            #  and never runs ahead of it
-            for frame, x in seen:
-                self.assertGreaterEqual(frame, w + x - 1)
-            self.assertEqual((edge.frame, edge.slot.x()), (w, 0))
-            self.assertTrue(edge.host.mask().isEmpty())   # at rest: all of it
-        finally:
-            edge.destroy()
-
-    def test_the_window_shows_only_its_frame(self):
-        edge = self._edge()
-        try:
-            w = edge.host.width()
-            edge.reveal()
-            self._run(edge, lambda: None,
-                      until=lambda: 0 < edge.frame < w // 2)
-            self.assertTrue(edge.sliding())
-            shown = edge.host.mask().boundingRect()
-            self.assertEqual((shown.x(), shown.width()), (0, edge.frame))
-            self.assertEqual(shown.height(), edge.host.height())
-        finally:
-            edge.destroy()
-
-    def test_the_frame_leaves_with_the_hub(self):
-        edge = self._edge()
-        try:
-            w = edge.host.width()
-            edge.reveal()
-            self._run(edge, lambda: None)
-            edge.conceal()
-            seen = self._run(edge, lambda: (edge.frame, edge.slot.x()))
-            self.assertTrue(seen)
-            for frame, x in seen:
-                self.assertLessEqual(abs(frame - (w + x)), 1)
-            self.assertEqual(edge.frame, 0)
-            self.assertFalse(edge.host.isVisible())
-        finally:
-            edge.destroy()
-
-    def test_a_reveal_turned_back_in_its_frame_phase_takes_the_frame_back(self):
-        edge = self._edge()
-        try:
-            w = edge.host.width()
-            edge.reveal()
-            self._run(edge, lambda: None, until=lambda: edge.frame > w // 3)
-            self.assertEqual(edge.slot.x(), -w)            # still the frame phase
-            stood = edge.frame
-            edge.conceal()
-            frames = [stood] + [f for f in self._run(edge, lambda: edge.frame)]
-            self.assertEqual(frames, sorted(frames, reverse=True))
-            self.assertEqual(edge.frame, 0)
-            self.assertFalse(edge.host.isVisible())
-            self.assertTrue(edge.sensor.isVisible())
-        finally:
-            edge.destroy()
-
-    def test_without_motion_the_frame_is_whole_at_once(self):
-        edge = self._edge(motion=False)
-        try:
-            edge.reveal()
-            self.assertFalse(edge.sliding())
             self.assertEqual(edge.frame, edge.host.width())
             self.assertTrue(edge.host.mask().isEmpty())
+            self.assertTrue(edge.host.isVisible())
+            self.assertFalse(edge.sensor.isVisible())
+        finally:
+            edge.destroy()
+
+    def test_a_conceal_is_off_the_edge_at_once(self):
+        edge = self._edge()
+        try:
+            edge.reveal()
             edge.conceal()
+            self.assertEqual(edge.slot.x(), -edge.host.width())
             self.assertEqual(edge.frame, 0)
             self.assertFalse(edge.host.isVisible())
+            self.assertTrue(edge.sensor.isVisible())
         finally:
             edge.destroy()
 
     def test_a_width_change_out_keeps_the_frame_whole(self):
-        edge = self._edge(motion=False)
+        edge = self._edge()
         try:
             edge.reveal()
             edge.set_width(500, save=False)
             self.assertEqual(edge.frame, edge.host.width())
             self.assertTrue(edge.host.mask().isEmpty())
+        finally:
+            edge.destroy()
+
+    def test_no_slide_is_left(self):
+        edge = self._edge()
+        try:
+            for name in ("sliding", "motion", "burst", "_anim", "_slide",
+                         "_rail_slide", "_stop_anim"):
+                self.assertFalse(hasattr(edge, name), name)
         finally:
             edge.destroy()
 
@@ -599,25 +456,16 @@ class RightSide(unittest.TestCase):
 
     AREA = (100, 20, 1600, 900)          # x 100..1700
 
-    def _edge(self, motion=False, side="right"):
+    def _edge(self, side="right"):
         _app()
         self.point = (1699, 300)
         self.widths = []
         return hubedge.Edge(scale=1.0, width=360, side=side,
-                            motion=lambda: motion,
                             on_width=self.widths.append,
                             work_area=lambda: self.AREA,
                             cursor=lambda: self.point,
                             buttons=lambda: False,
                             app_active=lambda: True)
-
-    def _run(self, edge, sample):
-        seen = []
-        loop_until = QtCore.QDeadlineTimer(3000)
-        while edge.sliding() and not loop_until.hasExpired():
-            QtWidgets.QApplication.processEvents()
-            seen.append(sample())
-        return seen
 
     def test_the_left_is_the_default(self):
         edge = self._edge(side=None)
@@ -692,42 +540,23 @@ class RightSide(unittest.TestCase):
         finally:
             edge.destroy()
 
-    def test_the_frame_grows_from_the_right_and_the_hub_comes_in_after(self):
-        edge = self._edge(motion=True)
+    def test_it_comes_out_from_the_right_at_once(self):
+        edge = self._edge()
         try:
             w = edge.host.width()
             edge.reveal()
-            seen = self._run(edge, lambda: (
-                edge.frame, edge.offset, edge.slot.x(),
-                edge.host.mask().boundingRect().getRect()))
-            self.assertTrue(seen)
-            for frame, offset, x, mask in seen:
-                if frame < w:
-                    #  only the frame's right part shows
-                    self.assertEqual((mask[0], mask[2]),
-                                     (w - max(1, frame), max(1, frame)))
-                self.assertGreaterEqual(frame, w + offset - 1)
-                self.assertEqual(x, 1 - offset)
-            xs = [x for _f, _o, x, _m in seen]
-            self.assertEqual(xs, sorted(xs, reverse=True))   # leftward
-            self.assertTrue([x for f, _o, x, _m in seen if f < w
-                             and x < w + 1])   # the hub in before the frame
             self.assertEqual((edge.frame, edge.offset), (w, 0))
+            self.assertEqual(edge.slot.x(), 1)
             self.assertTrue(edge.host.mask().isEmpty())
         finally:
             edge.destroy()
 
     def test_it_goes_back_off_the_right_edge(self):
-        edge = self._edge(motion=True)
+        edge = self._edge()
         try:
             w = edge.host.width()
             edge.reveal()
-            self._run(edge, lambda: None)
             edge.conceal()
-            seen = self._run(edge, lambda: (edge.frame, edge.offset))
-            self.assertTrue(seen)
-            for frame, offset in seen:
-                self.assertLessEqual(abs(frame - (w + offset)), 1)
             self.assertEqual((edge.frame, edge.offset), (0, -w))
             self.assertFalse(edge.host.isVisible())
             self.assertTrue(edge.sensor.isVisible())
@@ -756,20 +585,14 @@ class RightSide(unittest.TestCase):
         finally:
             edge.destroy()
 
-    def test_set_side_stops_a_slide(self):
-        edge = self._edge(motion=True, side="left")
+    def test_set_side_takes_a_panel_out_off_the_new_edge(self):
+        edge = self._edge(side="left")
         try:
             edge.reveal()
-            self.assertTrue(edge.sliding())
             edge.set_side("right")
-            self.assertFalse(edge.sliding())
             self.assertEqual((edge.offset, edge.frame), (-360, 0))
         finally:
             edge.destroy()
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class RailDock(unittest.TestCase):
@@ -783,7 +606,7 @@ class RailDock(unittest.TestCase):
         self.app = _app()
         self.point = (800, 400)
         self.edge = hubedge.Edge(
-            scale=1.0, width=360, motion=lambda: False, rail=True,
+            scale=1.0, width=360, rail=True,
             rest=lambda: 40, work_area=lambda: self.VIEWPORT,
             cursor=lambda: self.point, buttons=lambda: False,
             app_active=lambda: True)
@@ -850,7 +673,7 @@ class RailShape(unittest.TestCase):
         self.app = _app()
         self.card = [(60, 10, 280, 200)]
         self.edge = hubedge.Edge(
-            scale=1.0, width=360, motion=lambda: False, rail=True,
+            scale=1.0, width=360, rail=True,
             rest=lambda: 40, shape=lambda: self.card,
             work_area=lambda: (100, 150, 1500, 700),
             cursor=lambda: (800, 400), buttons=lambda: False,
@@ -885,184 +708,9 @@ class RailShape(unittest.TestCase):
                          [(100, 150, 40, 700), (160, 160, 280, 200)])
 
 
-class RailBurst(unittest.TestCase):
-    """2026-10-18 (floating windows, spec § 4): the rail card bursts out of the
-    icon pressed and folds into the point the close came from; the mask shows
-    the rail at once and the card only as far as the burst has grown it."""
-
-    def setUp(self):
-        self.app = _app()
-        self.card = [(60, 10, 280, 200)]
-        self.bursts = []
-        self.done = None
-        self.shapes = [(70, 20, 110, 50)]          # host-local x0, y0, x1, y1
-        self.edges = []
-
-    def tearDown(self):
-        for edge in self.edges:
-            edge.destroy()
-
-    def burst(self, showing, origin, done, on_shape):
-        self.bursts.append((showing, origin))
-        for shape in self.shapes:
-            on_shape(shape)
-        self.done = done
-        return True
-
-    def build(self, burst=None, motion=True):
-        edge = hubedge.Edge(
-            scale=1.0, width=360, motion=lambda: motion, rail=True,
-            rest=lambda: 40, shape=lambda: self.card,
-            work_area=lambda: (100, 150, 1500, 700),
-            cursor=lambda: (800, 400), buttons=lambda: False,
-            app_active=lambda: True,
-            burst=self.burst if burst is None else burst)
-        self.edges.append(edge)
-        return edge
-
-    def test_reveal_bursts_from_the_origin_and_shows_the_frame_whole(self):
-        edge = self.build()
-        edge.reveal(origin=(140, 270))
-        self.assertEqual(self.bursts, [(True, (140, 270))])
-        self.assertTrue(edge.shown)
-        self.assertEqual(edge.frame, edge.host.width())
-        x0, y0, x1, y1 = self.shapes[-1]
-        self.assertEqual(edge.burst_shape, (x0, y0, x1 - x0, y1 - y0))
-        mask = edge.host.mask()
-        self.assertTrue(mask.contains(QtCore.QPoint(20, 600)))      # the rail at once
-        self.assertTrue(mask.contains(QtCore.QPoint(90, 30)))       # inside the shape
-        self.assertFalse(mask.contains(QtCore.QPoint(200, 150)))    # card, not grown yet
-        self.done()
-        self.assertIsNone(edge.burst_shape)
-        self.assertTrue(edge.shown)
-        self.assertTrue(edge.host.mask().contains(QtCore.QPoint(200, 150)))
-
-    def test_the_card_hides_under_the_start_box_until_the_first_tick(self):
-        self.shapes = []
-        edge = self.build()
-        edge.reveal(origin=(140, 270))              # host-local (40, 120): the rail
-        #  pulled ORIGIN_PAD inside the card (60, 10, 280, 200), as the plan pulls it;
-        #  the spring (2026-10-22) starts as the card scaled about that point
-        burst = hubedge.hubburst
-        x = 60 + burst.ORIGIN_PAD
-        x0, y0, x1, y1 = burst.plan_spring(True, (x - 60, 110), (280, 200), 1.0).start
-        self.assertEqual(edge.burst_shape, (int(round(60 + x0)), int(round(10 + y0)),
-                                            int(round(x1 - x0)), int(round(y1 - y0))))
-        mask = edge.host.mask()
-        self.assertTrue(mask.contains(QtCore.QPoint(x, 120)))       # the box shows
-        self.assertFalse(mask.contains(QtCore.QPoint(330, 15)))
-
-    def test_a_refused_burst_is_asked_before_the_frame_opens(self):
-        frames = []
-
-        def refuse(showing, origin, done, on_shape):
-            frames.append(edge.frame)
-            return False
-        edge = self.build(burst=refuse, motion=True)
-        rest = edge.frame
-        edge.reveal(origin=(140, 270))
-        self.assertEqual(frames, [rest])            # not the whole width first
-
-    def test_an_older_burst_is_deaf_once_another_card_bursts(self):
-        """Review 2026-10-18: ✕ on card A (its fold running), then B's icon - A's
-        fold must not write its shape over B's or send the panel back."""
-        calls = []
-
-        def seam(showing, origin, done, on_shape):
-            calls.append((showing, done, on_shape))
-            return True
-        edge = self.build(burst=seam)
-        edge.reveal(origin=(140, 270))               # A out
-        calls[-1][1]()
-        edge.conceal(origin=(300, 180))              # A folding
-        a_done, a_shape = calls[-1][1], calls[-1][2]
-        edge.reveal(origin=(140, 400))               # B bursting
-        b_done, b_shape = calls[-1][1], calls[-1][2]
-        b_shape((70, 20, 110, 50))
-        a_shape((0, 0, 5, 5))
-        a_done()
-        self.assertTrue(edge.shown)
-        self.assertEqual(edge.frame, edge.host.width())
-        self.assertEqual(edge.burst_shape, (70, 20, 40, 30))
-        b_done()
-        self.assertTrue(edge.shown)
-        self.assertIsNone(edge.burst_shape)
-
-    def test_the_visible_rects_follow_the_burst(self):
-        edge = self.build()
-        edge.reveal(origin=(140, 270))
-        self.assertEqual(edge.visible_rects(),
-                         [(100, 150, 40, 700), (170, 170, 40, 30)])
-
-    def test_conceal_folds_into_its_point_then_rests_on_the_rail(self):
-        edge = self.build()
-        edge.reveal(origin=(140, 270))
-        self.done()
-        edge.conceal(origin=(300, 180))
-        self.assertEqual(self.bursts[-1], (False, (300, 180)))
-        self.assertEqual(edge.frame, edge.host.width())          # still folding
-        self.done()
-        self.assertEqual(edge.frame, min(edge.host.width(), edge.rest_px()))
-        self.assertFalse(edge.shown)
-        self.assertEqual(edge.host.mask().boundingRect().getRect(), (0, 0, 40, 700))
-        self.assertTrue(edge.host.isVisible())
-
-    def test_without_a_burst_the_old_slide_runs(self):
-        edge = self.build(burst=lambda *a: False, motion=False)
-        edge.reveal(origin=(140, 270))
-        self.assertTrue(edge.shown)
-        self.assertIsNone(edge.burst_shape)
-        self.assertTrue(edge.host.mask().contains(QtCore.QPoint(200, 150)))  # the card
-
-    def test_a_plain_move_stops_the_bursts_still_drawing(self):
-        stops = []
-        edge = self.build(motion=False)
-        edge.burst_stop = lambda: stops.append(1)
-        edge.reveal(origin=(140, 270))
-        edge.conceal()
-        self.assertEqual(len(stops), 2)
-
-    def test_a_burst_does_not_stop_itself(self):
-        stops = []
-        edge = self.build()
-        edge.burst_stop = lambda: stops.append(1)
-        edge.reveal(origin=(140, 270))
-        self.assertEqual(stops, [])
-
-    def test_a_refused_or_raising_burst_slides(self):
-        def boom(*_a):
-            raise RuntimeError("no")
-        for burst in (lambda *a: False, boom):
-            edge = self.build(burst=burst)
-            with mock.patch("traceback.print_exc"):
-                edge.reveal(origin=(140, 270))
-            self.assertTrue(edge.shown)
-            self.assertIsNone(edge.burst_shape)
-
-    def test_no_origin_or_no_motion_never_asks_the_burst(self):
-        edge = self.build()
-        edge.reveal()
-        edge2 = self.build(motion=False)
-        edge2.reveal(origin=(140, 270))
-        self.assertEqual(self.bursts, [])
-        self.assertTrue(edge.shown and edge2.shown)
-
-    def test_a_reveal_during_a_fold_bursts_out_again(self):
-        edge = self.build()
-        edge.reveal(origin=(140, 270))
-        self.done()
-        edge.conceal(origin=(300, 180))
-        edge.reveal(origin=(140, 300))
-        self.assertEqual(self.bursts[-1], (True, (140, 300)))
-        self.done()
-        self.assertTrue(edge.shown)
-        self.assertEqual(edge.frame, edge.host.width())
-
-
-class RailBurstThroughTheHub(unittest.TestCase):
-    """2026-10-18: the real road - maya_hub's focus / ✕ on a real windowed Skin
-    in a real rail Edge, the Burster on the card's look-B frame telling the edge
-    its shape in host coordinates."""
+class RailThroughTheHub(unittest.TestCase):
+    """The real road - maya_hub's focus / ✕ on a real windowed Skin in a real rail
+    Edge. Since 2026-11-19 the card comes out and goes back at once."""
 
     def setUp(self):
         import maya_hub as hub
@@ -1078,11 +726,9 @@ class RailBurstThroughTheHub(unittest.TestCase):
         hub._cursor = lambda: (600, 500)
         hubqt.find = lambda name, layout=False: None
         hubqt.path_of = lambda obj: "path|" + obj.objectName()
-        self.motion = mock.patch("maya_hubmotion.enabled", lambda: True)
-        self.motion.start()
         self.edge = hubedge.Edge(
-            scale=1.0, width=360, motion=lambda: True, rail=True,
-            rest=hub._rail_rest, shape=hub._rail_shape, burst=hub._rail_burst,
+            scale=1.0, width=360, rail=True,
+            rest=hub._rail_rest, shape=hub._rail_shape,
             work_area=lambda: (100, 150, 800, 600), cursor=lambda: (600, 500),
             buttons=lambda: False, app_active=lambda: True)
         self.state = dict(hubedge.state())
@@ -1106,11 +752,6 @@ class RailBurstThroughTheHub(unittest.TestCase):
 
     def tearDown(self):
         hub = self.hub
-        self.motion.stop()
-        for card in (self.card, self.beta):
-            burster = getattr(card, "burster", None)
-            if burster is not None:
-                burster.stop()
         hub.cmds, hub._SKIN, hub._cursor, self.hubqt.find, self.hubqt.path_of, \
             listeners = self.saved
         self.style._LISTENERS[:] = listeners
@@ -1119,101 +760,29 @@ class RailBurstThroughTheHub(unittest.TestCase):
         self.skin.destroy()
         self.edge.destroy()
 
-    def finish(self):
-        """The burst to its end: the picture taken, the last tick."""
-        burster = self.card.burster
-        self.card.frame.grab()
-        burster.effect.ms = burster.effect.plan.total
-        burster.tick_now()
-
-    def test_a_rail_click_bursts_the_card_out_of_its_icon(self):
-        icon = self.skin.jumps["alpha"]
-        centre = icon.mapToGlobal(QtCore.QPoint(icon.width() // 2, icon.height() // 2))
-        self.edge._shown = False
+    def test_a_rail_click_brings_the_card_out_at_once(self):
         self.hub.focus("alpha")
-        burster = self.card.burster
-        self.assertTrue(burster.busy())
-        self.assertEqual(burster._origin, (centre.x(), centre.y()))
-        self.assertTrue(self.edge.shown)
-        #  until the first tick the card shows as the start box: about the icon,
-        #  pulled inside the card as the plan pulls it
-        x, y, w, h = self.edge.burst_shape
-        at = self.edge.host.mapFromGlobal(centre)
-        card = self.card.frame.geometry()
-        top = self.card.frame.mapTo(self.edge.host, QtCore.QPoint(0, 0))
-        self.assertGreaterEqual(x, top.x())
-        self.assertLessEqual(x + w, top.x() + card.width())
-        self.assertTrue(y <= at.y() <= y + h or not (top.y() <= at.y() <= top.y() + card.height()))
-        #  a tick: the shape in the host's coordinates
-        self.card.frame.grab()
-        burster.effect.ms = 60.0
-        burster.tick_now()
-        from maya_hubburst import at as state_at
-        x0, y0, x1, y1 = state_at(burster.effect.plan, 60.0).shape
-        off = self.card.frame.mapTo(self.edge.host, QtCore.QPoint(0, 0))
-        self.assertEqual(self.edge.burst_shape,
-                         (int(round(x0 + off.x())), int(round(y0 + off.y())),
-                          int(round(x1 - x0)), int(round(y1 - y0))))
-        self.finish()
-        self.assertIsNone(self.edge.burst_shape)
-        self.assertFalse(burster.busy())
-        self.assertTrue(self.edge.shown)
-
-    def test_the_close_folds_the_card_into_the_press_and_rests_on_the_rail(self):
-        self.edge._shown = False
-        self.hub.focus("alpha")
-        self.finish()
-        self.skin.cards["alpha"].close.click()
-        burster = self.card.burster
-        self.assertTrue(burster.busy())
-        self.assertEqual(burster._origin, (600, 500))
-        self.assertFalse(burster.effect.opening)
-        self.finish()
-        self.assertFalse(self.edge.shown)
-        self.assertEqual(self.edge.frame, min(self.edge.host.width(), self.edge.rest_px()))
-        self.assertIsNone(self.edge.burst_shape)
-
-    def test_the_burst_runs_with_no_paint_at_all(self):
-        """Review 2026-10-18: a frame masked to nothing may never be painted in
-        Maya; the plan is made on the first tick, the shape grows, the burst
-        ends at the plan's total, not at the driver's MAX_MS."""
-        self.edge._shown = False
-        self.hub.focus("alpha")
-        burster = self.card.burster
-        start = self.edge.burst_shape
-        burster.effect.ms = 120.0
-        burster.tick_now()                         # no grab: the plan from the tick
-        plan = burster.effect.plan
-        self.assertIsNotNone(plan)
-        self.assertLess(plan.total, 1200)
-        grown = self.edge.burst_shape
-        self.assertGreater(grown[2] * grown[3], start[2] * start[3])
-        burster.effect.ms = plan.total
-        burster.tick_now()
-        self.assertFalse(burster.busy())
-        self.assertIsNone(self.edge.burst_shape)
-        self.assertTrue(self.edge.shown)
-
-    def test_a_fold_cut_short_by_another_card_never_hides_it(self):
-        """Review 2026-10-18: ✕ on alpha (its fold running), then beta's icon -
-        alpha's Burster stopped, its end never heard, beta out."""
-        self.edge._shown = False
-        self.hub.focus("alpha")
-        self.finish()
-        self.card.close.click()
-        alpha = self.card.burster
-        self.assertTrue(alpha.busy())
-        self.hub.focus("beta")
-        self.assertFalse(alpha.busy())
-        beta = self.beta.burster
-        self.assertTrue(beta.busy())
-        self.assertTrue(self.edge.shown)
-        alpha._finish()                            # a late end of the old fold
-        self.assertTrue(self.edge.shown)
-        beta.effect.ms = 2000.0
-        beta.tick_now()
         self.assertTrue(self.edge.shown)
         self.assertEqual(self.edge.frame, self.edge.host.width())
+        self.assertIsNone(self.card.frame.graphicsEffect())
+        top = self.card.frame.mapTo(self.edge.host, QtCore.QPoint(10, 10))
+        self.assertTrue(self.edge.host.mask().contains(top))
+
+    def test_the_close_sends_the_card_back_to_the_rail_at_once(self):
+        self.hub.focus("alpha")
+        self.skin.cards["alpha"].close.click()
+        self.assertFalse(self.edge.shown)
+        self.assertEqual(self.edge.frame,
+                         min(self.edge.host.width(), self.edge.rest_px()))
+        self.assertTrue(self.edge.host.isVisible())
+
+    def test_another_icon_shows_its_card_and_the_panel_stays_out(self):
+        self.hub.focus("alpha")
+        self.hub.focus("beta")
+        self.assertTrue(self.edge.shown)
+        self.assertEqual(self.skin.shown, "beta")
+        self.assertTrue(self.beta.frame.isVisible())
+        self.assertFalse(self.card.frame.isVisible())
 
 
 class CardGrips(unittest.TestCase):
@@ -1228,7 +797,7 @@ class CardGrips(unittest.TestCase):
         self.card = [60, 10, 280, 200]
         self.heights = []
         self.edge = hubedge.Edge(
-            scale=1.0, width=360, motion=lambda: False, rail=True,
+            scale=1.0, width=360, rail=True,
             rest=lambda: 40, work_area=lambda: self.VIEWPORT,
             cursor=lambda: (800, 400), buttons=lambda: False,
             app_active=lambda: True, card=lambda: tuple(self.card),
@@ -1334,7 +903,7 @@ class RailWidthFloor(unittest.TestCase):
         self.app = _app()
         self.need = 0
         self.edge = hubedge.Edge(
-            scale=1.5, width=280, motion=lambda: False, rail=True,
+            scale=1.5, width=280, rail=True,
             rest=lambda: 40, work_area=lambda: self.VIEWPORT,
             cursor=lambda: (800, 400), buttons=lambda: False,
             app_active=lambda: True, least=lambda: self.need)

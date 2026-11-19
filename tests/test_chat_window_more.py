@@ -1,6 +1,6 @@
 """maya_chat.window: the parts test_chat_window.py does not reach - hovers, drags, the picker's
-mouse, the menus, the file verbs, the panes' buttons, the burst, the module's one window.
-Offscreen on test_chat_window's fake session; nothing reaches a server."""
+mouse, the menus, the file verbs, the panes' buttons, showing and closing, the module's one
+window. Offscreen on test_chat_window's fake session; nothing reaches a server."""
 import os
 import shutil
 import sys
@@ -16,8 +16,6 @@ import tests  # noqa: F401  (puts SkeldarAnim/ on sys.path)
 
 from PySide6 import QtCore, QtGui, QtWidgets  # noqa: E402
 
-import maya_hubburst  # noqa: E402
-import maya_hubmotion as hubmotion  # noqa: E402
 import maya_hubqt  # noqa: E402
 import maya_hubsound  # noqa: E402
 from maya_chat import api as A  # noqa: E402
@@ -116,38 +114,32 @@ class Base(Swaps, T.Base):
 # ---------------------------------------------------------------------------- the list, tabs
 
 class ListHover(Base):
-    def test_the_mouse_lights_a_row_and_leaving_puts_it_out(self):
+    def test_the_mouse_lights_a_row_at_once_and_leaving_puts_it_out(self):
         lst = self.win.list
         lst.resize(250, 300)
         y = lst.row_h() * 1.5
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            lst.mouseMoveEvent(mouse(QtCore.QEvent.MouseMove, QtCore.QPointF(120, y),
-                                     QtCore.Qt.NoButton))
-            self.assertEqual(lst.hovered, "dm2")
-            self.assertEqual(lst.glow.get("dm2"), 1.0)
-            self.assertEqual(lst.glow.get("dm"), 0.0)
-            lst.leaveEvent(QtCore.QEvent(QtCore.QEvent.Leave))
+        plain = render(lst)
+        lst.mouseMoveEvent(mouse(QtCore.QEvent.MouseMove, QtCore.QPointF(120, y),
+                                 QtCore.Qt.NoButton))
+        self.assertEqual(lst.hovered, "dm2")
+        lit = render(lst)
+        x = lst.width() - 12                          # the row's face, right of its text
+        self.assertNotEqual(lit.pixelColor(x, int(y)), plain.pixelColor(x, int(y)),
+                            "the hovered row takes its face at once")
+        lst.leaveEvent(QtCore.QEvent(QtCore.QEvent.Leave))
         self.assertIsNone(lst.hovered)
+        self.assertEqual(render(lst).pixelColor(x, int(y)), plain.pixelColor(x, int(y)))
 
-    def test_a_row_glows_in_over_its_hover_time_and_a_pop_ends(self):
+    def test_nothing_in_the_list_moves(self):
         lst = self.win.list
-        lst.hovered = "dm"
-        lst.glow = {}
-        busy = lst.tick(W.HOVER_MS / 2.0)
-        self.assertTrue(busy)
-        half = lst.glow["dm"]
-        self.assertTrue(0.0 < half < 1.0)
-        lst.tick(W.HOVER_MS * 4)
-        self.assertEqual(lst.glow["dm"], 1.0)
-        lst.pops["dm"] = W._now_ms() - W.POP_MS - 1
-        lst.tick(1)
-        self.assertNotIn("dm", lst.pops)
-        self.assertFalse(lst.tick(1), "at rest: nothing moves")
+        for gone in ("glow", "pops", "tick"):
+            self.assertFalse(hasattr(lst, gone), gone)
 
-    def test_an_unread_count_that_changes_pops(self):
+    def test_an_unread_count_that_changes_is_drawn_at_its_size(self):
         self.ses.state.chats["dm2"]["unread"] = 5
         self.win.refresh()
-        self.assertIn("dm2", self.win.list.pops)
+        row = next(r for r in self.win.list.rows if r["id"] == "dm2")
+        self.assertEqual(row["unread"], 5)
 
     def test_a_click_past_the_rows_does_nothing(self):
         lst = self.win.list
@@ -207,9 +199,8 @@ class FeedMouse(Base):
         rect = feed._reply_rect(box)
         feed._hover_row(rect.center())
         self.assertTrue(feed.reply_hot)
-        feed.reply_level = 1.0
         lit = render(feed)
-        feed.hover_key, feed.reply_hot, feed.reply_level = None, False, 0.0
+        feed.hover_key, feed.reply_hot = None, False
         plain = render(feed)
         r = rect.toRect()
         differ = sum(1 for x in range(r.left(), r.right()) for y in range(r.top(), r.bottom())
@@ -269,7 +260,7 @@ class FeedMouse(Base):
         feed.leaveEvent(QtCore.QEvent(QtCore.QEvent.Leave))
         self.assertIsNone(feed.hover_key)
         self.assertFalse(feed.reply_hot)
-        self.assertIsNone(feed._emoji_hover)
+        self.assertIsNone(feed.playing)
 
     def test_top_of_finds_a_message_s_row(self):
         box = self.box("m2")
@@ -282,8 +273,10 @@ class FeedMouse(Base):
         box = self.box("mr")
         self.assertIsNotNone(box.quote)
         qrect = box.quote[0]
+        scrolled = []
+        self.win.scroll_to_message = lambda mid: scrolled.append(mid) or True
         self.win.feed.mousePressEvent(mouse(QtCore.QEvent.MouseButtonPress, qrect.center()))
-        self.assertIn(self.box("m1").item.key(), self.win.feed.flashing)
+        self.assertEqual(scrolled, ["m1"])
 
     def test_a_middle_press_on_a_bubble_does_nothing(self):
         before = list(self.ses.calls)
@@ -351,14 +344,12 @@ class FeedPaint(Base):
                    for y in range(max(0, r.top()), min(image.height(), r.bottom()), 2)
                    if image.pixelColor(x, y).alpha())
 
-    def test_quotes_pills_the_unread_band_and_a_fold_are_drawn(self):
+    def test_quotes_pills_and_the_unread_band_are_drawn(self):
         feed = self.win.feed
         kinds = [b.item.kind for b in feed.boxes]
         self.assertIn("unread", kinds)
         quoted = self.box("mx")
         self.assertEqual(quoted.quote[2:4], ("", u"сообщение"))
-        feed.folding = [(5.0, 40.0, W._now_ms())]
-        feed.pill_pops[("m1", "🔥")] = W._now_ms() - W.POP_MS / 2.0
         image = render(feed)
         self.assertGreater(self.inked(image, self.box("mr").quote[0]), 10)
         for rect, _e, _n, _me in self.box("m1").pills:
@@ -443,7 +434,7 @@ class FeedPaint(Base):
         self.win.refresh()
         lst = self.win.list
         lst.resize(260, int(lst.tops()[1]))
-        lst.glow["dm2"] = 0.7
+        lst.hovered = "dm2"
         image = render(lst)
         tops, _total = lst.tops()
         head = next(i for i, r in enumerate(lst.rows) if r["kind"] == "head")
@@ -551,36 +542,14 @@ class PickerMouse(Base):
         p.mousePressEvent(mouse(QtCore.QEvent.MouseButtonPress, QtCore.QPointF(-30, -30)))
         self.assertFalse(p.isVisible())
 
-    def test_the_lift_rises_and_falls_on_its_timer(self):
+    def test_the_mouse_over_a_cell_hovers_it_at_once_and_leaving_drops_it(self):
         p = self.picker
         rect, g = p.cells[3]
-        with mock.patch.object(hubmotion, "enabled", return_value=True):
-            p.mouseMoveEvent(mouse(QtCore.QEvent.MouseMove, self.in_widget(rect),
-                                   QtCore.Qt.NoButton))
-            self.assertEqual(p.hover, ("emoji", g))
-            self.assertTrue(p.timer.isActive())
-            p._last = time.monotonic() - W.HOVER_MS / 2000.0
-            p._tick()
-            self.assertTrue(0.0 < p.levels[("emoji", g)] < 1.0)
-            p._last = time.monotonic() - 1.0
-            p._tick()
-            self.assertEqual(p.levels[("emoji", g)], 1.0)
-            self.assertFalse(p.timer.isActive(), "at rest the timer stops")
-            p.leaveEvent(QtCore.QEvent(QtCore.QEvent.Leave))
-            self.assertIsNone(p.hover)
-            p._last = time.monotonic() - 1.0
-            p._tick()
-            self.assertEqual(p.levels, {})
-
-    def test_with_animations_off_the_lift_is_at_once(self):
-        p = self.picker
-        rect, g = p.cells[1]
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            p.mouseMoveEvent(mouse(QtCore.QEvent.MouseMove, self.in_widget(rect),
-                                   QtCore.Qt.NoButton))
-            self.assertEqual(p.levels, {("emoji", g): 1.0})
-            p.leaveEvent(QtCore.QEvent(QtCore.QEvent.Leave))
-            self.assertEqual(p.levels, {})
+        p.mouseMoveEvent(mouse(QtCore.QEvent.MouseMove, self.in_widget(rect),
+                               QtCore.Qt.NoButton))
+        self.assertEqual(p.hover, ("emoji", g))
+        p.leaveEvent(QtCore.QEvent(QtCore.QEvent.Leave))
+        self.assertIsNone(p.hover)
 
     def test_a_picker_whose_handler_raises_still_closes(self):
         self.silent()
@@ -1350,7 +1319,6 @@ class Scroll(Base):
         self.assertFalse(self.win.scroll_to_message("nope"))
         self.assertIn(u"старше", self.win.line.text())
         self.assertTrue(self.win.scroll_to_message("h05"))
-        self.assertIn(self.box("h05").item.key(), self.win.feed.flashing)
         self.assertLess(self.bar.value(), self.bar.maximum())
 
     def test_scrolled_up_shows_the_down_button_with_the_count(self):
@@ -1393,11 +1361,9 @@ class EachSecond(Base):
         self.win.refresh = lambda: (refreshed.append(1), real())
         self.ses.state.typing = {"dm": {"bob": time.monotonic()}}
         self.win.avatars = FakeCache()
-        self.win.feed.anim = FakeCache()
         self.win._each_second()
         self.assertEqual(refreshed, [1])
         self.assertFalse(self.win.avatars.changed)
-        self.assertFalse(self.win.feed.anim.changed)
         self.ses.state.typing = {"dm": {"bob": time.monotonic() - 3600}}
         self.win._each_second()
         self.assertEqual(refreshed, [1], "an old typing mark refreshes nothing")
@@ -1412,9 +1378,9 @@ class EachSecond(Base):
         self.win._each_second()
 
 
-# ---------------------------------------------------------------------------- place, burst
+# ---------------------------------------------------------------------------- place, show, close
 
-class PlaceAndBurst(Base):
+class PlaceAndShow(Base):
     def test_the_title_drags_the_window_and_the_drop_remembers_it(self):
         self.win.root.move(100, 100)
         self.win._grab((110, 105))
@@ -1423,45 +1389,18 @@ class PlaceAndBurst(Base):
         self.win._drop()
         self.assertEqual(W.get_var(W.POS_VAR), "300,200")
 
-    def test_show_and_close_without_a_point_are_at_once(self):
-        done = []
-        self.assertFalse(self.win.show_at(None))
-        self.assertTrue(self.win.root.isVisible())
-        self.assertFalse(self.win.close_into(None, lambda: done.append(1)))
-        self.assertFalse(self.win.root.isVisible())
-        self.assertEqual(done, [1])
-
-    def drive(self):
-        burster = self.win.burster
-        self.assertIsNotNone(burster.anim)
-        burster._tick(10 ** 6)
-        self.assertIsNone(burster.anim, "the burst ended")
-
-    def test_a_burst_out_of_a_point_and_a_fold_into_one(self):
-        self.swap(maya_hubburst, "MOTION", "burst")
-        self.win.root.hide()
-        with mock.patch.object(hubmotion, "enabled", return_value=True):
-            self.assertTrue(self.win.show_at((400, 300)))
-            self.assertTrue(self.win.root.testAttribute(QtCore.Qt.WA_TransparentForMouseEvents))
-            self.drive()
-            self.assertFalse(self.win.root.testAttribute(QtCore.Qt.WA_TransparentForMouseEvents))
+    def test_show_and_close_are_at_once_with_or_without_a_point(self):
+        for origin in (None, (400, 300)):
             done = []
-            self.assertTrue(self.win.close_into((400, 300), lambda: done.append(1)))
-            self.drive()
-        self.assertEqual(done, [1])
-        self.assertFalse(self.win.root.isVisible())
-        self.assertEqual(self.win._burst_face(), W.hubstyle.TOKENS["card"])
-        self.assertTrue(self.win._burst_parts())
-
-    def test_a_burst_that_cannot_start_shows_at_once(self):
-        self.silent()
-
-        def broken(*a, **k):
-            raise RuntimeError("no effect")
-        self.win.burster.run = broken
-        with mock.patch.object(hubmotion, "enabled", return_value=True):
-            self.assertFalse(self.win.show_at((400, 300)))
-        self.assertFalse(self.win.root.testAttribute(QtCore.Qt.WA_TransparentForMouseEvents))
+            self.win.root.hide()
+            self.win.show_at(origin)
+            self.assertTrue(self.win.root.isVisible())
+            self.assertFalse(self.win.root.testAttribute(QtCore.Qt.WA_TransparentForMouseEvents))
+            self.win.close_into(origin, lambda: done.append(1))
+            self.assertFalse(self.win.root.isVisible())
+            self.assertEqual(done, [1])
+        for gone in ("burster", "_burst", "_burst_parts", "_burst_face", "_end_burst"):
+            self.assertFalse(hasattr(self.win, gone), gone)
 
     def test_destroy_closes_a_standing_profile(self):
         closed = []
@@ -1497,16 +1436,17 @@ class OneWindow(Swaps, unittest.TestCase):
         W.destroy()
         QtWidgets.QApplication.processEvents()
 
-    def test_show_makes_it_once_and_a_second_show_flashes_it(self):
+    def test_show_makes_it_once_and_a_second_show_only_raises_it(self):
         self.assertIsNone(W.window())
         self.assertFalse(W.is_open())
         win = W.show(session=self.ses)
         self.assertIs(W.window(), win)
         self.assertTrue(W.is_open())
         self.assertEqual(self.rail, [("chat", True)])
+        flash = getattr(win.frame, "flash", 0.0)
         again = W.show()
         self.assertIs(again, win)
-        self.assertEqual(win.frame.flash, 1.0)
+        self.assertEqual(getattr(win.frame, "flash", 0.0), flash, "no flash")
 
     def test_show_without_a_session_takes_this_maya_s(self):
         win = W.show()
@@ -1560,11 +1500,15 @@ class Helpers(unittest.TestCase):
         self.assertTrue(W._on((0, 0, 10, 10), (5, 5)))
         self.assertFalse(W._on((0, 0, 10, 10), (10, 5)))
 
-    def test_pair_and_back_out(self):
+    def test_pair(self):
         self.assertEqual(W._pair("3,4"), (3, 4))
         self.assertIsNone(W._pair("x"))
-        self.assertEqual(W.back_out(1.0), 1.0)
-        self.assertAlmostEqual(W.back_out(-1), 0.0)
+
+    def test_no_motion_helpers_are_left(self):
+        for gone in ("back_out", "pop_scale", "look_approach", "TICK_MS", "ENTER_MS", "FOLD_MS",
+                     "SENT_FLASH_MS", "POP_MS", "HOVER_MS", "PLAY_CAP_MS", "PICK_LIFT",
+                     "PICK_GLOW", "hubmotion"):
+            self.assertFalse(hasattr(W, gone), gone)
 
     def test_a_menu_icon_only_for_known_rows(self):
         T._app()

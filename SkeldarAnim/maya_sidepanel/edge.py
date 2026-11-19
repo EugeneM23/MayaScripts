@@ -1,10 +1,11 @@
-"""The side panel sliding out of the right edge of Maya's window (2026-10-17): the Time
-Bar's bottom edge (maya_timebar.edge) turned on its side.
+"""The side panel coming out of the right edge of Maya's window (2026-10-17): the Time
+Bar's bottom edge (maya_timebar.edge) turned on its side. It shows and hides at once
+(2026-11-19, «удаляем все подсветки и анимации»).
 
 Two windows of ours, frameless Qt.Tool children of Maya's main window:
 
     host    the band along the right of Maya's window, its full height; holds the
-            panel. It unrolls from the cursor's height through the host's mask.
+            panel, its corners rounded by its mask.
     sensor  a 2 px strip at the very right at window opacity 1/255 (trap 110), shown
             only while the panel is hidden.
 
@@ -112,8 +113,8 @@ class SideEdge(object):
     out when the cursor rests on the right edge and goes when it leaves."""
 
     def __init__(self, make_panel, width=look.WIDTH, scale=1.0, parent=None, window_rect=None,
-                 cursor=None, buttons=None, app_active=None, over_maya=None, motion=None,
-                 on_tab=None, on_width=None, tick=None, on_reveal=None, capture=None, selected=None,
+                 cursor=None, buttons=None, app_active=None, over_maya=None,
+                 on_tab=None, on_width=None, tick=None, on_reveal=None, selected=None,
                  playing=None, timebar=None, bar_top=None, share=1.0, on_height=None,
                  on_pinned=None):
         q = hubqt.qt()
@@ -129,16 +130,12 @@ class SideEdge(object):
         self._on_height = on_height
         self._tick = tick
         self._on_reveal = on_reveal
-        self._capture = capture        # a seam: (host) -> QPixmap, for the tests
         self._selected = selected      # (2026-10-17) something selected: out and kept out
         self._playing = playing
         self._timebar = timebar
         self._bar_top = bar_top
         self.above_bar = False         # came out over a Time Bar already out: ends at its top
         self.closed = False            # sent away by the close button: the edge waits for the cursor to leave
-        import maya_hubstyle
-        self._face = maya_hubstyle.TOKENS["panel"]
-        self.motion = motion
         self.scale = float(scale or 1.0)
         self.width = look.clamp_width(width)
         self.least = 0                # physical px Maya's borrowed forms ask for
@@ -149,7 +146,6 @@ class SideEdge(object):
         self.shown = False
         self.dwelt = 0.0
         self.hold = rules.Hold()
-        self._slide = None
         self._rect = None
         if parent is None:
             parent = main_window()
@@ -174,22 +170,6 @@ class SideEdge(object):
         panel_module.name_layouts(host)
         controller = self
 
-        class Overlay(QtWidgets.QWidget):
-            """Over the panel while it bursts: the panel's picture, moving."""
-            def paintEvent(self, event):
-                painter = q.QtGui.QPainter(self)
-                try:
-                    controller.paint_burst(painter)
-                except Exception:                            # noqa: BLE001 - a paint: never raise
-                    print(traceback.format_exc())
-                finally:
-                    painter.end()
-
-        self.overlay = Overlay(host)
-        self.overlay.setObjectName("skeldarSidePanelBurst")
-        self.overlay.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
-        self.overlay.hide()
-
         class Sensor(QtWidgets.QWidget):
             def enterEvent(self, event):
                 controller.sensor_entered()
@@ -213,7 +193,6 @@ class SideEdge(object):
         self.hide_timer = timer(look.HIDE_MS, self.hide_due)
         self.place_timer = timer(PLACE_MS, self.place_tick, single=False)
         self.watch = timer(WATCH_MS, self.watch_tick, single=False)
-        self.anim = timer(16, self.slide_tick, single=False)
         self.zone = timer(look.ZONE_POLL_MS, self.zone_tick, single=False)
         self.place()
         self.host.hide()
@@ -241,9 +220,9 @@ class SideEdge(object):
         return q.QtGui.QGuiApplication.applicationState() == q.QtCore.Qt.ApplicationActive
 
     def playing(self):
-        """Maya is playing back: no timer ticks and no idle comes between frames, so
-        the panel comes out at once and paints now (2026-10-17, «во время плей мода
-        выделяю объект то панель не выезжает»)."""
+        """Maya is playing back: no idle comes between frames, so the panel paints
+        now when it comes out (2026-10-17, «во время плей мода выделяю объект то
+        панель не выезжает»)."""
         if self._playing is not None:
             return bool(self._playing())
         try:
@@ -323,11 +302,6 @@ class SideEdge(object):
         top = widget.window()
         return top is main_window() or top is self.host or top is self.sensor
 
-    def _motion(self):
-        if self.motion is not None:
-            return bool(self.motion)
-        return bool(getattr(self.panel, "motion", True))
-
     def _guard(self, call):
         try:
             if self.alive():
@@ -370,8 +344,7 @@ class SideEdge(object):
         self._rect = rect
         x, y, w, h = look.side_band(window, self.width, self.scale, self.least, self.share)
         self.host.setGeometry(x, y, w, h)
-        if self._slide is None:
-            self._full_mask()
+        self._full_mask()
         sx, sy, sw, sh = look.sensor_band(window, look.SENSOR_PX, self.share, self.scale)
         self.sensor.setGeometry(sx, sy, sw, sh)
 
@@ -465,9 +438,9 @@ class SideEdge(object):
         if rules.may_reveal(True, self.shown, self.buttons(), self.app_active()):
             self.reveal()
 
-    def reveal(self, instant=False, held=False, tab=None):
-        """Out (from the cursor's height); `held` keeps it out until the cursor has
-        visited it and left (a reveal by command); `tab` shows that page."""
+    def reveal(self, held=False, tab=None):
+        """Out, at once; `held` keeps it out until the cursor has visited it and left
+        (a reveal by command); `tab` shows that page."""
         if tab is not None:
             self.panel.set_tab(tab)
         if held:
@@ -483,157 +456,24 @@ class SideEdge(object):
         self.closed = False
         nudge_timebar()
         self.sensor.hide()
-        if instant or not self._motion() or self.playing():
-            self.host.show()
-            self.host.raise_()
-            self._start_slide(True, instant=True)
-            self.watch.start()
-            if self._on_reveal is not None:
-                self._on_reveal()
-            return
-        #  the picture first, the panel invisible: Maya's editors brought up to date
-        #  and painted once, then only the picture moves (the Time Bar's burst)
-        self.host.setWindowOpacity(0.0)
-        self._full_mask()
         self.host.show()
         self.host.raise_()
+        self._settle(True)
+        self.watch.start()
         if self._on_reveal is not None:
             self._on_reveal()
-        picture = self._picture(settle=True)
-        self._start_slide(True, picture=picture)
-        self.host.setWindowOpacity(1.0)
-        self.watch.start()
 
-    def conceal(self, instant=False):
+    def conceal(self):
+        """Back, at once."""
         if not self.shown:
             return
         self.shown = False
         self.watch.stop()
         self.hide_timer.stop()
-        picture = None if (instant or not self._motion()) else self._picture()
-        self._start_slide(False, instant=instant, picture=picture)
-
-    # the burst ------------------------------------------------------------------------
-    def _picture(self, settle=False):
-        """The panel as it stands now, a QPixmap, or None. From DWM's copy of the
-        window (no Maya paint code runs - trap 134); `settle` turns the event loop
-        first so a panel just shown has painted."""
-        if self._capture is not None:
-            return self._capture(self.host)
-        q = hubqt.qt()
-        if settle:
-            for _ in range(3):
-                q.QtWidgets.QApplication.processEvents()
-        try:
-            from maya_graphoverlay import winstyle
-            w, h = self.host.width(), self.host.height()
-            data = winstyle.capture(int(self.host.winId()), w, h)
-            if not data:
-                return None
-            image = q.QtGui.QImage(data, w, h, w * 4, q.QtGui.QImage.Format_RGB32).copy()
-            return q.QtGui.QPixmap.fromImage(image)
-        except Exception:                                    # noqa: BLE001 - no burst then
-            return None
-
-    def _start_slide(self, showing, instant=False, picture=None):
-        if instant or not self._motion():
-            self._slide = None
-            self.anim.stop()
-            self.overlay.hide()
-            self._settle(showing)
-            return
-        g = self.host.geometry()
-        gy = self.cursor()[1]
-        h = g.height()
-        cy = float(max(0, min(h, gy - g.y())))
-        ui = float(getattr(self.panel, "ui", 1.0))
-        self._slide = {"t0": self.panel.clock(), "showing": bool(showing), "cy": cy,
-                       "picture": picture, "rows": look.rows(h, ui), "ui": ui,
-                       "far": max(cy, h - cy),
-                       "folded": look.close_folded(cy, h, ui) + look.CLOSE_AFTER_MS}
-        if picture is not None:
-            self.overlay.setGeometry(0, 0, self.host.width(), h)
-            self.overlay.show()
-            self.overlay.raise_()
-        if showing:
-            self._mask_span(cy, cy)
-        self.anim.start()
-
-    def slide_tick(self):
-        b = self._slide
-        if b is None:
-            self.anim.stop()
-            return
-        h = self.host.height()
-        age = self.panel.clock() - b["t0"]
-        burst = b["picture"] is not None
-        if b["showing"]:
-            u = age / look.UNROLL_MS
-            done = age >= (look.open_total(b["cy"], h, b["ui"]) if burst else look.UNROLL_MS)
-        else:
-            after = b["folded"] if burst else 0.0
-            u = (age - after) / look.CLOSE_MS
-            done = u >= 1
-        if b["showing"] or u > 0:
-            y0, y1 = look.unroll(max(0.0, u), b["cy"], h, b["showing"])
-            self._mask_span(y0, y1, paint=not burst)
-        if burst:
-            self.overlay.update()
-        if done:
-            self.anim.stop()
-            self._slide = None
-            self.overlay.hide()
-            self._settle(b["showing"])
-
-    def paint_burst(self, painter):
-        """The overlay's picture `age` ms into the burst: the panel's face, and each
-        row of the picture popping in (nearest the cursor first) or folding away
-        (farthest first), scaled about its own middle."""
-        b = self._slide
-        if b is None or b["picture"] is None:
-            return
-        q = hubqt.qt()
-        QtCore = q.QtCore
-        w = float(self.host.width())
-        age = self.panel.clock() - b["t0"]
-        painter.fillRect(self.overlay.rect(), q.QtGui.QColor(self._face))
-        painter.setRenderHint(q.QtGui.QPainter.SmoothPixmapTransform, True)
-        for row in b["rows"]:
-            mid = look.row_middle(row)
-            if b["showing"]:
-                scale, opacity = look.popping(age, look.open_delay(mid - b["cy"], b["ui"]))
-            else:
-                scale, opacity = look.folding(age, look.fold_delay(mid - b["cy"], b["ui"], b["far"]))
-            if opacity <= 0.0:
-                continue
-            painter.save()
-            painter.setOpacity(opacity)
-            painter.translate(w / 2.0, mid)
-            painter.scale(scale, scale)
-            painter.translate(-w / 2.0, -mid)
-            rect = QtCore.QRectF(0, row[0], w, row[1] - row[0])
-            painter.drawPixmap(rect, b["picture"], rect)
-            painter.restore()
-
-    def _mask_span(self, y0, y1, paint=True):
-        q = hubqt.qt()
-        w, h = self.host.width(), self.host.height()
-        y0, y1 = max(0.0, y0), min(float(h), y1)
-        if y1 - y0 < 1:
-            y1 = y0 + 1
-        if y1 - y0 >= h - 0.5:
-            self._full_mask()
-            return
-        radius = max(self._rest_radius(),
-                     12 * getattr(self.panel, "ui", 1.0) * (1 - (y1 - y0) / float(max(h, 1))))
-        path = q.QtGui.QPainterPath()
-        path.addRoundedRect(q.QtCore.QRectF(0, y0, w, y1 - y0), radius, radius)
-        self.host.setMask(q.QtGui.QRegion(path.toFillPolygon().toPolygon()))
-        if paint:
-            self.host.update()
+        self._settle(False)
 
     def repaint_all(self):
-        """Every widget in the panel asked to paint again. A mask growing over Maya's
+        """Every widget in the panel asked to paint again. A host shown over Maya's
         borrowed editors exposes them without a paint: the Attribute Editor's
         values came only where the mouse passed (2026-10-17, live)."""
         q = hubqt.qt()
@@ -713,7 +553,7 @@ class SideEdge(object):
             self._on_pinned(self.pinned)
 
     def destroy(self):
-        for t in (self.dwell, self.hide_timer, self.place_timer, self.watch, self.anim, self.zone):
+        for t in (self.dwell, self.hide_timer, self.place_timer, self.watch, self.zone):
             try:
                 t.stop()
             except RuntimeError:

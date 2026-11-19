@@ -868,7 +868,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.fake.optionvars[hubsound.OPTIONVAR] = 1         # switched on
         hub.build()
         callbacks = hub._SKIN.callbacks
-        self.assertFalse(callbacks["hover"]())
+        self.assertNotIn("hover", callbacks)
         self.assertEqual(played, [])
         self.assertFalse(callbacks["sounds"](False))
         self.assertEqual(self.fake.optionvars[hubsound.OPTIONVAR], 0)
@@ -909,39 +909,22 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertEqual(hub._SKIN.active, "studio")
         self.fake.run_deferred()                            # and scrolled
 
-    def test_a_jump_slides_the_cards_and_glides(self):
-        """2026-10-01: «открывать закрывать с какими-то анимациями» - every
-        card a jump changes is asked to slide, the scroll to glide."""
+    def test_a_jump_is_instant(self):
+        """2026-11-19: «удаляем все подсветки и анимации» - a jump opens and
+        shuts the cards and scrolls at once, nothing slides or glides."""
         hub.build()
         hub._SKIN.callbacks["jump"]("studio")
         for key, card in hub._SKIN.cards.items():
-            if card.animated:
-                self.assertEqual(card.animated[-1],
-                                 (key != "studio", True), key)
-        self.assertEqual(hub._SKIN.cards["studio"].animated[-1],
-                         (False, True))
+            for _value, animate in card.animated:
+                self.assertFalse(animate, key)
         self.fake.run_deferred()
-        self.assertEqual(hub._SKIN.scrolled, [("studio", True)])
+        self.assertEqual(hub._SKIN.scrolled, [("studio", False)])
 
     def test_a_scroll_by_code_does_not_glide(self):
         hub.build()
         hub.scroll_to("studio")
         self.assertEqual(hub._SKIN.scrolled, [("studio", False)])
 
-    def test_the_menu_row_switches_the_animations(self):
-        import maya_hubmotion
-        saved = maya_hubmotion._cmds
-        maya_hubmotion._cmds = lambda: self.fake
-        self.addCleanup(setattr, maya_hubmotion, "_cmds", saved)
-        hub.build()
-        self.assertFalse(hub._SKIN.callbacks["animations"](False))
-        self.assertEqual(self.fake.optionvars[maya_hubmotion.OPTIONVAR], 0)
-        self.assertIs(hub._SKIN.animations, False)
-        skin = FakeSkin(None)
-        hub._dress_animations(skin)                    # read back at a build
-        self.assertIs(skin.animations, False)
-        self.assertTrue(hub.set_animations(True))
-        self.assertIs(hub._SKIN.animations, True)
 
     def test_a_header_click_still_opens_one_card_alone(self):
         """Only a header jump closes the others; a card's own header toggles
@@ -1245,7 +1228,7 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         self.assertIn("close", hub._SKIN.callbacks)
         self.assertIsNone(hub._SKIN.callbacks["close"]("retarget"))
 
-    # --------------------------------------------- the rail card's burst
+    # --------------------------------------------------- the rail card
 
     def _rail_edge(self, point=(5, 6), icon=None):
         """The rail edge built, the cursor at `point`, the rail icons' centres
@@ -1260,35 +1243,29 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         self.addCleanup(lambda: setattr(hub, "_jump_point", real[1]))
         return self.edges[-1]
 
-    def test_the_edge_gets_the_burst_seam(self):
-        """2026-10-18: the rail card bursts (maya_hub._rail_burst)."""
+    def test_the_edge_has_no_burst(self):
+        """2026-11-19: no animations - the rail card is shown, not burst."""
         edge = self._rail_edge()
         self.assertTrue(edge.rail)
-        self.assertIs(edge.burst, hub._rail_burst)
+        self.assertIsNone(getattr(edge, "burst", None))
 
-    def test_focus_bursts_the_card_out_of_the_cursor_and_folds_it_back(self):
+    def test_focus_brings_the_card_out_and_sends_it_back(self):
         edge = self._rail_edge()
         edge.shown = False
         hub.focus("tools")
-        self.assertEqual(edge.reveal_origins[-1], (5, 6))
-        #  no fade: the burst is the motion
+        self.assertTrue(edge.shown)
+        self.assertEqual(edge.reveal_origins[-1], None)
         self.assertEqual(hub._SKIN.switches[-1], ("tools", False))
         hub.focus("tools")
-        self.assertEqual(edge.conceal_origins[-1], (5, 6))
+        self.assertEqual(edge.conceal_origins[-1], None)
         self.assertFalse(edge.shown)
 
-    def test_focus_bursts_out_of_the_rail_icon_when_it_is_found(self):
-        edge = self._rail_edge(icon=(70, 80))
-        edge.shown = False
-        hub.focus("tools")
-        self.assertEqual(edge.reveal_origins[-1], (70, 80))
-
-    def test_the_close_folds_the_card_into_the_point_pressed(self):
+    def test_the_close_sends_the_card_back(self):
         edge = self._rail_edge()
         hub.focus("tools")
         self.assertTrue(edge.shown)
         hub._press_rail_close("tools")
-        self.assertEqual(edge.conceal_origins, [(5, 6)])
+        self.assertEqual(edge.conceal_origins, [None])
         hub._press_rail_close("tools")                     # nothing out now
         self.assertEqual(edge.concealed, 1)
         self.assertIs(hub._SKIN.callbacks["close"], hub._press_rail_close)
@@ -1315,14 +1292,14 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         self.addCleanup(back)
         return module
 
-    def test_the_popout_opens_the_window_and_folds_the_card_into_the_press(self):
+    def test_the_popout_opens_the_window_and_sends_the_card_back(self):
         """2026-10-18, «карточка уходит в окно»."""
         edge = self._rail_edge()
         pop = self._fake_hubpop()
         hub.focus("tools")
         self.assertTrue(hub._press_popout("tools"))
         self.assertEqual(pop.presented, [("tools", (5, 6))])
-        self.assertEqual(edge.conceal_origins, [(5, 6)])
+        self.assertEqual(edge.conceal_origins, [None])
 
     def test_the_popout_of_another_card_leaves_the_rail_card(self):
         edge = self._rail_edge()
@@ -2020,7 +1997,7 @@ class RailLayout(FakeToolsMixin, unittest.TestCase):
         hub.build()
         skin = hub._SKIN
         hub.focus("tools")
-        self.assertEqual(skin.switches[-1], ("tools", True))
+        self.assertEqual(skin.switches[-1], ("tools", False))
         self.assertEqual(skin.active, "tools")
         self.assertEqual(hub.current(), "tools")
         hub.expand("studio")

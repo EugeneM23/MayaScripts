@@ -31,7 +31,7 @@ class Synced(Strip):
             self.reads["keys"] += 1
             return keys(names)
         self.ll.keys_by_layer = counted
-        self.panel = layerpanel.Panel(self.strip, self.ll, 1.0, maya_hubstyle.TOKENS, False)
+        self.panel = layerpanel.Panel(self.strip, self.ll, 1.0, maya_hubstyle.TOKENS)
         self.addCleanup(self.panel.destroy)
         self.strip.layer_panel = self.panel
         self.panel.open((1300, 815))

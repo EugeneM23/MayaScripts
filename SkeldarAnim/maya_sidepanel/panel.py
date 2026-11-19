@@ -76,7 +76,7 @@ def name_layouts(root, prefix="skeldarSidePanelLayout"):
     return named
 
 
-def make(parent, ui=1.0, tokens=None, motion=True, on_tab=None, on_pin=None, on_width=None,
+def make(parent, ui=1.0, tokens=None, on_tab=None, on_pin=None, on_width=None,
          on_height=None):
     q = hubqt.qt()
     QtCore, QtWidgets = q.QtCore, q.QtWidgets
@@ -120,9 +120,6 @@ def make(parent, ui=1.0, tokens=None, motion=True, on_tab=None, on_pin=None, on_
             self.setObjectName(PANEL)
             self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
             self.ui = float(ui)
-            self.motion = bool(motion)
-            self._clock = QtCore.QElapsedTimer()
-            self._clock.start()
             self.setStyleSheet(sheet(self.ui, tokens))
             outer = QtWidgets.QHBoxLayout(self)
             outer.setContentsMargins(0, 0, 0, 0)
@@ -188,9 +185,6 @@ def make(parent, ui=1.0, tokens=None, motion=True, on_tab=None, on_pin=None, on_
             column.addWidget(self.height_grip)
             self.tab = None
             self.set_tab(look.TABS[0])
-
-        def clock(self):
-            return float(self._clock.elapsed())
 
         def _pick(self, tab):
             self.set_tab(tab)

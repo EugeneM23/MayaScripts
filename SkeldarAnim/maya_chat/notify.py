@@ -96,7 +96,7 @@ def message_text(session, message):
 
 def say(head, text, message=None, user=None):
     """A card at the viewport's bottom-left above the Time Bar (toast.py); where Qt cannot
-    stand, Maya's own inViewMessage there."""
+    stand, Maya's own inViewMessage there - shown and taken away at once, no fade."""
     try:
         from . import toast
         if toast.show((message or {}).get("chat"), user or {"nick": "?"}, head, text) is not None:
@@ -109,7 +109,8 @@ def say(head, text, message=None, user=None):
     try:
         safe = lambda t: t.replace("<", "&lt;").replace(">", "&gt;")  # noqa: E731
         cmds.inViewMessage(assistMessage="<hl>{0}</hl>  {1}".format(safe(head), safe(text)),
-                           position="botLeft", fade=True, fadeStayTime=3500)
+                           position="botLeft", fade=True, fadeInTime=0, fadeOutTime=0,
+                           fadeStayTime=3500)
         return True
     except Exception:                                        # noqa: BLE001
         return False

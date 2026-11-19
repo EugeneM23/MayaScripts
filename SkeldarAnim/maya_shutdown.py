@@ -67,10 +67,7 @@ PLAN = (
     Step("maya_mainbar", "unwatch", "the main bar's re-skin watch", GIVE_BACK),
 
     # 2. Nothing of ours may tick while Maya tears itself down.
-    Step("maya_windowlight", "stop", "the 50 ms cursor poll", STOP),
     Step("maya_camview", "unwatch", "the camera watch, views put back", STOP),
-    Step("maya_camflight", "_stop",
-         "a camera flight in the air (its only stop is private)", STOP),
     Step("maya_com.engine", "stop", "the centre-of-mass engine", STOP),
     Step("maya_chat.session", "close", "the chat's socket, its timers and its calls", STOP),
     Step("maya_hubsound", "forget_players", "the sound pools", STOP),

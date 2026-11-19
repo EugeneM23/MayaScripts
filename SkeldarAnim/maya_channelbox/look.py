@@ -2,36 +2,16 @@
 what a typed value means, a channel's state, the hairlines between groups, where each
 part of a row stands, the selection a click makes, the virtual slider's step.
 
-The motion numbers are the Time Bar's (maya_timebar.look, maya_timebar.bar).
+No motion and no glow (2026-11-19, «удаляем все подсветки и анимации»).
 Spec: docs/superpowers/specs/2026-10-18-channel-box-rows-design.md
 """
 
 import math
 
-from maya_timebar import look as _bar
-
-# -- the Time Bar's motion (docs/interface-motion.md) --------------------------------
-HOVER_MS = 110          # bar.HOVER_MS: a lift under the mouse
-FLASH_MS = 120          # bar.FLASH_MS: a press
-POP_MS = 200            # bar.POP_MS: a toggle
-KEY_FADE_MS = 600       # bar.KEY_FADE_MS: a key the playhead reached
-LIFT = 0.10             # bar.LIFT
-SET_GLOW = 44           # bar.SET_GLOW: logical px, a key set's flash
-EFFECT_MS = {"set": _bar.EFFECT_MS["set"], "delete": _bar.EFFECT_MS["delete"]}
-FRAME_MS = 16
-approach = _bar.approach
-back_out = _bar.back_out
-passed = _bar.passed
-flash = _bar.flash
-delete_plan = _bar.delete_plan
-shards = _bar.shards
-SHARD_SPEED, SHARD_FALL = _bar.SHARD_SPEED, _bar.SHARD_FALL
-
 # -- colours that mean something (beside the hub's TOKENS) ---------------------------
 BREAKDOWN = "#6fb7c9"
 DRIVEN = "#7fa9e6"
 MUTED = "#9b7a63"
-RIM = "#fff1e2"
 
 # -- the layout, logical px ----------------------------------------------------------
 HEAD_H = 30             # the object, +N, the layer chip
@@ -292,25 +272,6 @@ def scrubbed(start, dx, step, lo=None, hi=None, kind="double"):
     if kind in ("bool", "long", "short", "byte", "char", "enum"):
         return int(round(value))
     return value
-
-
-def key_moves(before, after, frame):
-    """What a refresh on one frame did to the keys there: (set, removed) channel keys
-    - a key that came onto the frame, and a key that left it (fewer keys than before:
-    a key moved away by a drag elsewhere is not a deletion here). A channel only in
-    one of them (the selection changed) is neither. `before` / `after`:
-    {key: (on_key, keys_count)}. A key set again over one that stood changes neither
-    and flashes from the press that set it."""
-    set_, removed = [], []
-    for k, now in after.items():
-        was = before.get(k)
-        if was is None:
-            continue
-        if now[0] and not was[0]:
-            set_.append(k)
-        elif was[0] and not now[0] and now[1] < was[1]:
-            removed.append(k)
-    return set_, removed
 
 
 def head_text(lead, others):

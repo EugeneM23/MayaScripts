@@ -6,8 +6,7 @@ The animator: «Давай добавим настройку в наши сет�
 включает 3P (если конечно эта опция доступна)».
 
 ⋮ -> 1P in its camera (optionVar `skeldarCamView1P`, OFF by default). While it is
-on, a 250 ms watch reads the cameras the viewports look through (a camera flight's
-TARGET in place of its substitute, so the switch comes as the flight starts):
+on, a 250 ms watch reads the cameras the viewports look through:
 
 - a viewport on a Camera Setup camera (`maya_scenesetup.camera.MARKER`) of a rig
   whose Main carries `view` (Manny, Orc D, Playerchar - not the Creep) and stands
@@ -99,15 +98,8 @@ def _panels():
 
 
 def _shown_camera(panel):
-    """The camera transform `panel` looks through, its flight's target first."""
+    """The camera transform `panel` looks through, else ""."""
     cmds = _cmds()
-    try:
-        import maya_camflight
-        target = maya_camflight.target_of(panel)
-    except Exception:                                        # noqa: BLE001
-        target = None
-    if target:
-        return target
     try:
         cam = cmds.modelPanel(panel, query=True, camera=True) or ""
     except Exception:                                        # noqa: BLE001

@@ -151,12 +151,10 @@ class FakeLink(object):
 @unittest.skipIf(QT is None, "no Qt")
 class Strip(unittest.TestCase):
 
-    motion = False
-
     def setUp(self):
         self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
         self.link = FakeLink()
-        self.strip = bar.make(self.link, 1.0, maya_hubstyle.TOKENS, motion=self.motion)
+        self.strip = bar.make(self.link, 1.0, maya_hubstyle.TOKENS)
         self.strip.resize(1500, 80)
         self.strip.move(3000, 3000)
         self.strip.show()
@@ -787,353 +785,41 @@ class Menus(Strip):
         self.assertEqual(len(opened), 2)
 
 
-class Motion(Strip):
+class NoEffects(Strip):
+    """2026-11-19, «удаляем все подсветки и анимации из плагина»: nothing of the strip
+    moves or glows; a key read is only a key read."""
 
-    motion = True
+    def test_the_strip_carries_no_motion(self):
+        for name in ("fx", "anim", "entrance", "moving", "register", "kick", "clock",
+                     "opening_of", "entrance_of", "burst_at", "replay_opening", "quiet_keys",
+                     "mark_set", "keys_set", "keys_edited", "motion"):
+            self.assertFalse(hasattr(self.strip, name), name)
+        for name in ("reached", "trail", "play_at", "key_lift", "plates", "cooling"):
+            self.assertFalse(hasattr(self.tl, name), name)
 
-    def test_a_key_the_playhead_reaches_lights_up(self):
-        self.strip.state["now"] = 10.0
-        self.link.s["now"] = 13.0
-        self.strip.on_time()
-        self.assertIn(12.0, self.tl.reached)
-        self.assertNotIn(30.0, self.tl.reached)
-
-    def test_the_opening_starts_small(self):
-        self.strip.replay_opening()
-        scale, _opacity = self.strip.opening_of(5)
-        self.assertLess(scale, 1.0)
-
-    def test_without_motion_nothing_lights(self):
-        self.strip.motion = False
-        self.link.s["now"] = 13.0
-        self.strip.on_time()
-        self.assertEqual(self.tl.reached, {})
-        self.assertEqual(self.strip.opening_of(5), (1.0, 1.0))
-
-
-def shards_on(test):
-    """The key-delete shards are switched off for now (look.DELETE_SHARDS); the tests of
-    the effect itself switch them on for their own length."""
-    test.addCleanup(setattr, look, "DELETE_SHARDS", look.DELETE_SHARDS)
-    look.DELETE_SHARDS = True
-
-
-class DeleteShardsOff(Strip):
-    """2026-10-20: «пока выключим эффект разлета частиц при удалении ключа» - a key deleted
-    plays nothing, a key set still flashes."""
-
-    motion = True
-
-    def test_a_deleted_key_breaks_into_nothing(self):
-        self.assertFalse(look.DELETE_SHARDS)
-        self.link.k = ([0.0, 6.0, 12.0, 40.0], [9.0])
-        self.strip.keys_edited = True
-        self.strip.refresh(keys=True)
-        self.assertEqual([i["kind"] for i in self.strip.fx.items], [])
-
-    def test_a_key_set_still_flashes(self):
+    def test_a_key_set_or_deleted_is_drawn_at_once(self):
         self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
-        self.strip.keys_edited = True
         self.strip.refresh(keys=True)
-        self.assertEqual([i["kind"] for i in self.strip.fx.items], ["set"])
-
-
-class KeyEffects(Strip):
-    """A key set flashes a round glow, a key deleted throws sparks (2026-10-17)."""
-
-    motion = True
-
-    def setUp(self):
-        super(KeyEffects, self).setUp()
-        shards_on(self)
-
-    def kinds(self):
-        return [i["kind"] for i in self.strip.fx.items]
-
-    def paint(self):
-        self.strip.fx.grab()
-        self.assertFalse(getattr(self.strip.fx, "_failed", False))
-
-    def test_a_key_set_flashes(self):
-        self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
-        self.strip.keys_edited = True                   # as Maya's key-edit callback says
-        self.strip.refresh(keys=True)
-        self.assertEqual(self.kinds(), ["set"])
-        self.paint()
-
-    def test_a_key_set_swells_as_a_reached_one_does_30_percent_more_than_a_hover(self):
-        # 2026-10-18: «анимация сжатия ... на 30 % сильнее, при появлении ключа тоже»
-        self.assertEqual(bar.KEY_PULSE, 1.3)
-        self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
-        self.strip.keys_edited = True
-        self.strip.refresh(keys=True)
-        self.assertIn(20.0, self.strip.timeline.reached)
-        self.paint()
-
-    def test_a_key_deleted_throws_sparks(self):
+        self.assertIn(20.0, self.strip.keys)
         self.link.k = ([0.0, 6.0, 12.0, 40.0], [9.0])
-        self.strip.keys_edited = True
         self.strip.refresh(keys=True)
-        self.assertEqual(self.kinds(), ["delete"])
-        self.paint()
+        self.assertNotIn(20.0, self.strip.keys)
 
-    def test_another_object_selected_plays_nothing(self):
-        # 2026-10-19: «Если мы не ставим ключ или не удаляем его то и анимации
-        # эффектов ... недолжно быть» - the keys read change with the selection
-        self.link.k = ([0.0, 6.0, 12.0, 40.0], [9.0])
-        self.strip.selection_changed()
-        self.link.k = ([0.0, 3.0, 12.0, 20.0, 40.0], [])
-        self.strip.keys_edited = True                   # even an edit not read yet
-        self.strip.selection_changed()
-        self.assertEqual(self.kinds(), [])
-        self.assertEqual(self.strip.timeline.reached, {})
-
-    def test_keys_that_change_with_no_key_edit_play_nothing(self):
-        self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [])
-        self.strip.refresh(keys=True)
-        self.assertEqual(self.kinds(), [])
-
-    def test_the_selection_job_reads_quietly(self):
+    def test_the_selection_job_reads_the_keys(self):
         self.assertIn(("SelectionChanged", "selection_changed", ()), bar.JOB_EVENTS)
-
-    def test_many_deleted_keys_play_left_to_right_the_last_starting_within_half_a_second(self):
-        import time as _time
-        self.link.s.update(p0=0.0, p1=999.0, a0=0.0, a1=999.0)
-        self.link.k = ([float(f) for f in range(1000)], [])
-        self.strip.refresh(keys=True)
-        self.strip.fx.items[:] = []
-        self.link.k = ([], [])
-        self.strip.keys_edited = True                   # as Maya's key-edit callback says
-        self.strip.refresh(keys=True)
-        self.assertEqual(self.strip.keys, [])           # the keys are gone at once
-        items = self.strip.fx.items
-        shown = [f for f in range(1000) if self.tl.track().v0 - 0.5 <= f <= self.tl.track().v1 + 1.5]
-        self.assertEqual(len(items), len(look.shard_groups(len(shown))))
-        self.assertLessEqual(len(items) * look.SHARDS[0], look.SHARD_BUDGET + look.SHARDS[0])
-        xs = [i["cx"] for i in items]
-        delays = [i["delay"] for i in items]
-        self.assertEqual(xs, sorted(xs))                # left to right
-        self.assertEqual(delays, sorted(delays))
-        self.assertLessEqual(max(delays), 500 + 1e-6)
-        self.assertTrue(all(i["life"] == look.EFFECT_MS["delete"] for i in items))
-        self.assertTrue(all(len(i["rect"]) == 4 for i in items))
-        start = self.strip.clock()
-        for at in (0, 250, 600):
-            self.strip.clock = (lambda t=start + at: t)
-            t0 = _time.perf_counter()
-            self.paint()
-            self.assertLess(_time.perf_counter() - t0, 0.25)
-        end = start + 500 + look.EFFECT_MS["delete"] + 1
-        self.strip.clock = (lambda: end)
-        self.assertFalse(self.strip.fx.busy(end))
-
-    def test_a_deleted_key_stays_drawn_until_it_breaks(self):
-        self.link.k = ([float(f) for f in range(10, 40)], [])
-        self.strip.refresh(keys=True)
-        self.strip.fx.items[:] = []
-        self.link.k = ([], [])
-        self.strip.keys_edited = True
-        self.strip.refresh(keys=True)
-        last = self.strip.fx.items[-1]
-        self.assertGreater(last["delay"], 0)
-        l, tp, w, h = last["ghosts"][0]
-        start = self.strip.clock()
-
-        def lit(at):
-            self.strip.clock = (lambda: start + at)
-            img = self.strip.grab().toImage()
-            c = img.pixelColor(int(l + w / 2.0), int(tp + h / 2.0))
-            return c.red() > 150 and c.blue() < 120         # the accent, not the dark track
-
-        self.assertTrue(lit(0))                             # waiting its turn: still the key
-        self.assertFalse(lit(last["delay"] + look.EFFECT_MS["delete"] + 1))
-
-    def test_a_selection_change_dropping_many_keys_is_no_wave(self):
-        self.link.k = ([float(f) for f in range(100)], [])
-        self.strip.refresh(keys=True)
-        self.strip.fx.items[:] = []
-        self.link.k = ([], [])
-        self.strip.refresh(keys=True)                   # no key edit reported: another selection
-        self.assertEqual(self.kinds(), [])
-
-    def test_a_key_set_over_a_standing_key_flashes(self):
-        self.strip.state["now"] = 12.0
-        self.link.s["now"] = 12.0
-        self.strip.keys_set.append((None, False))       # Maya ran setKeyframe at the current frame
-        self.strip.refresh(keys=True)                   # the key times did not change
-        self.assertEqual(self.kinds(), ["set"])
-        self.strip.fx.items[:] = []
-        self.strip.keys_set.append((13.0, False))       # a frame with no key: nothing
-        self.strip.refresh(keys=True)
-        self.assertEqual(self.kinds(), [])
-        self.assertEqual(self.strip.keys_set, [])
-
-    def test_a_reload_or_a_snap_is_no_edit(self):
-        self.link.k = ([float(f) for f in range(0, 100, 3)], [9.0])
-        self.strip.refresh(keys=True)
-        self.assertEqual(self.kinds(), [])
-        self.link.k = ([0.0, 6.5], [9.0])
-        self.strip.refresh(keys=True)
-        self.strip.fx.items[:] = []
-        self.link.k = ([0.0, 7.0], [9.0])
-        self.strip.refresh(keys=True)
-        self.assertEqual(self.kinds(), [])
-
-    def test_moving_keys_is_no_set_and_delete(self):
-        self.strip.state["highlight"] = (30, 30)
-        self.link.k = ([0.0, 6.0, 12.0, 35.0, 40.0], [9.0])
-        self.drag(self.tl, self.x(30), self.x(35))
-        self.assertEqual(self.kinds(), [])
-
-    def test_the_effects_end(self):
-        self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
-        self.strip.refresh(keys=True)
-        self.assertFalse(self.strip.fx.busy(self.strip.clock() + 5000))
-
-    def test_without_motion_nothing_starts(self):
-        self.strip.motion = False
-        self.link.k = ([0.0, 6.0, 12.0, 20.0, 40.0], [9.0])
-        self.strip.refresh(keys=True)
-        self.assertEqual(self.kinds(), [])
-
-
-class RevealGlow(Strip):
-    """The bar coming out at the bottom edge flashes its racing edges (2026-10-17, mockup B)."""
-
-    motion = True
-
-    def reveals(self):
-        return [i for i in self.strip.fx.items if i["kind"] == "reveal"]
-
-    def burst(self, x, opening=True, instant=False):
-        g = self.strip.mapToGlobal(QT.QtCore.QPoint(x, 40))
-        return self.strip.burst_at(g.x(), g.y(), opening, instant=instant)
-
-    def at(self, ms):
-        start = self.reveals()[0]["t0"]
-        self.strip.clock = (lambda: start + ms)
-
-    def light(self, x, y):
-        c = self.strip.grab().toImage().pixelColor(x, y)
-        return c.red() + c.green() + c.blue()
-
-    def test_an_opening_burst_flashes_from_the_cursor(self):
-        self.burst(400)
-        items = self.reveals()
-        self.assertEqual(len(items), 1)
-        self.assertAlmostEqual(items[0]["cx"], 400.0, delta=1.0)
-        self.assertEqual(items[0]["life"], look.REVEAL_MS)
-
-    def test_a_second_reveal_replaces_the_first(self):
-        self.burst(400)
-        self.burst(900)
-        items = self.reveals()
-        self.assertEqual(len(items), 1)
-        self.assertAlmostEqual(items[0]["cx"], 900.0, delta=1.0)
-
-    def test_going_back_flashes_nothing_and_takes_the_flash_away(self):
-        self.burst(400)
-        self.burst(400, opening=False)
-        self.assertEqual(self.reveals(), [])
-
-    def test_an_instant_reveal_or_no_motion_flashes_nothing(self):
-        self.burst(400, instant=True)
-        self.assertEqual(self.reveals(), [])
-        self.strip.motion = False
-        self.burst(400)
-        self.assertEqual(self.reveals(), [])
-
-    def test_it_lights_the_edges_and_the_top_then_ends(self):
-        self.burst(400)
-        self.at(0)
-        lit = self.light(400, 40)
-        self.assertGreater(lit, self.light(1200, 40) + 200)    # the edges on the cursor, nothing far off
-        self.assertFalse(getattr(self.strip.fx, "_failed", False))
-        self.at(look.UNROLL_MS + 100)
-        top = self.light(1200, 0)
-        self.at(look.REVEAL_MS + 1)
-        self.assertGreater(top, self.light(1200, 0) + 60)      # the top edge still lit after the unroll
-        self.assertFalse(self.strip.fx.busy(self.strip.clock()))
-        self.assertFalse(getattr(self.strip.fx, "_failed", False))
-
-
-class PlayAndTrail(Strip):
-    """Play pressed closes a frame round the bar; the cells the playhead leaves
-    glow and fade, scrubbing and playing (2026-10-17)."""
-
-    motion = True
-
-    def test_a_scrub_leaves_fading_cells(self):
-        self.drag(self.tl, self.x(20), self.x(25))
-        self.assertTrue(self.tl.trail)
-        self.tl.grab()
-        self.assertFalse(getattr(self.tl, "_failed", False))
-        later = self.strip.clock() + 5000
-        self.strip.clock = lambda: later
-        self.tl.step(16)
-        self.assertEqual(self.tl.trail, {})
-
-    def test_playback_leaves_fading_cells(self):
-        self.strip.state["playing"] = True
-        self.link.s["playing"] = True
-        for now in (13.0, 14.0, 15.0):
-            self.link.s["now"] = now
-            self.strip.on_time()
-        self.assertEqual(sorted(self.tl.trail), [12, 13, 14])
-
-    def test_a_time_change_while_still_leaves_no_trail(self):
-        self.link.s["now"] = 20.0
-        self.strip.on_time()
-        self.assertEqual(self.tl.trail, {})
-
-    def test_play_glows_in_from_the_timeline_s_edge(self):
-        self.strip.play.click()
-        self.assertIsNotNone(self.tl.play_at)
-        self.assertTrue(self.tl.busy(self.strip.clock()))
-        start = self.tl.play_at
-        w, h = self.tl.width(), self.tl.height()
-
-        def light(ms, x, y):
-            self.strip.clock = (lambda: start + ms)
-            c = self.tl.grab().toImage().pixelColor(x, y)
-            return c.red() + c.green() + c.blue()
-
-        x = w // 2
-        edge_peak, edge_after = light(100, x, 3), light(look.EFFECT_MS["play"] + 1, x, 3)
-        self.assertGreater(edge_peak, edge_after + 20)
-        # the middle of the bar, past the glow's depth, is left alone
-        mid = h // 2
-        if mid > look.PLAY_GLOW_DEPTH * self.strip.ui + 3:
-            self.assertEqual(light(100, x, mid), light(look.EFFECT_MS["play"] + 1, x, mid))
-        self.assertFalse(getattr(self.tl, "_failed", False))
-
-    def test_stopping_closes_no_frame(self):
-        self.strip.state["playing"] = True
-        self.link.s["playing"] = True
-        self.strip.refresh()
-        self.tl.play_at = None
-        self.strip.play.click()
-        self.assertIsNone(self.tl.play_at)
-
-    def test_without_motion_neither(self):
-        self.strip.motion = False
-        self.drag(self.tl, self.x(20), self.x(25))
-        self.strip.play.click()
-        self.assertEqual(self.tl.trail, {})
-        self.assertIsNone(self.tl.play_at)
+        self.link.k = ([0.0, 3.0, 12.0], [])
+        self.strip.selection_changed()
+        self.assertEqual(self.strip.keys, [0.0, 3.0, 12.0])
 
 
 class CellKeys(Strip):
     """A key on a whole frame fills its cell (2026-10-17)."""
 
-    def test_a_key_is_aimed_anywhere_in_its_cell(self):
+    def test_a_key_is_found_anywhere_in_its_cell(self):
         t = self.tl.track()
-        self.tl._aim(t.x(30.0) + t.scale * 0.8)
-        self.assertEqual(self.tl.aim_key, 30.0)
+        self.assertEqual(self.tl._key_under(t.x(30.0) + t.scale * 0.8, t), 30.0)
 
-    def test_a_lit_key_paints(self):
-        self.tl.reached[30.0] = self.strip.clock()
-        self.tl.key_lift[12.0] = 1.0
+    def test_the_keys_paint(self):
         self.tl.grab()
         self.assertFalse(getattr(self.tl, "_failed", False))
 
@@ -1160,10 +846,10 @@ class LayerPanelReads(Strip):
             self.reads["keys"] += 1
             return keys(names)
         self.ll.anim_layers, self.ll.keys_by_layer = counted_anim, counted_keys
-        self.panel = layerpanel.Panel(self.strip, self.ll, 1.0, maya_hubstyle.TOKENS, False)
+        self.panel = layerpanel.Panel(self.strip, self.ll, 1.0, maya_hubstyle.TOKENS)
         self.addCleanup(self.panel.destroy)
         self.strip.layer_panel = self.panel
-        self.panel.open((1300, 815))
+        self.panel.open()
 
     def test_the_strip_refresh_reads_the_open_panel_again(self):
         before = self.reads["anim"]
@@ -1242,8 +928,6 @@ class LiveKeyDrag(Strip):
     move in the scene on every step of the drag, the release sets them down once;
     then «пропали эффекты и анимация когда я ставлю его копию хоткеем S»."""
 
-    motion = True
-
     def setUp(self):
         super(LiveKeyDrag, self).setUp()
         self.link = LiveLink()
@@ -1320,17 +1004,13 @@ class LiveKeyDrag(Strip):
         self.mouse(self.tl, E.MouseButtonRelease, self.x(35), Qt.LeftButton, Qt.NoButton)
         self.assertGreater(len(self.calls("keys")), before, "read again on the release")
 
-    def test_s_in_a_live_drag_flashes_and_swells_the_copy(self):
+    def test_s_in_a_live_drag_draws_the_copy(self):
         E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
         self.mouse(self.tl, E.MouseButtonPress, self.x(30), Qt.LeftButton, Qt.LeftButton)
         self.mouse(self.tl, E.MouseMove, self.x(35), Qt.NoButton, Qt.LeftButton)
-        self.strip.fx.items[:] = []
-        self.tl.reached.clear()
         self.press_s()
         self.assertEqual(self.calls("live_stamp"), [("live_stamp", (27, 45))])
         self.assertFalse(self.calls("stamp_keys"), "the keys stand on the target already")
-        self.assertEqual([i["kind"] for i in self.strip.fx.items], ["set"], "the copy's flash")
-        self.assertIn(27.0, self.tl.reached, "the copy swells as a set key does")
         self.assertIn(27.0, self.strip.keys, "the copy drawn where it went down")
         self.mouse(self.tl, E.MouseButtonRelease, self.x(35), Qt.LeftButton, Qt.NoButton)
 
@@ -1345,7 +1025,7 @@ class LiveKeyDrag(Strip):
         img = QT.QtGui.QImage(w, h, QT.QtGui.QImage.Format_ARGB32)
         img.fill(0)
         painter = QT.QtGui.QPainter(img)
-        self.tl._draw_static(painter, t, float(w), float(h), True, moving)
+        self.tl._draw_static(painter, t, float(w), float(h), moving)
         painter.end()
         accent = QT.QtGui.QColor(maya_hubstyle.TOKENS["accent"])
 
@@ -1366,79 +1046,8 @@ class LiveKeyDrag(Strip):
 
 
 @unittest.skipIf(QT is None, "no Qt")
-class MovesPlayNoEffect(Strip):
-    """2026-10-19: «при переносе ключей по слоям или по таймлайну эффекты разрушения
-    ключа и вспышек не должны отыгрываться» - a key move is no key set and deleted, nor
-    are the key edits Maya reports for it a moment later."""
-
-    motion = True
-
-    def setUp(self):
-        super(MovesPlayNoEffect, self).setUp()
-        shards_on(self)
-
-    def kinds(self):
-        return [i["kind"] for i in self.strip.fx.items]
-
-    def drag(self, x0, x1):
-        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
-        self.mouse(self.tl, E.MouseButtonPress, self.x(x0), Qt.LeftButton, Qt.LeftButton)
-        self.mouse(self.tl, E.MouseMove, self.x(x1), Qt.NoButton, Qt.LeftButton)
-        before = list(self.link.k[0])
-        self.moved = ([k + (x1 - x0) if 22 <= k <= 40 else k for k in before], self.link.k[1])
-        #  read on the release, a moved lone key's curve is cut and not made again yet
-        self.link.k = ([k for k in self.moved[0] if not 22 <= k - (x1 - x0) <= 40], self.link.k[1])
-        self.strip.keys_edited = True                   # Maya's key-edit callback during the move
-        self.mouse(self.tl, E.MouseButtonRelease, self.x(x1), Qt.LeftButton, Qt.NoButton)
-
-    def late_edit(self):
-        """Maya reports the move's key edits once more after the release, and the key read
-        then stands where it was moved to."""
-        self.link.k = self.moved
-        self.strip.keys_edited = True
-        self.strip.refresh(keys=True)
-
-    def test_a_live_highlight_drag_plays_nothing(self):
-        self.link = LiveLink()
-        self.strip.link = self.link
-        self.strip.state["highlight"] = self.link.s["highlight"] = (22, 40)
-        self.strip.fx.items[:] = []
-        self.drag(30, 35)
-        self.assertEqual(self.kinds(), [])
-        self.late_edit()
-        self.assertEqual(self.kinds(), [])
-        self.assertEqual(self.tl.reached, {})
-
-    def test_a_highlight_moved_without_the_live_drag_plays_nothing(self):
-        self.link.live_begin = lambda selection: False   # no keys to drag live: moved on the release
-        self.strip.state["highlight"] = self.link.s["highlight"] = (22, 40)
-        self.strip.fx.items[:] = []
-        self.drag(30, 35)
-        self.assertEqual(self.kinds(), [])
-        self.late_edit()
-        self.assertEqual(self.kinds(), [])
-
-    def test_a_key_deleted_after_the_quiet_moment_still_breaks(self):
-        self.link = LiveLink()
-        self.strip.link = self.link
-        self.strip.state["highlight"] = self.link.s["highlight"] = (22, 40)
-        self.drag(30, 35)
-        self.strip._quiet_until = self.strip.clock() - 1.0      # the moment has passed
-        self.strip.fx.items[:] = []
-        self.link.k = ([k for k in self.link.k[0] if k != 12.0], self.link.k[1])
-        self.strip.keys_edited = True
-        self.strip.refresh(keys=True)
-        self.assertEqual(self.kinds(), ["delete"])
-
-    def test_a_key_set_after_the_quiet_moment_still_flashes(self):
-        self.strip.quiet_keys()
-        self.strip._quiet_until = self.strip.clock() - 1.0
-        self.strip.refresh(keys=True)                   # the quiet read
-        self.strip.fx.items[:] = []
-        self.link.k = (sorted(self.link.k[0] + [17.0]), self.link.k[1])
-        self.strip.keys_edited = True
-        self.strip.refresh(keys=True)
-        self.assertEqual(self.kinds(), ["set"])
+class LanesDrag(Strip):
+    """2026-10-19: the strip reads no keys while the layer panel's lanes drag them."""
 
     def test_no_key_is_read_while_the_lanes_drag_keys(self):
         class Panel(object):
@@ -1461,13 +1070,8 @@ if __name__ == "__main__":
 
 class SteelKeys(Strip):
     """⋮ -> Time bar ▸ Steel keys (2026-10-20, «заменить оранжевые ключи на серебряные ...
-    эффект остывания стали»): the keys in steel, a key set hot and cooling into steel."""
-
-    motion = True
-
-    def setUp(self):
-        super(SteelKeys, self).setUp()
-        self.strip.opened = -100000.0           # past the opening burst
+    эффект остывания стали»): the keys in steel. The cooling went with every other effect
+    (2026-11-19)."""
 
     def pixel(self, frame):
         t = self.tl.track()
@@ -1517,89 +1121,8 @@ class SteelKeys(Strip):
         self.assertGreater(left.lightness(), mid.lightness() + 5)
         self.assertLess(right.lightness(), mid.lightness() - 15)
 
-    def set_key(self):
+    def test_a_key_set_in_steel_is_steel_at_once(self):
         self.strip.set_steel(True)
-        start = self.strip.clock()
-        self.strip.clock = (lambda: start)
         self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
-        self.strip.keys_edited = True
         self.strip.refresh(keys=True)
-        return start
-
-    def test_a_key_set_is_hot_then_cherry_red_then_steel(self):
-        start = self.set_key()
-        self.assertIn(20.0, self.tl.cooling)
-        self.assertEqual(self.strip.fx.items[-1]["hex"], maya_hubstyle.TOKENS["accent"])
-        hot = self.pixel(20.0)
-        self.assertGreater(hot.red(), 230)
-        self.assertGreater(hot.green(), 170)                   # white-yellow heat
-        self.strip.clock = (lambda: start + look.COOL_MS * 0.45)
-        red = self.pixel(20.0)
-        self.assertGreater(red.red(), red.green() + 80)          # cherry red
-        self.assertTrue(self.near(self.pixel(30.0), look.STEEL))  # the others stay steel
-        self.strip.clock = (lambda: start + look.COOL_MS + 1)
-        self.tl.step(16)
-        self.assertNotIn(20.0, self.tl.cooling)
         self.assertTrue(self.near(self.pixel(20.0), look.STEEL))
-
-    def test_without_steel_a_key_set_does_not_cool(self):
-        self.link.k = ([0.0, 6.0, 12.0, 20.0, 30.0, 40.0], [9.0])
-        self.strip.keys_edited = True
-        self.strip.refresh(keys=True)
-        self.assertEqual(self.tl.cooling, {})
-
-    def test_a_breakdown_set_stays_cyan(self):
-        self.strip.set_steel(True)
-        self.link.k = ([0.0, 6.0, 12.0, 30.0, 40.0], [9.0, 15.0])
-        self.strip.keys_edited = True
-        self.strip.refresh(keys=True)
-        self.assertEqual(self.tl.cooling, {})
-
-    def test_s_over_a_highlight_cools_every_key_it_set(self):
-        # 2026-10-20: «при простановке ключей на массив все ключи ... должны остывать» -
-        # ten keys at once were a reload (no effect), and only the current frame flashed
-        Qt = QT.QtCore.Qt
-        self.strip.set_steel(True)
-        self.strip.state["highlight"] = (10, 19)
-        frames = [float(f) for f in range(10, 20)]
-        self.link.k = (sorted(set([0.0, 6.0, 12.0, 30.0, 40.0] + frames)), [9.0])
-
-        def key_range(a, b, name):
-            self.link._log("key_range", a, b, name)
-            self.strip.keys_edited = True
-        self.link.key_range = key_range
-        QT.QtWidgets.QApplication.sendEvent(
-            QT.QtWidgets.QApplication.instance(),
-            QT.QtGui.QKeyEvent(QT.QtCore.QEvent.KeyPress, Qt.Key_S, Qt.NoModifier, "s"))
-        self.assertEqual(self.calls("key_range"), [("key_range", 10, 19, "SetKey")])
-        # one plate over the ten, not ten flashes (2026-10-20: «растянуть какую-то плашку»)
-        self.assertEqual([pl[:2] for pl in self.tl.plates], [(10.0, 19.0)])
-        self.assertEqual(self.tl.cooling, {})
-        self.assertEqual([i for i in self.strip.fx.items if i["kind"] == "set"], [])
-        start = self.tl.plates[0][2]
-        self.strip.clock = (lambda: start)
-        hot = self.pixel(15.0)
-        self.assertGreater(hot.red(), 230)
-        self.assertGreater(hot.green(), 170)
-        self.strip.clock = (lambda: start + look.PLATE_COOL_MS * 0.45)
-        red = self.pixel(15.0)
-        self.assertGreater(red.red(), red.green() + 80)
-        self.strip.clock = (lambda: start + look.PLATE_COOL_MS + 1)
-        self.tl.step(16)
-        self.assertEqual(self.tl.plates, [])
-        self.assertTrue(self.near(self.pixel(15.0), look.STEEL))
-
-    def test_without_steel_the_plate_flashes_into_orange(self):
-        self.strip.mark_set(10, 19)
-        start = self.tl.plates[0][2]
-        self.strip.clock = (lambda: start + 50)
-        hot = self.pixel(15.0)
-        self.assertGreater(hot.green(), 200)                     # white-hot at first
-        self.strip.clock = (lambda: start + look.PLATE_MS + 1)
-        self.tl.step(16)
-        self.assertEqual(self.tl.plates, [])
-
-    def test_cooling_keeps_the_strip_animating_until_it_is_steel(self):
-        start = self.set_key()
-        self.strip.clock = (lambda: start + 1000)
-        self.assertTrue(self.tl.busy(start + 1000))

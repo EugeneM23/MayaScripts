@@ -6,7 +6,6 @@ import sys
 import unittest
 
 from maya_timebar import layerlook as L
-from maya_timebar import look
 
 PLUGIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "SkeldarAnim")
 
@@ -173,12 +172,8 @@ class Rules(unittest.TestCase):
         rows[0]["weight"] = 0.5
         self.assertNotEqual(L.signature(rows), before)
 
-    def test_schedule_nearest_first_in_and_farthest_first_out(self):
-        parts = [(0, 0, 10, 10), (0, 200, 10, 10)]
-        (o_far, f_far), (o_near, f_near) = L.schedule(parts, (5, 205), 1.0)
-        self.assertLess(o_near, o_far)
-        self.assertLess(f_far, f_near)
-        self.assertEqual(o_near, look.burst_delay(0, 0))
+    def test_no_wave_is_scheduled(self):
+        self.assertFalse(hasattr(L, "schedule"))      # 2026-11-19: the column opens at once
 
 
 class LaneRules(unittest.TestCase):

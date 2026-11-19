@@ -1,11 +1,12 @@
 """maya_hubpop - the rest of a section's floating window: its seams to Maya, the
-title's and the edges' other buttons, the card it gives the marks, the fades and
-the flash driven frame by frame, the burst's own face and parts, a build that
-fails, and the manager's restore and clean-up.
+title's and the edges' other buttons, the card it gives the marks, a build that
+fails, and the manager's restore and clean-up. Since 2026-11-19 a window opens,
+rolls and closes at once (the animator: «удаляем все подсветки и анимации из
+плагина»).
 
 Offscreen Qt; `cmds`, the hub, the screens and Maya's main window replaced as in
-tests/test_hubpop.py. Animations are driven by setting their current time (no
-sleeping). The popup state on `sys` is a fresh one for each test and put back.
+tests/test_hubpop.py. The popup state on `sys` is a fresh one for each test and
+put back.
 """
 
 import collections
@@ -24,9 +25,7 @@ import tests  # noqa: F401  (puts SkeldarAnim/ on sys.path)
 from PySide6 import QtCore, QtGui, QtWidgets
 import shiboken6
 
-import maya_hubburst as hubburst
 import maya_hubcopy as hubcopy
-import maya_hubmotion as hubmotion
 import maya_hubpop as hubpop
 import maya_hubpop_rules as rules
 import maya_hubqt as hubqt
@@ -76,11 +75,6 @@ def fake_omui(main_window):
     module = types.ModuleType("maya.OpenMayaUI")
     module.MQtUtil = types.SimpleNamespace(mainWindow=main_window)
     return module
-
-
-def finish(anim):
-    """An animation run to its end now (its last value, then `finished`)."""
-    anim.setCurrentTime(anim.duration())
 
 
 class FakeMaya(FakeCmds):
@@ -214,10 +208,6 @@ class Seams(unittest.TestCase):
         QtWidgets.QApplication.sendEvent(widget, event)
         return event
 
-    def corner(self, popup):
-        at = popup.root.mapToGlobal(QtCore.QPoint(4, 4))
-        return (at.x(), at.y())
-
 
 # ----------------------------------------------------------- the Maya seams
 
@@ -314,29 +304,11 @@ class Points(unittest.TestCase):
                 return QtCore.QPoint(31, 47)
         self.assertEqual(hubpop._global(Qt5Event()), (31, 47))
 
-    def test_no_cursor_means_not_under_anything(self):
+    def test_no_cursor_is_no_point(self):
         def broken():
             raise RuntimeError("no Qt")
         with mock.patch.object(hubqt, "qt", broken):
             self.assertIsNone(hubpop._cursor_point())
-            self.assertFalse(hubpop._under(object()))
-
-    def test_a_window_that_cannot_say_its_geometry_is_not_under_the_cursor(self):
-        class Gone(object):
-            def frameGeometry(self):                     # noqa: N802
-                raise RuntimeError("Internal C++ object already deleted")
-        with mock.patch.object(hubpop, "_cursor_point", lambda: (10, 10)):
-            self.assertFalse(hubpop._under(Gone()))
-
-    def test_the_cursor_on_the_window(self):
-        _app()
-        window = QtWidgets.QWidget()
-        self.addCleanup(window.deleteLater)
-        window.setGeometry(100, 100, 200, 150)
-        with mock.patch.object(hubpop, "_cursor_point", lambda: (150, 160)):
-            self.assertTrue(hubpop._under(window))
-        with mock.patch.object(hubpop, "_cursor_point", lambda: (5, 5)):
-            self.assertFalse(hubpop._under(window))
 
 
 # ----------------------------------------------------------- the popup card
@@ -527,26 +499,15 @@ class Dead(unittest.TestCase):
         popup._place_grips()
         popup._grip_drag("right", (10, 10), True)
         popup._grip_reset("corner")
-        popup._roll_done(True)
         popup._paint_roll()
-        popup._settle()
         self.assertIsNone(popup._grip_start)
         self.assertIsNone(popup.user_w)
 
-    def test_light_flash_and_burst_without_a_window(self):
-        popup = self.popup
-        popup.set_light(True)
-        popup.flash()
-        popup._opened()
-        self.assertFalse(popup._burst(True, (5, 5), lambda: None))
-        self.assertIsNone(popup._light_anim)
-        self.assertIsNone(popup._flash_anim)
-
-    def test_a_fade_out_with_no_window_is_done_at_once(self):
-        done = []
-        self.popup.fade_out(lambda: done.append(1))
-        self.assertEqual(done, [1])
-        self.assertIsNone(self.popup._fade)
+    def test_a_roll_and_a_raise_without_a_window(self):
+        with mock.patch.object(hubpop, "_save_collapsed", lambda key, on: None):
+            self.assertTrue(self.popup.set_collapsed(True))
+        self.assertTrue(self.popup.collapsed)
+        self.popup.bring_up()
 
     def test_destroy_with_nothing_built_is_quiet(self):
         self.popup.destroy()
@@ -708,260 +669,10 @@ class GripButtons(Seams):
         self.assertEqual((popup.root.x(), popup.root.y()), (x, y))
 
 
-# ------------------------------------------------- fades, rolls and the flash
+# ------------------------------------------------------------- a destroy
 
-class Fades(Seams):
-    """The fades a window falls back on with no burst, driven frame by frame."""
-
-    @contextlib.contextmanager
-    def no_burst(self):
-        """Animations on, and no burst effect to be had (the fallback fade)."""
-        def broken():
-            raise RuntimeError("no effect here")
-        with mock.patch.object(hubpop.hubwindow, "burst_class", broken), \
-                mock.patch.object(hubmotion, "enabled", lambda: True):
-            yield
-
-    def test_a_close_with_no_burst_fades_out_then_destroys_the_window(self):
-        popup = hubpop.open_popup("alpha")
-        with self.no_burst(), contextlib.redirect_stderr(io.StringIO()), \
-                mock.patch.object(hubpop, "_later", lambda fn: fn()):
-            hubpop.close_popup("alpha", animate=True)
-            fade = popup._fade
-            self.assertIsNotNone(fade)
-            self.assertTrue(popup.root.testAttribute(
-                QtCore.Qt.WA_TransparentForMouseEvents))
-            fade.setCurrentTime(fade.duration() // 2)
-            self.assertAlmostEqual(popup.root.windowOpacity(),
-                                   1.0 - hubmotion.smooth(fade.currentValue()),
-                                   places=2)
-            self.assertGreater(popup.root.windowOpacity(), 0.0)
-            self.assertLess(popup.root.windowOpacity(), 1.0)
-            finish(fade)
-        self.assertIsNone(popup._fade)
-        self.assertFalse(popup.alive())
-        self.assertEqual(hubpop._state()["closing"], [])
-
-    def test_the_folded_window_is_destroyed_on_the_loop_s_next_turn(self):
-        popup = hubpop.open_popup("alpha")
-        with self.no_burst(), contextlib.redirect_stderr(io.StringIO()):
-            hubpop.close_popup("alpha", animate=True)
-            finish(popup._fade)
-        self.assertTrue(popup.alive())                 # not inside the signal
-        for _ in range(50):
-            if not popup.alive():
-                break
-            QtWidgets.QApplication.processEvents()
-        self.assertFalse(popup.alive())
-
-    def test_a_hidden_window_fades_rather_than_folds(self):
-        popup = hubpop.open_popup("alpha")
-        popup.root.hide()
-        done = []
-        popup.fade_out(lambda: done.append(1))
-        self.assertIsNone(popup.burst)                 # no burst on a hidden window
-        self.assertIsNotNone(popup._fade)
-        finish(popup._fade)
-        self.assertEqual(done, [1])
-        self.assertIsNone(popup._fade)
-
-    def test_a_tick_after_the_window_went_does_nothing(self):
-        popup = hubpop.open_popup("alpha")
-        popup.root.hide()
-        popup.fade_out(lambda: None)
-        fade, root = popup._fade, popup.root
-        popup.root = None
-        fade.setCurrentTime(fade.duration() // 2)       # no window: no opacity to set
-        popup.root = root
-        self.assertAlmostEqual(root.windowOpacity(), 1.0, places=2)
-        finish(fade)
-
-    def test_a_burst_that_raises_opens_with_a_fade(self):
-        popup = hubpop.open_popup("alpha")
-
-        def boom(*_a, **_kw):
-            raise ValueError("burst broke")
-        popup.burster.run = boom
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            popup.show_open(animate=True, origin=(300, 200))
-        self.assertIn("burst broke", err.getvalue())
-        self.assertFalse(popup.bursting())
-        self.assertFalse(popup.root.testAttribute(
-            QtCore.Qt.WA_TransparentForMouseEvents))
-        self.assertIsNotNone(popup._open_anim)
-        self.assertLess(popup.root.windowOpacity(), 0.01)
-        finish(popup._open_anim)
-        self.assertIsNone(popup._open_anim)
-        self.assertEqual(popup.root.windowOpacity(), 1.0)
-
-
-class Roll(Seams):
-
-    def test_a_roll_tick_after_the_window_went_does_nothing(self):
-        with mock.patch.object(hubmotion, "enabled", lambda: True):
-            popup = hubpop.open_popup("alpha")
-            size = (popup.root.width(), popup.root.height())
-            popup.set_collapsed(True, animate=True)
-        anim, root = popup._roll_anim, popup.root
-        self.assertIsNotNone(anim)
-        popup.root = None
-        anim.setCurrentTime(anim.duration() // 2)
-        self.assertEqual((root.width(), root.height()), size)
-        popup.root = root
-        finish(anim)
-        self.assertIsNone(popup._roll_anim)
-        self.assertEqual(root.height(), popup._chrome())
-
-    def test_a_roll_to_the_size_it_has_ends_at_once(self):
-        with mock.patch.object(hubmotion, "enabled", lambda: True):
-            popup = hubpop.open_popup("alpha")
-            size = (popup.root.width(), popup.root.height())
-            with mock.patch.object(hubpop.Popup, "_target", lambda self, rect: size):
-                popup._roll_to(False)
-        self.assertIsNone(popup._roll_anim)
-        self.assertEqual((popup.root.width(), popup.root.height()), size)
-
-
-class Flash(Seams):
-    """A second ⧉ on a standing window: raised, and its flash driven down to 0."""
-
-    def test_the_flash_rises_and_falls_back_to_nothing(self):
-        with mock.patch.object(hubmotion, "enabled", lambda: True):
-            popup = hubpop.open_popup("alpha")
-            popup.flash()
-        anim = popup._flash_anim
-        self.assertIsNotNone(anim)
-        self.assertAlmostEqual(popup.frame.flash, 1.0)
-        anim.setCurrentTime(anim.duration() // 2)
-        self.assertAlmostEqual(popup.frame.flash,
-                               hubmotion.flash_at(anim.currentValue()))
-        self.assertGreater(popup.frame.flash, 0.0)
-        self.assertLess(popup.frame.flash, 1.0)
-        finish(anim)
-        self.assertIsNone(popup._flash_anim)
-        self.assertEqual(popup.frame.flash, 0.0)
-
-    def test_with_animations_off_it_is_only_raised(self):
-        popup = hubpop.open_popup("alpha")
-        raised = []
-        popup.root.raise_ = lambda: raised.append(1)
-        with mock.patch.object(hubmotion, "enabled", lambda: False):
-            popup.flash()
-        del popup.root.raise_
-        self.assertEqual(raised, [1])
-        self.assertIsNone(popup._flash_anim)
-        self.assertEqual(popup.frame.flash, 0.0)
-
-    def test_a_window_going_as_it_is_raised_does_not_flash(self):
-        popup = hubpop.open_popup("alpha")
-
-        def gone():
-            raise RuntimeError("Internal C++ object already deleted")
-        popup.root.raise_ = gone
-        popup.flash()
-        del popup.root.raise_
-        self.assertIsNone(popup._flash_anim)
-        self.assertEqual(popup.frame.flash, 0.0)
-
-
-# ------------------------------------------------------------- the burst
-
-class BurstParts(Seams):
-    """The 2026-10-17 burst (hubburst.MOTION "burst"): the frame's face under it
-    and the parts it pops in - the title row, then the section's rows."""
-
-    def with_row(self):
-        popup = hubpop.open_popup("alpha")
-        row = QtWidgets.QWidget()
-        row.setFixedHeight(60)
-        popup.body.addWidget(row)
-        row.show()
-        popup._fit()
-        return popup
-
-    def test_the_face_goes_from_card_to_card_active_with_the_light(self):
-        def rgb(token):
-            text = hubstyle.TOKENS[token]
-            return tuple(int(text[i:i + 2], 16) for i in (1, 3, 5))
-        popup = hubpop.open_popup("alpha")
-        popup.set_light(False)
-        self.assertEqual(popup._burst_face(), rgb("card"))
-        popup.set_light(True)
-        self.assertEqual(popup._burst_face(), rgb("card_active"))
-        popup.frame.level = 0.5
-        half = popup._burst_face()
-        for channel in range(3):
-            low, high = sorted((rgb("card")[channel], rgb("card_active")[channel]))
-            self.assertTrue(low <= half[channel] <= high)
-
-    def test_open_the_title_and_the_rows_rolled_up_the_title_alone(self):
-        popup = self.with_row()
-        title = popup.title
-        parts = popup._burst_parts()
-        self.assertEqual(parts[0], (title.x(), title.y(), title.width(),
-                                    title.height()))
-        self.assertGreater(len(parts), 1)
-        popup.toggle_roll()
-        self.assertEqual(popup._burst_parts(),
-                         [(title.x(), title.y(), title.width(), title.height())])
-
-    def test_a_burst_plan_is_made_from_the_window_s_parts_and_face(self):
-        with mock.patch.object(hubburst, "MOTION", "burst"), \
-                mock.patch.object(hubmotion, "enabled", lambda: True):
-            popup = self.with_row()
-            popup.show_open(animate=True, origin=self.corner(popup))
-            held, popup.burster.anim = popup.burster.anim, None
-            held.stop()
-            effect = popup.burst
-            effect.ms = 60.0
-            popup.burster.tick_now()
-            plan = effect.plan
-            self.assertEqual(plan.kind, "burst")
-            self.assertTrue(plan.opening)
-            self.assertEqual(plan.parts, popup._burst_parts())
-            self.assertEqual(effect.face, popup._burst_face())
-            effect.ms = plan.total
-            popup.burster.tick_now()
-        self.assertFalse(popup.bursting())
-        self.assertFalse(popup.root.testAttribute(
-            QtCore.Qt.WA_TransparentForMouseEvents))
-
-
-class BurstFailures(Seams):
-    """A burst or a window that goes away under the burst's own calls."""
-
-    def test_a_stop_or_a_window_gone_mid_end_is_quiet(self):
-        popup = hubpop.open_popup("alpha")
-
-        def gone(*_a):
-            raise RuntimeError("Internal C++ object already deleted")
-        popup.burster.stop = gone
-        popup.root.setAttribute = gone
-        popup._end_burst()                            # neither raises out
-        del popup.root.setAttribute
-        popup._stop_all()                             # its burster's stop raises too
-        self.assertIsNone(popup._light_anim)
-
-    def test_a_fold_ends_even_if_the_window_cannot_hide(self):
-        popup = hubpop.open_popup("alpha")
-        done = []
-
-        def gone():
-            raise RuntimeError("Internal C++ object already deleted")
-        popup.root.hide = gone
-        popup._folded(lambda: done.append(1))
-        del popup.root.hide
-        self.assertEqual(done, [1])
-
-    def test_an_animation_already_gone_stops_quietly(self):
-        popup = hubpop.open_popup("alpha")
-
-        class Gone(object):
-            def stop(self):
-                raise RuntimeError("Internal C++ object already deleted")
-        popup._light_anim = Gone()
-        popup._stop_anim("_light_anim")
-        self.assertIsNone(popup._light_anim)
+class DestroyFailure(Seams):
+    """A window that will not go quietly."""
 
     def test_a_destroy_that_fails_prints_and_forgets_the_window(self):
         popup = hubpop.open_popup("alpha")
@@ -985,16 +696,17 @@ class Manager(Seams):
 
     def test_open_at_unrolls_a_window_left_rolled_up(self):
         self.cmds.vars[rules.COLLAPSED_VAR.format("alpha")] = "1"
-        popup = hubpop.open_at("alpha", (600, 400), animate=False)
+        popup = hubpop.open_at("alpha", (600, 400))
         self.assertFalse(popup.collapsed)
         self.assertEqual(self.cmds.vars[rules.COLLAPSED_VAR.format("alpha")], "0")
         self.assertFalse(popup.scroll.isHidden())
 
-    def test_destroy_all_takes_the_windows_still_folding(self):
-        with mock.patch.object(hubmotion, "enabled", lambda: True):
-            popup = hubpop.open_popup("alpha")
-            hubpop.close_popup("alpha", animate=True, origin=self.corner(popup))
-        self.assertIn(popup, hubpop._state()["closing"])
+    def test_destroy_all_takes_a_window_an_older_module_left_folding(self):
+        """Before 2026-11-19 a closing window folded out in `closing`; an older
+        module object's may still stand there when this build loads."""
+        popup = hubpop.open_popup("alpha")
+        hubpop._state()["popups"].pop("alpha")
+        hubpop._state()["closing"].append(popup)
         self.assertGreaterEqual(hubpop.destroy_all(), 1)
         self.assertEqual(hubpop._state()["closing"], [])
         self.assertFalse(popup.alive())

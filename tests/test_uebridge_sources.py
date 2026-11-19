@@ -337,6 +337,36 @@ class Sources(unittest.TestCase):
         self.assertEqual(sorted((r.name, r.fmt, r.frames) for r in rows),
                          [("Fire", "anim", 31), ("run.bvh", "bvh", 2)])
 
+    def test_the_scan_leaves_out_the_macos_metadata(self):
+        # 2026-11-19, the animator's Downloads: 2 186 of its 14 047 rows were
+        # AppleDouble files (`._Anvil.fbx`, 213 bytes of «Mac OS X» resource
+        # fork) in the `__MACOSX` folders a Mac's zip leaves - the same names
+        # over and over at the top of the list, none of them an FBX
+        top = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, top, True)
+        for name in ("a/run.bvh", "a/._run.bvh", "__MACOSX/a/._run.bvh",
+                     "__macosx/b/walk.bvh", "a/.hidden.bvh"):
+            path = os.path.join(top, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as handle:
+                handle.write(SIMPLE_BVH)
+        self.assertEqual([os.path.basename(p) for p in sources.scan_files(top, "folder")],
+                         ["run.bvh"])
+        rows = sources.scan(top, "folder", takes_of=lambda p: [])
+        self.assertEqual([r.name for r in rows], ["run.bvh"])
+
+    def test_a_cached_row_a_walk_now_leaves_out_is_dropped(self):
+        top = "C:/Users/a/Downloads"
+        self.assertTrue(sources.walked(top + "/pack/walk.fbx", top))
+        self.assertFalse(sources.walked(top + "/x/__MACOSX/Models/._Anvil.fbx", top))
+        self.assertFalse(sources.walked(top + "/x/._walk.fbx", top))
+        self.assertFalse(sources.walked(top + "/Library/walk.fbx", top))
+        # what lies ABOVE the scanned folder is never judged: a folder picked
+        # inside Temp (a skipped name) still lists its own files
+        self.assertTrue(sources.walked("C:/AppData/Local/Temp/clips/run.bvh",
+                                       "C:/AppData/Local/Temp/clips"))
+        self.assertTrue(sources.walked("D:/elsewhere/._x.fbx", top))
+
     def test_a_broken_file_keeps_a_row_that_says_so(self):
         top = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, top, True)

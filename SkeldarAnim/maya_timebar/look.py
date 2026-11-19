@@ -306,57 +306,6 @@ def mapped(t, selection, target):
     return int(round(na + (t - a) * float(nb - na) / (b - a)))
 
 
-def passed(keys, before, now, near=6.0):
-    """The keys the playhead reached going from `before` to `now`: every key it
-    swept over when the step is short (playback, a scrub), only the one it lands
-    on after a jump (the loop going back to the start)."""
-    if before is None or abs(now - before) < 1e-9:
-        return []
-    lo, hi = min(before, now), max(before, now)
-    hit = []
-    cell = math.floor(now + 1e-9)
-    for k in keys:
-        if cell - 1e-6 <= k < cell + 1 - 1e-6:          # in the cell the playhead fills
-            hit.append(k)
-        elif hi - lo <= near and lo - 1e-6 < k <= hi + 1e-6 and abs(k - before) > 1e-6:
-            hit.append(k)
-    return hit
-
-
-def flash(age_ms, decay_ms):
-    """A reached key's light: 1 at once, eased back to 0 over `decay_ms`."""
-    if age_ms < 0 or age_ms >= decay_ms:
-        return 0.0
-    u = 1.0 - age_ms / float(decay_ms)
-    return u * u
-
-
-def approach(value, goal, dt_ms, ms):
-    """`value` eased toward `goal` over about `ms` (exponential, never past it)."""
-    if ms <= 0:
-        return goal
-    k = 1.0 - math.exp(-3.0 * dt_ms / ms)
-    out = value + (goal - value) * k
-    return goal if abs(out - goal) < 0.005 else out
-
-
-def back_out(u):
-    """The radial menu's ease-out-back: overshoots a little, lands on 1."""
-    u = max(0.0, min(1.0, u))
-    c = 1.70158
-    return 1 + (c + 1) * (u - 1) ** 3 + c * (u - 1) ** 2
-
-
-def opening(age_ms, index, open_ms=200.0, step_ms=18.0):
-    """(scale, opacity) of control `index` `age_ms` after the bar opened."""
-    u = (age_ms - index * step_ms) / open_ms
-    if u <= 0:
-        return 0.3, 0.0
-    if u >= 1:
-        return 1.0, 1.0
-    return 0.3 + 0.7 * back_out(u), min(1.0, u * 1.6)
-
-
 def envelope(samples, rate, fps, offset, start, end, per_frame=4):
     """[(frame, amplitude 0..1)] of a mono sound (`samples` -1..1 at `rate` Hz,
     starting at frame `offset`) over frames [start, end], `per_frame` bins a frame."""
@@ -382,8 +331,6 @@ def envelope(samples, rate, fps, offset, start, end, per_frame=4):
 
 MODES = ("maya", "docked", "edge")
 MODE_LABELS = (("Maya's", "maya"), ("Docked", "docked"), ("Bottom edge", "edge"))
-SLIDE_MS = 180          # out
-SLIDE_BACK_MS = 140     # back
 
 
 DEFAULT_MODE = "edge"   # the bottom edge by default (2026-10-16)
@@ -411,7 +358,7 @@ def upgraded(mode, seen):
 
 def bottom_band(window, height):
     """(x, y, w, h): the band along the bottom of Maya's window `window` (x, y,
-    w, h) the bar slides out into."""
+    w, h) the bar comes out in."""
     x, y, w, h = window
     height = min(int(height), int(h))
     return int(x), int(y + h - height), int(w), height
@@ -453,14 +400,6 @@ def sensor_band(window, px=2):
     return int(x), int(y + h - px), int(w), int(px)
 
 
-def slide(t_ms, height, showing, ms):
-    """How far the bar stands below its place (px) `t_ms` into a slide of `ms`:
-    out eases from `height` to 0, back from 0 to `height`."""
-    u = 1.0 if ms <= 0 else max(0.0, min(1.0, t_ms / float(ms)))
-    e = 1 - (1 - u) ** 3 if showing else u ** 3
-    return int(round(height * (1 - e))) if showing else int(round(height * e))
-
-
 ZONE_DWELL_MS = 150     # the cursor resting in the band this long brings the bar out
 HIDE_MS = 1200          # the bar waits this long after the cursor left before it hides
                         # (2026-10-17: 1.2 s, the animator; the hub panel keeps edgerules.HIDE_MS)
@@ -471,100 +410,6 @@ def zone_dwell(dwelt, inside, dt_ms):
     """The time the cursor has rested in the band so far: it grows while it stays,
     and any moment outside starts it again."""
     return dwelt + dt_ms if inside else 0.0
-
-
-# -- the burst from the cursor (2026-10-16, mockup A, «скорость на 50 % медленнее») ---------
-
-BURST_SLOW = 1.2        # every timing of the mockup: 1.5x, then 20 % faster (2026-10-16)
-HOVER_MS = 110          # the radial menu's lift (moved here from bar.py 2026-10-19; maya_hubwindow shares it)
-FLASH_MS = 120          # a press
-RIM = "#fff1e2"         # the light's hot core
-UNROLL_MS = 240 * BURST_SLOW        # the panel unrolls from the cursor
-POP_OPEN_MS = 200 * BURST_SLOW      # a control pops in
-FOLD_MS = 140 * BURST_SLOW          # a control folds away
-CLOSE_MS = 180 * BURST_SLOW         # the panel closes onto the cursor
-CLOSE_AFTER_MS = 60 * BURST_SLOW    # after the last control folded
-START_SCALE = 0.3
-
-
-def ease_out_quint(u):
-    u = max(0.0, min(1.0, u))
-    return 1 - (1 - u) ** 5
-
-
-def ease_in_quint(u):
-    u = max(0.0, min(1.0, u))
-    return u ** 5
-
-
-def back_in(u):
-    """The radial menu's leave: draws back a little, then goes."""
-    u = max(0.0, min(1.0, u))
-    c = 1.70158
-    return (c + 1) * u ** 3 - c * u ** 2
-
-
-def burst_delay(dx, dy, ui=1.0):
-    """When a control pops in: the nearer the cursor the sooner (the mockup's
-    40 ms + 18 ms per 60 px, a vertical step counting 1.5)."""
-    d = (abs(dx) + abs(dy) * 1.5) / max(ui, 1e-6)
-    return (40.0 + d / 60.0 * 18.0) * BURST_SLOW
-
-
-def fold_delay(dx, ui=1.0):
-    """When a control folds away: the farthest first, toward the cursor."""
-    d = abs(dx) / max(ui, 1e-6)
-    return max(0.0, 180.0 - d / 60.0 * 12.0) * BURST_SLOW
-
-
-def popping(age, delay, ms=POP_OPEN_MS):
-    """(scale, opacity) of a control `age` ms into the burst, popping in at `delay`."""
-    u = (age - delay) / float(ms)
-    if u <= 0:
-        return START_SCALE, 0.0
-    if u >= 1:
-        return 1.0, 1.0
-    return START_SCALE + (1 - START_SCALE) * back_out(u), min(1.0, u * 1.6)
-
-
-def folding(age, delay, ms=FOLD_MS):
-    """(scale, opacity) of a control `age` ms into the fold, folding at `delay`."""
-    u = (age - delay) / float(ms)
-    if u <= 0:
-        return 1.0, 1.0
-    if u >= 1:
-        return START_SCALE, 0.0
-    e = back_in(u)
-    return 1.0 - (1 - START_SCALE) * e, max(0.0, 1.0 - u)
-
-
-def unroll(u, cx, width, showing):
-    """(x0, x1) of the panel `u` (0..1) into its unroll from - or close onto - `cx`."""
-    e = ease_out_quint(u) if showing else 1 - ease_in_quint(u)
-    cx = max(0.0, min(float(width), cx))
-    return cx * (1 - e), cx + (width - cx) * e
-
-
-# -- the reveal's glow (2026-10-17, «при открывании таймслайдера добавим вспышку глоу»: of five
-#    flashes played side by side the animator took B, the racing edges) -------------------------
-
-REVEAL_MS = 780         # the whole flash: the edges race out, the top edge stays lit a moment
-EDGE_GLOW = 24          # logical px each side: the light an unrolling edge carries
-EDGE_CORE = 3           # logical px each side: its hot core
-TOP_GLOW = 16           # logical px: how far down the lit top edge glows
-
-
-def reveal_glow(age, cx, width):
-    """The racing edges `age` ms into a reveal from `cx` across `width`: (x0, x1, edges,
-    edge, top) - the unrolling span (`unroll`), the edge xs still inside the window, the
-    light they carry (1 on the cursor, fading as they slow) and the lit top edge's
-    (1 -> 0 over REVEAL_MS)."""
-    u = age / float(UNROLL_MS)
-    x0, x1 = unroll(u, cx, width, True)
-    edges = [x for x in (x0, x1) if 0.5 < x < width - 0.5]
-    edge = (1.0 - ease_out_quint(u)) ** 0.55 if edges else 0.0
-    top = max(0.0, 1.0 - age / float(REVEAL_MS)) ** 1.6
-    return x0, x1, edges, edge, top
 
 
 # -- the scrub meter (2026-10-16, «проверим быстродействие») --------------------------------
@@ -603,36 +448,7 @@ def meter_report(stamps, ours=(), mayas=(), seconds=10.0):
     return out, text
 
 
-# -- the key effects (2026-10-17, the animator after the whole mockup: «откатив все
-#    эффекты ... оставим вспышку глоу (без частиц) когда ставим ключик и эффект
-#    удаления ключа ... одни частицы») -----------------------------------------
-
-EFFECT_MS = {"set": 520, "delete": 700, "trail": 380, "play": 700, "reveal": REVEAL_MS}
-# a deleted key breaking into shards: switched off for now (2026-10-20, «пока выключим
-# эффект разлета частиц при удалении ключа ... пусть он останется в проекте»); True brings
-# it back as it was
-DELETE_SHARDS = False
-TRAIL_ALPHA = 0.28      # a cell the playhead left, at first
-# Play pressed: a soft glow fills the timeline in from its edge and fades (2026-10-22,
-# the animator chose mockup B, «вариант B только внутри таймслайдер как сейчас»)
-PLAY_GLOW_PEAK = 0.55   # the glow's strength at its height
-PLAY_GLOW_RISE = 0.12   # the share of the effect it takes to come up
-PLAY_GLOW_DEPTH = 18    # logical px in from the edge the glow reaches
-PLAY_GLOW_RING = 0.30   # a ring's alpha at the edge, x the strength, falling as (1 - depth)^2
-PLAY_GLOW_RIM = 0.4     # the hot rim's alpha, x the strength
-
-
-def play_glow(u):
-    """The Play glow's strength at `u` (0..1 through it): up over the first
-    PLAY_GLOW_RISE, then falling as (1 - v)^1.6; 0 outside."""
-    if u is None or u < 0 or u >= 1:
-        return 0.0
-    if u < PLAY_GLOW_RISE:
-        return PLAY_GLOW_PEAK * u / PLAY_GLOW_RISE
-    v = (u - PLAY_GLOW_RISE) / (1.0 - PLAY_GLOW_RISE)
-    return PLAY_GLOW_PEAK * (1.0 - v) ** 1.6
-SMALL_CHANGE = 6        # more keys changed at once than this is a reload, not an edit
-
+# -- a key's mark -----------------------------------------------------------------------
 
 KEY_GAP = 0.18          # a key's cell: this share of the cell left free between neighbours
 KEY_GAP_MAX = 3.0       # ... at most this many logical px
@@ -661,67 +477,6 @@ def key_centre(track, t):
     if on_frame(t) and getattr(track, "cells", False):
         return track.x(t) + track.scale / 2.0
     return track.x(t)
-
-
-def progress(age_ms, kind):
-    """0..1 through effect `kind`, None once it is over (or before it starts)."""
-    ms = EFFECT_MS[kind]
-    if age_ms < 0 or age_ms >= ms:
-        return None
-    return age_ms / float(ms)
-
-
-def key_changes(old, new, edited=False):
-    """What an edit did to the key times: (added, removed, snapped) - snapped
-    pairs (from, to) where a key between frames went onto a whole frame next to
-    it. Nothing when the change is a reload (more than SMALL_CHANGE keys) - except
-    a pure deletion Maya reported as a key edit (`edited`), however many keys: the
-    animator deleted a whole highlight of them (2026-10-17)."""
-    if old is None:
-        return [], [], []
-    before, after = set(old), set(new)
-    added, removed = sorted(after - before), sorted(before - after)
-    if edited and removed and not added:
-        return [], removed, []
-    if len(added) + len(removed) > SMALL_CHANGE:
-        return [], [], []
-    snapped = []
-    for k in list(removed):
-        if abs(k - round(k)) < 1e-4:
-            continue
-        to = next((f for f in (float(math.floor(k)), float(math.ceil(k))) if f in added), None)
-        if to is not None:
-            snapped.append((k, to))
-            removed.remove(k)
-            added.remove(to)
-    return added, removed, snapped
-
-
-DELETE_STEP_MS = 80     # keys deleted together: one after another, this far apart ...
-DELETE_START_MS = 500   # ... but the last one starts within this, however many (2026-10-17: 1 s, then 0.5)
-SHARDS = (3, 3)         # a deleted key breaks into three cubes (2026-10-18: «из 3 кубиков (всегда
-                        # кубики разлетаются)»; 3..5 uneven pieces before)
-# ... and how they fly: «Shorter», variant B of six played side by side (2026-10-17; D «Snap and
-# drop» first) - two thirds of the first flight's kick, its fall; logical px / s, spin deg / s
-SHARD_SPEED = 170.0
-SHARD_FALL = 900.0
-SHARD_SPIN = 420.0
-
-
-def delete_plan(n):
-    """How `n` deleted keys play, left to right: (delays ms per key in time order,
-    each key's life ms). Every key breaks exactly as a single key does - the whole
-    EFFECT_MS, the same flight - and only the starts are staggered: DELETE_STEP_MS
-    apart, squeezed so the last starts by DELETE_START_MS (2026-10-17: «полет самих
-    частиц не должен ускоряться ... запустить эффект не позднее чем за 1 секунду», then
-    «максимальное время уменьшим до 0.5»)."""
-    full = EFFECT_MS["delete"]
-    if n <= 0:
-        return [], full
-    if n == 1:
-        return [0.0], full
-    spread = min(DELETE_STEP_MS * (n - 1), DELETE_START_MS)
-    return [spread * i / float(n - 1) for i in range(n)], full
 
 
 #  The keys a drag on the timeline still answers (2026-10-18, the animator: «зажимаю
@@ -803,10 +558,9 @@ def key_action(name, drag, highlight, preview=None):
 
 def set_key_command(command):
     """A MEL command Maya reported: (frame or None, breakdown) when it is a
-    `setKeyframe` - the S key, the Channel Box's Key Selected - else None. A key set
-    over a key that stood changes no key time, so this is how it still flashes
-    (2026-10-17: «эффект постановки ключа должен срабатывать даже если ключ уже
-    стоял»). No `-t`/`-time`: the current frame."""
+    `setKeyframe` - the S key, the Channel Box's Key Selected - else None (a key set
+    brings the bottom edge's bar out and has the keys read again). No `-t`/`-time`:
+    the current frame."""
     if not command.startswith("setKeyframe"):
         return None
     words = command.replace('"', " ").replace(";", " ").split()
@@ -824,101 +578,12 @@ def set_key_command(command):
     return frame, breakdown
 
 
-SHARD_BUDGET = 900      # pieces a wave may throw; past it neighbouring keys break as one block
-
-
-def shard_groups(n, budget=SHARD_BUDGET):
-    """[(start, end)] runs of the `n` deleted keys (in time order) that break as one:
-    each key alone while 3 pieces each fit the budget, else runs of neighbours - a
-    wave of 1000 keys, each a pixel or two wide, throws ~900 pieces, not 3000."""
-    if n <= 0:
-        return []
-    size = max(1, -(-n * SHARDS[0] // budget))
-    return [(i, min(n, i + size)) for i in range(0, n, size)]
-
-
-def _rand(state):
-    state = (state * 1103515245 + 12345) & 0x7FFFFFFF
-    return state, (state % 10000) / 10000.0
-
-
-def shard_cuts(height):
-    """Where a key of `height` breaks: [(top, bottom)] of its three cubes stacked
-    down it, each a third of its height."""
-    side = height / float(SHARDS[0])
-    return [(i * side, (i + 1) * side) for i in range(SHARDS[0])]
-
-
-def shards(seed, rect, age_ms, ms, speed, gravity, spin=SHARD_SPIN):
-    """A deleted key broken into three cubes at `age_ms` - [(cx, cy, w, h, angle,
-    alpha)], logical px, y down, angle in degrees. A cube's side is a third of the
-    key's height, whatever its width (a hairline key throws cubes too); the three
-    start stacked down the key's middle, are kicked up and away from it, spin and
-    fall; they fade over the last half. Seeded, so a paint at any time reads the same
-    flight. `rect` = (left, top, width, height)."""
-    if age_ms < 0 or age_ms >= ms:
-        return []
-    left, top, w, h = rect
-    t = age_ms / 1000.0
-    u = age_ms / float(ms)
-    alpha = 1.0 if u < 0.5 else 1.0 - (u - 0.5) / 0.5
-    cuts = shard_cuts(h)
-    s = (int(seed) * 40503 + 7) & 0x7FFFFFFF
-    s, r0 = _rand(s)
-    first = -1.0 if r0 < 0.5 else 1.0
-    mid = top + h / 2.0
-    out = []
-    for i, (a, b) in enumerate(cuts):
-        s, r2 = _rand(s)
-        s, r3 = _rand(s)
-        cy0 = top + (a + b) / 2.0
-        side = first if i % 2 == 0 else -first                  # the pieces part left and right
-        lift = (mid - cy0) / max(h, 1e-6)                       # the top pieces fly higher
-        vx = side * speed * (0.35 + 0.65 * r2)
-        vy = -speed * (0.55 + 0.6 * r3 + 0.8 * lift)
-        cx = left + w / 2.0 + vx * t
-        cy = cy0 + vy * t + 0.5 * gravity * t * t
-        angle = side * spin * (0.4 + 0.6 * r3) * t
-        out.append((cx, cy, b - a, b - a, angle, alpha))
-    return out
-
-
-def sparks(seed, count, age_ms, ms, speed, gravity, spread=360.0):
-    """Sparks thrown from a point: [(dx, dy, life)] at `age_ms` (dy down, logical
-    px), `life` 1 at the throw and 0 at the end. Seeded, so a paint at any time
-    reads the same flight: no state is stepped."""
-    if age_ms < 0 or age_ms >= ms:
-        return []
-    out, t = [], age_ms / 1000.0
-    s = (int(seed) * 2654435761) & 0xFFFFFFFF
-    for _i in range(count):
-        s = (s * 1103515245 + 12345) & 0x7FFFFFFF
-        a = (s % 10000) / 10000.0
-        s = (s * 1103515245 + 12345) & 0x7FFFFFFF
-        b = (s % 10000) / 10000.0
-        angle = math.radians(-90.0 + (a - 0.5) * spread)
-        v = speed * (0.45 + 0.55 * b)
-        dx = math.cos(angle) * v * t
-        dy = math.sin(angle) * v * t + 0.5 * gravity * t * t
-        out.append((dx, dy, 1.0 - age_ms / float(ms)))
-    return out
-
-
-# Steel keys (2026-10-20, «заменить оранжевые ключи на серебряные ... эффект остывания стали»):
-# ⋮ -> Time bar ▸ Steel keys draws the keys in steel, and a key just set glows hot and
-# cools into steel, as forged steel does: white heat, yellow, orange, cherry red, a dark
-# temper, then the cold metal.
+# Steel keys (2026-10-20, «заменить оранжевые ключи на серебряные»): ⋮ -> Time bar ▸ Steel
+# keys draws the keys in steel. The cooling a key set had (white heat into steel) went with
+# every other effect (2026-11-19).
 STEEL_VAR = "skeldarTimeBarSteelKeys"
 STEEL_DEFAULT = True    # steel unless the animator turned it off (2026-10-20)
 STEEL = "#8a929c"       # a darker steel since the ingots (was #b8c0ca, flat)
-COOL_MS = 1800          # a key set is steel again after this
-COOL_STEPS = 48         # the cooling in this many colours (the key glow caches one picture each)
-HEAT = ((0.00, "#fff6e4"),      # white heat
-        (0.08, "#ffd47a"),      # yellow
-        (0.22, "#ff9a3c"),      # orange
-        (0.45, "#d8432a"),      # cherry red
-        (0.70, "#7a4a44"),      # the dark temper
-        (1.00, STEEL))
 
 
 def _rgb(hex_):
@@ -926,82 +591,16 @@ def _rgb(hex_):
     return tuple(int(hex_[i:i + 2], 16) for i in (0, 2, 4))
 
 
-PLATE_MS = 350          # a plate flashing without Steel keys (2026-10-20: 700, then twice as fast)
-PLATE_COOL_MS = 900     # a plate cooling into steel: twice as fast as one key (COOL_MS)
-PLATE_FADE = 0.3        # the last share of its life the plate fades out over its keys
-
-
-def plate_ms(steel):
-    return PLATE_COOL_MS if steel else PLATE_MS
-
-
-def plate(age_ms, steel, key_hex):
-    """A plate over keys set at once, `age_ms` old: (colour, heat, alpha, swell), or None
-    when it is over. Steel: the cooling's colour and heat. Else a white-hot flash into
-    the keys' own colour. Opaque, then fading out over the last PLATE_FADE of its life;
-    a small swell at once that settles."""
-    ms = plate_ms(steel)
-    if age_ms < 0 or age_ms >= ms:
-        return None
-    u = age_ms / float(ms)
-    if steel:
-        hex_, heat = cooling(age_ms, key_hex, PLATE_COOL_MS)
-    else:
-        s = min(1.0, u / 0.6)
-        a, b = _rgb(RIM), _rgb(key_hex)
-        hex_ = "#%02x%02x%02x" % tuple(int(round(x + (y - x) * s)) for x, y in zip(a, b))
-        heat = max(0.0, 1.0 - u / 0.6) ** 1.5
-    alpha = 1.0 if u < 1.0 - PLATE_FADE else (1.0 - u) / PLATE_FADE
-    swell = (1.0 - min(1.0, u / 0.25)) ** 2
-    return hex_, heat, alpha, swell
-
-
-SET_FLASH_MAX = 8       # keys set at once beyond this: the round flash on this many only
-
-
-def spread(n, most):
-    """Indices of `most` of `n` items spread evenly along them (all of them when fewer),
-    the first and the last always among them."""
-    if n <= most:
-        return list(range(n))
-    if most <= 1:
-        return [0]
-    return sorted({int(round(i * (n - 1) / float(most - 1))) for i in range(most)})
-
-
-def cooling(age_ms, steel=STEEL, cool_ms=COOL_MS):
-    """(colour hex, heat 0..1) of a key `age_ms` after it was set hot: the colour along
-    HEAT (its last stop `steel`), the heat its glow - 1 at once, gone by 70 % of the way."""
-    u = max(0.0, min(1.0, age_ms / float(cool_ms)))
-    u = round(u * COOL_STEPS) / float(COOL_STEPS)      # a few dozen colours: each glow is cached
-    stops = HEAT[:-1] + ((1.0, steel),)
-    for (u0, a), (u1, b) in zip(stops, stops[1:]):
-        if u <= u1:
-            s = (u - u0) / (u1 - u0) if u1 > u0 else 1.0
-            s = s * s * (3.0 - 2.0 * s)
-            ca, cb = _rgb(a), _rgb(b)
-            hex_ = "#%02x%02x%02x" % tuple(int(round(x + (y - x) * s)) for x, y in zip(ca, cb))
-            break
-    else:
-        hex_ = steel
-    heat = max(0.0, 1.0 - u / 0.7) ** 1.5
-    return hex_, heat
-
-
 # Steel ingots (2026-10-20, «ключи ... более похожим на стальные слитки ... объема ... не
 # такими светлыми»; the mockup's variant B, «фаска»): with Steel keys a key on a whole frame is
 # a bevelled bar - its face lit at the top and shaded to the bottom, a light left face and a
-# dark right one, a light top edge and a dark bottom edge, a soft shadow under it on the track -
-# and a hot or lit key glows round, as added light.
+# dark right one, a light top edge and a dark bottom edge, a soft shadow under it on the track.
 INGOT_TOP = 0.28        # the face's top: lightened this much toward white
 INGOT_MID = 0.35        # ... the plain colour this far down
 INGOT_BOTTOM = 0.40     # ... its bottom: darkened this much toward black
 INGOT_SIDE = (0.10, 0.28)       # the left face's white, the right face's black (alpha)
 INGOT_EDGE = (0.50, 0.50)       # the top edge's white, the bottom edge's black (alpha)
 INGOT_SHADOW = 0.55     # the shadow's black under a key (alpha), 1 px right and 2 down
-STEEL_GLOW = 0.55       # a glow's strength at heat 1
-STEEL_GLOW_REACH = 1.4  # its radius, the key's longer side times this
-STEEL_GLOW_LIFT = 0.18  # a key under the mouse or reached glows as at this much heat
 
 
 def toward(hex_, other, u):
@@ -1019,8 +618,3 @@ def ingot_shades(hex_):
 def ingot_side(width, ui=1.0):
     """The width of an ingot's side faces: a seventh of the key, 0.75..2 logical px."""
     return max(0.75 * ui, min(2.0 * ui, width * 0.14))
-
-
-def steel_glow(heat, lift):
-    """A steel key's glow strength: its heat, plus a little when under the mouse or reached."""
-    return STEEL_GLOW * min(1.0, max(0.0, heat) + STEEL_GLOW_LIFT * max(0.0, lift))

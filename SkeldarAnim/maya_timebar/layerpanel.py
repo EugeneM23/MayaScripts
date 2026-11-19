@@ -3,16 +3,16 @@ layers on the bar's right, resizable by its top edge, and lanes of each layer's 
 over the timeline. Two frameless Qt.Tool windows of ours; all painting is ours.
 
 The animator: «передвинем меню слоев в правую часть таймлайна» and «опциональную кнопку
-которая будет выдвигать панель как в варианте B». The column opens out of the bar's
-layers pill and folds back into it; the lanes come out of the column's left edge.
-The data is the link's at once; only the picture moves (docs/interface-motion.md).
+которая будет выдвигать панель как в варианте B». The column stands over the bar's
+right end, the lanes beside it over the timeline. Both show and hide at once; nothing
+moves and nothing glows (2026-11-19, «удаляем все подсветки и анимации из плагина»):
+a control under the mouse takes a flatly lighter face.
 
 Spec: docs/superpowers/specs/2026-10-18-time-bar-layer-panel-design.md
 """
 
 import math
 import sys
-import time
 import traceback
 
 import maya_hubqt
@@ -27,11 +27,9 @@ LANES_VAR = "skeldarTimeBarLayerLanes"
 PLACE_MS = 300
 STATUS_MS = 4000
 DIM = 0.42              # a muted or soloed-out layer, and its lane
-KEY_LIFT = 1.6          # the key under the mouse grows, as on the timeline
 LANE_FACE = "#141517"
 MUTE_FACE = "#3a2626"   # M lit
 SOLO_FACE = "#23324a"   # S lit
-BOX = (28, 20)          # logical px: the shape a burst unrolls from
 TOGGLES = ("mute", "solo", "lock", "visible", "playback", "type", "wkey")
 FOOT_GLYPHS = {"add": "plus", "addsel": "addsel", "remsel": "remsel", "merge": "merge",
                "select": "select", "delete": "trash"}
@@ -72,23 +70,19 @@ def destroy_all():
             pass
 
 
-def _clock():
-    return time.time() * 1000.0
-
-
 def _unit_of(uid):
-    """The drawn unit a hover / pop id belongs to: a row's control is its row."""
+    """The drawn unit a hover id belongs to: a row's control is its row."""
     return ("row", uid[1]) if uid[0] == "ctl" else uid
 
 
 class Panel(object):
-    """The controller: opens, places, reads, writes, drives both windows."""
+    """The controller: opens, places, reads, writes, paints both windows."""
 
-    def __init__(self, strip, link, ui, tokens, motion, parent=None):
+    def __init__(self, strip, link, ui, tokens, parent=None):
         q = maya_hubqt.qt()
         self.q = q
         self.strip, self.link, self.ui = strip, link, float(ui)
-        self.tokens, self.motion = tokens, bool(motion)
+        self.tokens = tokens
         self._remembered()
         self.rows = {"anim": [], "disp": []}
         self.picked_disp = None
@@ -100,31 +94,19 @@ class Panel(object):
         self.lane_preview = None       # the highlight where a key drag has it now
         self.lane_live = None          # a key drag moving the scene's keys (scene.live_*)
         self.lane_stamped = None       # what S put down during the drag
-        self.lane_aimed = None         # (layer, key) under the mouse
         self.keys = {}
         self.members = frozenset()      # the layers the selection belongs to: green names
         self._keys_stale = False        # a key edit: the lanes read on the next refresh
         self._wstates = ()              # the weight key cells the column last drew
         self.phase = "closed"
-        self.age_override = None        # tests only: the age of a running burst, ms
-        self.burst = None               # the column's: {"t0", "open", "origin", "delays", "close_at", "ends"}
-        self.lanes_burst = None         # the lanes': the same shape
-        self.wave = None                # a tab switch: {"t0", "delays": {i: ms}}
-        self.ghosts = []                # deleted rows folding where they stood
-        self.hover, self.goal = {}, {}
-        self.pops, self.flashes = {}, {}
+        self.hovered = frozenset()      # the ids under the mouse: a flatly lighter face
         self.drag = None                # ("weight", name, rect) or ("grip", gy0, h0)
-        self.status, self._origin = "", None
+        self.status = ""
         self._sigs = (None, None)
-        self._last_step = None
-        self._was_busy = False
         self._editor = None
         column_class, lanes_class = _classes()[:2]
         self.column = column_class(self, parent)
         self.lanes = lanes_class(self, parent)
-        self.driver = q.QtCore.QTimer(self.column)
-        self.driver.setInterval(bar.FRAME_MS)
-        self.driver.timeout.connect(self._animate)
         self.placer = q.QtCore.QTimer(self.column)
         self.placer.setInterval(PLACE_MS)
         self.placer.timeout.connect(self.place)
@@ -190,15 +172,7 @@ class Panel(object):
 
     # -- state -------------------------------------------------------------------
     def is_open(self):
-        return self.phase in ("opening", "open")
-
-    def clock(self):
-        return _clock()
-
-    def _age(self, burst):
-        if self.age_override is not None:
-            return float(self.age_override)
-        return self.clock() - burst["t0"]
+        return self.phase == "open"
 
     def current_rows(self):
         return self.rows.get(self.tab, [])
@@ -231,29 +205,22 @@ class Panel(object):
         return self.lanes.isVisible()
 
     # -- opening and closing -----------------------------------------------------
-    def toggle(self, origin):
+    def toggle(self, origin=None):
+        """Open or closed at once. `origin` (where it was asked from) is taken and not
+        used: nothing moves out of it."""
         if self.is_open():
-            self.close(origin)
+            self.close()
         else:
-            self.open(origin)
-
-    def _local(self, widget, point):
-        g = widget.geometry()
-        return (float(point[0]) - g.x(), float(point[1]) - g.y())
+            self.open()
 
     def _column_parts(self, lay):
-        """[(uid, rect)] of the column's burst parts."""
+        """[(uid, rect)] of the column's parts, drawn one by one."""
         parts = [(("seg", t), lay.segments[t]) for t in L.TABS]
         parts.append((("lanes",), lay.lanes))
         for i in self._visible_rows(lay):
             parts.append((("row", i), lay.row_at(i, self.scroll)))
         parts += [(("foot", name), rect) for name, rect in lay.foot]
         return parts
-
-    def _lane_parts(self, lay):
-        w = float(self.lanes.width())
-        return [(i, (0.0, r[1], w, r[3])) for i, r in
-                ((i, lay.row_at(i, self.scroll)) for i in self._visible_rows(lay))]
 
     def _visible_rows(self, lay):
         wy, wh = lay.well[1], lay.well[3]
@@ -263,19 +230,6 @@ class Panel(object):
             if r[1] + r[3] > wy and r[1] < wy + wh:
                 out.append(i)
         return out
-
-    def _make_burst(self, parts, origin, opening):
-        rects = [rect for _uid, rect in parts]
-        delays = dict(zip([uid for uid, _rect in parts], L.schedule(rects, origin, self.ui)))
-        if opening:
-            far = max([d[0] for d in delays.values()] or [0.0])
-            ends = max(far + look.POP_OPEN_MS, look.UNROLL_MS)
-            return {"t0": self.clock(), "open": True, "origin": origin, "delays": delays,
-                    "close_at": None, "ends": ends}
-        far = max([d[1] for d in delays.values()] or [0.0])
-        close_at = far + look.FOLD_MS + look.CLOSE_AFTER_MS
-        return {"t0": self.clock(), "open": False, "origin": origin, "delays": delays,
-                "close_at": close_at, "ends": close_at + look.CLOSE_MS}
 
     def _remembered(self):
         """The tab, the height and the lanes the animator left them at."""
@@ -287,76 +241,36 @@ class Panel(object):
             self.height = float(L.DEFAULT_H)
         self.lanes_on = bool(self._option(LANES_VAR, 0))
 
-    def open(self, origin):
+    def open(self, origin=None):
         self._remembered()
         self.refresh(force=True)
         self.place()
-        self._origin = origin
         self.column.show()
         self.column.raise_()
-        if self.motion:
-            lay = self.column.layout_()
-            self.burst = self._make_burst(self._column_parts(lay), self._local(self.column, origin), True)
-            self.phase = "opening"
-        else:
-            self.burst = None
-            self.phase = "open"
+        self.phase = "open"
         if self._lanes_wanted():
-            self._show_lanes(burst=self.motion)
+            self._show_lanes()
         self._read_members()            # the refresh above ran before `phase`: read it now
         self.column.invalidate()
         self.placer.start()
-        self.kick()
 
     def close(self, origin=None):
         self._end_drag()
         self.placer.stop()
         self._drop_editor()
-        if origin is None:
-            origin = self._origin or self._column_centre()
-        if not self.motion or not self.column.isVisible():
-            self.column.hide()
-            self.lanes.hide()
-            self.burst = self.lanes_burst = None
-            self.phase = "closed"
-            return
-        lay = self.column.layout_()
-        self.burst = self._make_burst(self._column_parts(lay), self._local(self.column, origin), False)
-        self.phase = "closing"
-        if self.lanes.isVisible():
-            self._hide_lanes(burst=True)
-        self.column.invalidate()
-        self.kick()
+        self.hovered = frozenset()
+        self.column.hide()
+        self.lanes.hide()
+        self.phase = "closed"
 
-    def _column_centre(self):
-        g = self.column.geometry()
-        return (g.x() + g.width() / 2.0, g.y() + g.height())
-
-    def _lanes_origin(self):
-        lay = self.column.layout_()
-        return (float(self.lanes.width()), lay.head[1] + lay.head[3] / 2.0)
-
-    def _show_lanes(self, burst):
+    def _show_lanes(self):
         self._read_keys()
         self.place()
         self.lanes.show()
         self.lanes.raise_()
-        if burst and self.motion:
-            lay = self.column.layout_()
-            parts = [(i, rect) for i, rect in self._lane_parts(lay)]
-            self.lanes_burst = self._make_burst(parts, self._lanes_origin(), True)
-        else:
-            self.lanes_burst = None
         self.lanes.invalidate()
-        self.kick()
 
-    def _hide_lanes(self, burst):
-        if burst and self.motion and self.lanes.isVisible():
-            lay = self.column.layout_()
-            self.lanes_burst = self._make_burst(self._lane_parts(lay), self._lanes_origin(), False)
-            self.kick()
-            return
-        self.lanes_burst = None
+    def _hide_lanes(self):
         self.lanes.hide()
 
     # -- where -------------------------------------------------------------------
@@ -675,20 +589,11 @@ class Panel(object):
         if self.lane_live:
             self._call("lane_live_to", tuple(target))
 
-    def _quiet_strip(self):
-        quiet = getattr(self.strip, "quiet_keys", None)
-        if quiet is not None:
-            try:
-                quiet()
-            except Exception:                                # noqa: BLE001
-                print(traceback.format_exc())
-
     def _lane_end_live(self):
         """A live drag whose release never came: set it down where it stands."""
         self.flush_lane_live()
         if self.lane_live:
             self.lane_live = None
-            self._quiet_strip()
             self._call("lane_live_end", tuple(self.lane_preview) if self.lane_preview else None)
         # the drag is over: its preview and copies go with it, as `lane_release` lets them go -
         # left standing, the next Shift-press read as the old key drag (2026-10-27)
@@ -759,11 +664,6 @@ class Panel(object):
         sel = self.keys_block()
         if sel is None:
             return False
-        if self.active_name() in sel["names"]:
-            #  the timeline shows the active layer: its keys of the block flash (and cool)
-            mark = getattr(self.strip, "mark_set", None)
-            if mark is not None:
-                mark(sel["a"], sel["b"])
         self._write("lane_key_range", list(sel["names"]), int(sel["a"]), int(sel["b"]))
         return True
 
@@ -788,13 +688,6 @@ class Panel(object):
             sel, loose = drag[3], drag[4]
             names = list(self.lane_sel["names"]) if self.lane_sel else []
             moved = bool(target) and tuple(target) != tuple(sel)
-            #  the key aimed when the drag began is not under the mouse any more: aimed
-            #  still, it was drawn lifted at the frame it was taken from until the next move
-            #  (2026-10-20: «в том месте где мы его взяли на пару кадров появится изображение
-            #  ключа»)
-            self.lane_aimed = None
-            #  a move is no key set and deleted: the strip plays no effect for it
-            self._quiet_strip()
             if self.lane_live:
                 self.lane_live = None
                 self._after_write(self._call("lane_live_end", tuple(target or sel)))
@@ -809,14 +702,9 @@ class Panel(object):
         self.lanes.invalidate()
 
     def lane_aim(self, x, y):
-        """The key under the mouse lifts, as on the timeline. Answers what a press does
-        there: 'edge', 'grab' or 'time' (the cursor)."""
+        """What a press does at (x, y): 'edge', 'grab' or 'time' (the cursor)."""
         i = self.lane_index(y)
         key = self.lane_key_under(x, i)
-        aim = (self.lane_name(i), key) if key is not None else None
-        if aim != self.lane_aimed:
-            self.lane_aimed = aim
-            self.lanes.update()
         part = self.lane_part(x, i)
         return "edge" if part in ("h0", "h1") else ("grab" if part == "hmove" or key is not None else "time")
 
@@ -947,55 +835,39 @@ class Panel(object):
         lay = self.column.layout_()
         kind = hit[0]
         if kind == "tab":
-            self.flashes[("seg", hit[1])] = self.clock()
             self._switch_tab(hit[1], lay)
         elif kind == "lanes":
             if self.tab != "anim":
                 return
-            self.flashes[("lanes",)] = self.clock()
-            self.pops[("lanes",)] = self.clock()
             self.lanes_on = not self.lanes_on
             self._set_option(LANES_VAR, int(self.lanes_on))
             if self.lanes_on:
-                self._show_lanes(burst=True)
+                self._show_lanes()
             else:
-                self._hide_lanes(burst=True)
+                self._hide_lanes()
             self.column.invalidate()
         elif kind == "grip":
             self.drag = ("grip", float(gy if gy is not None else 0.0), L.clamp_height(self.height, self.strip.top_room() / self.ui))   # logical px
             self.column.update()
         elif kind == "foot":
-            self.flashes[("foot", hit[1])] = self.clock()
             self._foot(hit[1], lay)
         elif kind == "row":
             self._row_press(hit[1], hit[2], lay, pos, ctrl, shift)
-        self.kick()
+        self.column.update()
 
     def _switch_tab(self, tab, lay):
         if tab == self.tab:
             return
         self._drop_editor()
-        folded = not self._lanes_wanted_on(tab) and self._lanes_shown()
-        if folded:
-            # folded from the tab they stand on: built after the switch, they folded the new
-            # tab's rows (2026-10-27)
-            self._hide_lanes(burst=True)
         self.tab = tab
         self.scroll = 0.0
         self._set_option(TAB_VAR, tab)
         self._read_members()            # the tab shown now holds its own members
-        lay = self.column.layout_()
-        if self.motion:
-            seg = lay.segments[tab]
-            origin = (seg[0] + seg[2] / 2.0, seg[1] + seg[3] / 2.0)
-            rows = self._visible_rows(lay)
-            sched = L.schedule([lay.row_at(i, 0.0) for i in rows], origin, self.ui)
-            self.wave = {"t0": self.clock(), "delays": {i: d[0] for i, d in zip(rows, sched)}}
         if self._lanes_wanted():
             if not self._lanes_shown():
-                self._show_lanes(burst=True)
-        elif self._lanes_shown() and not folded:
-            self._hide_lanes(burst=True)
+                self._show_lanes()
+        elif self._lanes_shown():
+            self._hide_lanes()
         self.column.invalidate()
 
     def _row_press(self, i, part, lay, pos, ctrl=False, shift=False):
@@ -1022,17 +894,13 @@ class Panel(object):
                 self.picked_disp = name
                 self.column.invalidate()
         elif part in ("mute", "solo", "lock"):
-            self.pops[("ctl", i, part)] = self.clock()
             self._write("set_flag", name, part, not row.get(part))
         elif part in ("visible", "playback"):
-            self.pops[("ctl", i, part)] = self.clock()
             self._write("set_display", name, part, not row.get(part))
         elif part == "type":
-            self.pops[("ctl", i, part)] = self.clock()
             self._write("set_display", name, "type", L.step_type(row.get("type", 0)))
         elif part == "wkey":
             #  the weight's key cell: keyed / unkeyed at the current frame (2026-10-20)
-            self.pops[("ctl", i, part)] = self.clock()
             self._write("toggle_weight_key", name)
         elif part in ("weight", "wnum"):
             rect = L.row_parts(lay.row_at(i, self.scroll), self.tab, self.ui, base=row.get("base"))["weight"]
@@ -1082,7 +950,6 @@ class Panel(object):
         elif drag[0] == "grip":
             self._set_option(HEIGHT_VAR, int(round(self.height)))
         self.column.update()
-        self.kick()
 
     def _foot(self, name, lay):
         if self.tab == "anim":
@@ -1113,20 +980,13 @@ class Panel(object):
         else:
             self._write(call, target)
 
-    def _delete(self, call, name, lay):
-        """The data at once; the row's picture folds where it stood."""
-        rows = self.current_rows()
-        index = next((i for i, r in enumerate(rows) if r["name"] == name), None)
-        row = dict(rows[index]) if index is not None else None
-        rect = lay.row_at(index, self.scroll) if index is not None else None
+    def _delete(self, call, name, lay=None):
+        """The layer deleted; its row goes at once."""
         tab = self.tab
         self._write(call, name)
         if name not in [r["name"] for r in self.rows[tab]]:
             import maya_hubsound
             maya_hubsound.deleted()         # a layer deleted: the fireball (2026-10-22)
-        if row is not None and self.motion and name not in [r["name"] for r in self.rows[tab]]:
-            self.ghosts.append({"t0": self.clock(), "row": row, "rect": rect, "tab": tab, "index": index})
-            self.kick()
 
     # -- the right button --------------------------------------------------------
     def row_menu(self, i):
@@ -1230,7 +1090,7 @@ class Panel(object):
 
     # -- hover -------------------------------------------------------------------
     def hover_at(self, h):
-        """The ids under the mouse lift; every other goes back."""
+        """The ids under the mouse take a flatly lighter face; every other its own."""
         ids = []
         if h:
             if h[0] == "tab":
@@ -1245,112 +1105,20 @@ class Panel(object):
                 ids = [("row", h[1])]
                 if h[2] in TOGGLES:
                     ids.append(("ctl", h[1], h[2]))
-        changed = False
-        for uid in set(self.goal) | set(ids):
-            goal = 1.0 if uid in ids else 0.0
-            if self.goal.get(uid, 0.0) != goal:
-                self.goal[uid] = goal
-                changed = True
-                if not self.motion:
-                    self.hover[uid] = goal
-        if changed:
+        ids = frozenset(ids)
+        if ids != self.hovered:
+            self.hovered = ids
             self.column.update()
-            self.kick()
 
-    # -- the driver --------------------------------------------------------------
-    def kick(self):
-        if not self.motion:
-            self.column.update()
-            if self.lanes.isVisible():
-                self.lanes.update()
-            return
-        if not self.driver.isActive():
-            self._last_step = self.clock()
-            self.driver.start()
-
-    def _busy(self, now):
-        busy = False
-        b = self.burst
-        if b is not None:
-            if now - b["t0"] < b["ends"] + 20:
-                busy = True
-            elif b["open"]:
-                self.burst = None
-                self.phase = "open"
-                self.column.invalidate()
-                busy = True
-            else:
-                self.burst = None
-                self.column.hide()
-                self.lanes.hide()
-                self.lanes_burst = None
-                self.phase = "closed"
-        lb = self.lanes_burst
-        if lb is not None:
-            if now - lb["t0"] < lb["ends"] + 20:
-                busy = True
-            else:
-                self.lanes_burst = None
-                if not lb["open"]:
-                    self.lanes.hide()
-                else:
-                    self.lanes.invalidate()
-                busy = True
-        w = self.wave
-        if w is not None:
-            far = max(list(w["delays"].values()) or [0.0])
-            if now - w["t0"] < far + look.POP_OPEN_MS + 20:
-                busy = True
-            else:
-                self.wave = None
-                self.column.invalidate()
-                busy = True
-        if self.ghosts:
-            self.ghosts = [g for g in self.ghosts if now - g["t0"] < look.FOLD_MS + 20]
-            busy = True
-        for table, ms in ((self.pops, bar.POP_MS), (self.flashes, bar.FLASH_MS)):
-            for uid, t0 in list(table.items()):
-                if now - t0 < ms + 20:
-                    busy = True
-                else:
-                    del table[uid]
-                    self.column.update()
-        for uid, goal in self.goal.items():
-            if abs(self.hover.get(uid, 0.0) - goal) > 0.005:
-                busy = True
-        return busy
-
-    def _animate(self):
-        try:
-            now = self.clock()
-            dt = now - (self._last_step or now)
-            self._last_step = now
-            for uid, goal in list(self.goal.items()):
-                level = look.approach(self.hover.get(uid, 0.0), goal, dt, bar.HOVER_MS)
-                self.hover[uid] = level
-                if level == 0.0 and goal == 0.0:
-                    del self.goal[uid]
-                    self.hover.pop(uid, None)
-                    self.column.update()
-            busy = self._busy(now)
-            if busy or self._was_busy:
-                if self.column.isVisible():
-                    self.column.update()
-                if self.lanes.isVisible():
-                    self.lanes.update()
-            self._was_busy = busy
-            if not busy:
-                self.driver.stop()
-        except Exception:                                    # noqa: BLE001
-            self.driver.stop()
-            print(traceback.format_exc())
+    def is_hovered(self, uid):
+        return uid in self.hovered
 
     def destroy(self):
         try:
             self._end_drag()
         except Exception:                                    # noqa: BLE001
             print(traceback.format_exc())
-        for timer in (self.driver, self.placer, self.status_timer, self.lane_timer):
+        for timer in (self.placer, self.status_timer, self.lane_timer):
             try:
                 timer.stop()
             except RuntimeError:
@@ -1368,67 +1136,11 @@ class Panel(object):
         except ValueError:
             pass
 
-    # -- the burst, read by the painters -----------------------------------------
-    def burst_of(self, uid):
-        """(scale, opacity) of a column part in the burst, the tab's wave or at rest."""
-        if not self.motion:
-            return 1.0, 1.0
-        b = self.burst
-        if b is not None:
-            age = self._age(b)
-            od, fd = b["delays"].get(uid, (0.0, 0.0))
-            return look.popping(age, od) if b["open"] else look.folding(age, fd)
-        w = self.wave
-        if w is not None and uid[0] == "row" and uid[1] in w["delays"]:
-            return look.popping(self.clock() - w["t0"], w["delays"][uid[1]])
-        return 1.0, 1.0
-
-    def lane_of(self, i):
-        if not self.motion or self.lanes_burst is None:
-            return 1.0, 1.0
-        b = self.lanes_burst
-        age = self._age(b)
-        od, fd = b["delays"].get(i, (0.0, 0.0))
-        return look.popping(age, od) if b["open"] else look.folding(age, fd)
-
-    def pop_of(self, uid):
-        t0 = self.pops.get(uid)
-        if t0 is None or not self.motion:
-            return 1.0
-        age = self.clock() - t0
-        return 0.7 + 0.3 * look.back_out(age / float(bar.POP_MS)) if age < bar.POP_MS else 1.0
-
-    def flash_of(self, uid):
-        t0 = self.flashes.get(uid)
-        if t0 is None or not self.motion:
-            return 0.0
-        age = self.clock() - t0
-        return max(0.0, 1.0 - age / float(bar.FLASH_MS)) if age < bar.FLASH_MS else 0.0
-
-    def excluded(self, lay):
-        """The parts left out of the still picture: all of them in a burst, the
-        wave's rows while it runs (a set that changes only at its start and end)."""
-        if self.motion and self.burst is not None:
-            return frozenset(uid for uid, _rect in self._column_parts(lay))
-        if self.motion and self.wave is not None:
-            return frozenset(("row", i) for i in self.wave["delays"])
-        return frozenset()
-
-    def live_units(self, lay):
-        """The parts drawn over the cached picture this frame: everything in a burst,
-        the rows in a wave, what is lifted, popping or flashing, the grip held."""
-        units = set(uid for uid, _rect in self._column_parts(lay))
-        if self.motion and self.burst is not None:
-            return units
-        live = set()
-        if self.motion and self.wave is not None:
-            #  the wave's rows are out of the still picture until the wave ends
-            live |= set(("row", i) for i in self.wave["delays"])
-        for uid in list(self.goal) + list(self.hover):
-            if self.goal.get(uid, 0.0) > 0 or self.hover.get(uid, 0.0) > 0.005:
-                live.add(_unit_of(uid))
-        for uid in list(self.pops) + list(self.flashes):
-            live.add(_unit_of(uid))
+    # -- read by the painters -----------------------------------------------------
+    def live_units(self, lay=None):
+        """The parts drawn over the cached picture: what is under the mouse, the grip
+        held."""
+        live = set(_unit_of(uid) for uid in self.hovered)
         if self.drag and self.drag[0] == "grip":
             live.add(("grip",))
         return live
@@ -1472,7 +1184,7 @@ def _classes():
     QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
     Qt = QtCore.Qt
     k = bar.kit()
-    colour, blend, draw_glyph, glow = k.colour, k.blend, k.draw_glyph, k.glow
+    colour, blend, draw_glyph = k.colour, k.blend, k.draw_glyph
 
     def font(widget, px, mono=False, bold=False):
         f = QtGui.QFont("Consolas") if mono else QtGui.QFont(widget.font())
@@ -1495,30 +1207,6 @@ def _classes():
         widget.setPalette(pal)
         widget.setMouseTracking(True)
         widget.hide()
-
-    def scaled(p, rect, z, opacity):
-        p.save()
-        p.setOpacity(p.opacity() * max(0.0, min(1.0, opacity)))
-        c = rect.center()
-        p.translate(c)
-        p.scale(z, z)
-        p.translate(-c)
-
-    def shape_rect(burst, age, w, h, ui):
-        """The burst's shape: a small box at the origin unrolling to the whole rect,
-        or closing back onto it after the folds."""
-        bw, bh = BOX[0] * ui, BOX[1] * ui
-        ox = max(bw / 2.0, min(w - bw / 2.0, burst["origin"][0]))
-        oy = max(bh / 2.0, min(h - bh / 2.0, burst["origin"][1]))
-        if burst["open"]:
-            e = look.ease_out_quint(age / float(look.UNROLL_MS))
-        else:
-            e = 1.0 - look.ease_in_quint((age - burst["close_at"]) / float(look.CLOSE_MS))
-        x0 = (ox - bw / 2.0) * (1 - e)
-        y0 = (oy - bh / 2.0) * (1 - e)
-        x1 = (ox + bw / 2.0) + (w - ox - bw / 2.0) * e
-        y1 = (oy + bh / 2.0) + (h - oy - bh / 2.0) * e
-        return QtCore.QRectF(x0, y0, x1 - x0, y1 - y0)
 
     class NameField(QtWidgets.QLineEdit):
         """The one widget of Maya's kind in the column: a layer's name being typed."""
@@ -1664,32 +1352,21 @@ def _classes():
         def _paint(self):
             pn = self.panel
             ui, tk = pn.ui, pn.tokens
-            w, h = float(self.width()), float(self.height())
             lay = self.layout_()
             live = pn.live_units(lay)
-            excluded = pn.excluded(lay)
             p = QtGui.QPainter(self)
             p.setRenderHint(QtGui.QPainter.Antialiasing)
-            b = pn.burst if pn.motion else None
-            age = pn._age(b) if b is not None else 0.0
-            shape = None
-            if b is not None:
-                shape = shape_rect(b, age, w, h, ui)
-                clip = QtGui.QPainterPath()
-                r = 8 * ui
-                clip.addRoundedRect(shape, r, r)
-                p.setClipPath(clip)
             key = (self.width(), self.height(), ui, pn.tab, round(pn.scroll, 2),
                    L.signature(pn.current_rows()), tuple(pn.selected_names()), pn.picked_disp, pn.status, pn.lanes_on,
-                   len(pn.rows["anim"]), len(pn.rows["disp"]), excluded, pn.weight_states(),
+                   len(pn.rows["anim"]), len(pn.rows["disp"]), pn.weight_states(),
                    tuple(sorted(pn.members)))
             if key != self._cache_key or self._cache is None:
                 pn._wstates = pn.weight_states()
                 self.rebuilds += 1
-                self._cache = self._picture(lay, excluded)
+                self._cache = self._picture(lay)
                 self._cache_key = key
             p.drawPixmap(0, 0, self._cache)
-            # what moves, over the picture
+            # what the mouse is over, over the picture
             if ("grip",) in live:
                 self._grip(p, lay)
             well = qrect(lay.well)
@@ -1703,36 +1380,11 @@ def _classes():
                     p.restore()
                 else:
                     self._unit(p, uid, lay, True)
-            now = pn.clock()
-            for g in pn.ghosts:
-                if g["tab"] != pn.tab:
-                    continue
-                z, op = look.folding(now - g["t0"], 0.0)
-                rect = qrect(g["rect"])
-                p.save()
-                p.setClipRect(well, Qt.IntersectClip)
-                scaled(p, rect, z, op)
-                self._row(p, g["index"], g["row"], g["rect"], [g["row"]], 0.0)
-                p.restore()
-                p.restore()
-            # the reveal's top edge light
-            if b is not None and b["open"] and age < look.REVEAL_MS and shape is not None:
-                fade = max(0.0, 1.0 - age / float(look.REVEAL_MS)) ** 1.6
-                p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-                g = QtGui.QLinearGradient(0, shape.top(), 0, shape.top() + look.TOP_GLOW * ui)
-                g.setColorAt(0.0, colour(tk["accent"], 255 * 0.4 * fade))
-                g.setColorAt(1.0, colour(tk["accent"], 0))
-                p.fillRect(QtCore.QRectF(shape.left(), shape.top(), shape.width(), look.TOP_GLOW * ui),
-                           QtGui.QBrush(g))
-                p.fillRect(QtCore.QRectF(shape.left(), shape.top(), shape.width(), 1.5 * ui),
-                           colour(bar.RIM, 255 * 0.95 * fade))
-                p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
             p.end()
 
-        def _picture(self, lay, excluded):
-            """Everything at rest, into one picture: the parts a burst or a wave moves
-            left out; what is lifted, popping or flashing is drawn over it each frame
-            (the Timeline's way), so a hover never draws the picture again."""
+        def _picture(self, lay):
+            """Everything at rest, into one picture; what the mouse is over is drawn
+            over it (the Timeline's way), so a hover never draws the picture again."""
             pn = self.panel
             ui, tk = pn.ui, pn.tokens
             ratio = self.devicePixelRatioF() or 1.0
@@ -1759,8 +1411,6 @@ def _classes():
             p.setBrush(colour(tk["field"]))
             p.drawRoundedRect(well, 6 * ui, 6 * ui)
             for uid, _rect in pn._column_parts(lay):
-                if uid in excluded:
-                    continue
                 if uid[0] == "row":
                     p.save()
                     p.setClipRect(well, Qt.IntersectClip)
@@ -1789,38 +1439,31 @@ def _classes():
             return pic
 
         def _grip(self, p, lay, rest=False):
+            """The top edge's bar: lit accent while the mouse is on it or holds it."""
             pn = self.panel
             ui, tk = pn.ui, pn.tokens
             held = pn.drag and pn.drag[0] == "grip"
-            level = 0.0 if rest else (1.0 if held else pn.hover.get(("grip",), 0.0))
-            bw = (34 + 12 * level) * ui
+            on = not rest and (held or pn.is_hovered(("grip",)))
+            bw = 34 * ui
             rect = QtCore.QRectF((self.width() - bw) / 2.0, 3 * ui, bw, 3 * ui)
             p.save()
-            if level > 0.01:
-                p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-                k.soft_dot(p, rect.center().x(), rect.center().y(), 18 * ui, tk["accent"], 110 * level)
-                p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
             p.setPen(Qt.NoPen)
-            p.setBrush(blend(tk["line"], tk["accent"], level))
+            p.setBrush(colour(tk["accent"] if on else tk["line"]))
             p.drawRoundedRect(rect, 1.5 * ui, 1.5 * ui)
             p.restore()
 
-        # -- one part, at rest or moving ---------------------------------------
-        def _unit(self, p, uid, lay, moving):
+        # -- one part, at rest or under the mouse --------------------------------
+        def _unit(self, p, uid, lay, over):
+            """One part. `over`: drawn over the picture, its hover face if the mouse is on it."""
             pn = self.panel
-            ui = pn.ui
-            scale, opacity = pn.burst_of(uid) if moving else (1.0, 1.0)
-            if opacity <= 0.001:
-                return
             if uid[0] == "row":
                 i = uid[1]
                 rows = pn.current_rows()
                 if i >= len(rows):
                     return
                 rect = lay.row_at(i, pn.scroll)
-                scaled(p, qrect(rect), scale, opacity)
-                self._row(p, i, rows[i], rect, rows, pn.hover.get(uid, 0.0) if moving else 0.0, moving)
-                p.restore()
+                level = 1.0 if over and pn.is_hovered(uid) else 0.0
+                self._row(p, i, rows[i], rect, rows, level, over)
                 return
             if uid[0] == "seg":
                 rect = qrect(lay.segments[uid[1]])
@@ -1828,21 +1471,17 @@ def _classes():
                 rect = qrect(lay.lanes)
             else:
                 rect = qrect(dict(lay.foot)[uid[1]])
-            level = pn.hover.get(uid, 0.0) if moving else 0.0
-            flash = pn.flash_of(uid) if moving else 0.0
-            pop = pn.pop_of(uid) if moving else 1.0
-            lift = 0.0 if uid[0] == "seg" else bar.LIFT * level
-            z = scale * pop * (1.0 + lift) * (1.0 - 0.06 * flash)
-            scaled(p, rect, z, opacity)
+            level = 1.0 if over and pn.is_hovered(uid) else 0.0
+            p.save()
             if uid[0] == "seg":
-                self._segment(p, uid[1], rect, level, flash)
+                self._segment(p, uid[1], rect, level)
             elif uid[0] == "lanes":
-                self._lanes_button(p, rect, level, flash)
+                self._lanes_button(p, rect, level)
             else:
-                self._foot(p, uid[1], rect, level, flash)
+                self._foot(p, uid[1], rect, level)
             p.restore()
 
-        def _segment(self, p, tab, rect, level, flash):
+        def _segment(self, p, tab, rect, level):
             pn = self.panel
             ui, tk = pn.ui, pn.tokens
             lit = tab == pn.tab
@@ -1852,9 +1491,6 @@ def _classes():
                 p.drawRoundedRect(rect, 5 * ui, 5 * ui)
             elif level > 0.01:
                 p.setBrush(colour(tk["hover"], 255 * level))
-                p.drawRoundedRect(rect, 5 * ui, 5 * ui)
-            if flash > 0:
-                p.setBrush(colour(tk["accent"], 255 * flash * 0.6))
                 p.drawRoundedRect(rect, 5 * ui, 5 * ui)
             label = L.TAB_LABELS[tab]
             count = " %d" % len(pn.rows.get(tab, []))
@@ -1871,7 +1507,7 @@ def _classes():
             p.setPen(colour(tk["faint"]))
             p.drawText(QtCore.QPointF(x + m1.horizontalAdvance(label), base), count)
 
-        def _lanes_button(self, p, rect, level, flash):
+        def _lanes_button(self, p, rect, level):
             pn = self.panel
             ui, tk = pn.ui, pn.tokens
             on = pn.lanes_on and pn.tab == "anim"
@@ -1882,29 +1518,22 @@ def _classes():
                 face = colour(tk["accent_tint"])
             else:
                 face = colour(tk["hover"], 255 * level)
-            if flash > 0:
-                face = blend(face.name(), tk["accent"], flash)
             p.setPen(Qt.NoPen)
             p.setBrush(face)
             p.drawRoundedRect(rect, 5 * ui, 5 * ui)
-            glow(p, rect, 5 * ui, tk["accent"], level, ui)
             ink = colour(tk["accent"]) if on else blend(tk["muted"], tk["text"], level)
             side = 15 * ui
             c = rect.center()
             draw_glyph(p, "lanes", QtCore.QRectF(c.x() - side / 2, c.y() - side / 2, side, side), ink)
 
-        def _foot(self, p, name, rect, level, flash):
+        def _foot(self, p, name, rect, level):
             pn = self.panel
             ui, tk = pn.ui, pn.tokens
             side = 15 * ui
             p.setPen(Qt.NoPen)
             if name == "add":
-                face = blend(tk["accent"], tk["accent_hover"], level)
-                if flash > 0:
-                    face = blend(face.name(), bar.RIM, flash * 0.5)
-                p.setBrush(face)
+                p.setBrush(blend(tk["accent"], tk["accent_hover"], level))
                 p.drawRoundedRect(rect, 5 * ui, 5 * ui)
-                glow(p, rect, 5 * ui, bar.RIM, level, ui)
                 ink = colour(tk["on_accent"])
                 f = font(self, 12 * ui, bold=True)
                 text = "Layer"
@@ -1916,15 +1545,9 @@ def _classes():
                 p.drawText(QtCore.QRectF(x + side + 3 * ui, rect.top(), tw + 2 * ui, rect.height()),
                            Qt.AlignVCenter | Qt.AlignLeft, text)
                 return
-            face = colour(tk["hover"], 255 * level)
-            if flash > 0:
-                face = blend(face.name(), tk["accent"], flash)
-            p.setBrush(face)
+            p.setBrush(colour(tk["hover"], 255 * level))
             p.drawRoundedRect(rect, 5 * ui, 5 * ui)
-            glow(p, rect, 5 * ui, tk["accent"], level, ui)
-            if flash > 0.5:
-                ink = colour(tk["on_accent"])
-            elif name == "delete" and level > 0.01:
+            if name == "delete" and level > 0.01:
                 ink = blend(tk["muted"], tk["danger"], level)
             else:
                 ink = blend(tk["muted"], tk["text"], level)
@@ -2008,17 +1631,15 @@ def _classes():
                 p.drawLine(QtCore.QPointF(nr.left(), y), QtCore.QPointF(nr.left() + metrics.horizontalAdvance(text), y))
             p.restore()
 
-        def _wkey(self, p, i, rect, state, moving):
+        def _wkey(self, p, i, rect, state, over):
             """The weight's key cell, the Channel Box's: filled on a key at this frame,
             outlined when the weight has keys elsewhere, an empty well unkeyed."""
             pn = self.panel
             ui, tk = pn.ui, pn.tokens
             uid = ("ctl", i, "wkey")
-            level = pn.hover.get(uid, 0.0) if moving else 0.0
-            pop = pn.pop_of(uid) if moving else 1.0
+            hovered = over and pn.is_hovered(uid)
             cell = qrect(L.wkey_cell(rect, ui))
-            z = pop * (1.0 + 0.35 * level)
-            scaled(p, cell, z, 1.0)
+            p.save()
             r = 2 * ui
             if state == "onkey":
                 p.setPen(Qt.NoPen)
@@ -2029,27 +1650,23 @@ def _classes():
                 p.setBrush(Qt.NoBrush)
                 p.drawRoundedRect(cell.adjusted(0.75 * ui, 0.75 * ui, -0.75 * ui, -0.75 * ui), r, r)
             else:
-                p.setBrush(colour(tk["track"]))
+                p.setBrush(colour(tk["hover"] if hovered else tk["track"]))
                 p.setPen(QtGui.QPen(colour(tk["track_edge"]), 1))
                 p.drawRoundedRect(cell, r, r)
-            glow(p, cell, r, tk["accent"], level, ui)
             p.restore()
 
-        def _toggle(self, p, i, name, rect, on, moving, row=None):
+        def _toggle(self, p, i, name, rect, on, over, row=None):
             pn = self.panel
             ui, tk = pn.ui, pn.tokens
             uid = ("ctl", i, name)
-            level = pn.hover.get(uid, 0.0) if moving else 0.0
-            pop = pn.pop_of(uid) if moving else 1.0
-            z = pop * (1.0 + bar.LIFT * level)
-            scaled(p, rect, z, 1.0)
+            level = 1.0 if over and pn.is_hovered(uid) else 0.0
+            p.save()
             lit = {"mute": (MUTE_FACE, tk["danger"]), "solo": (SOLO_FACE, bar.HIGHLIGHT),
                    "lock": (tk["accent_tint"], tk["accent"])}.get(name, (tk["accent_tint"], tk["accent_text"]))
             face = colour(lit[0]) if on else colour(tk["hover"], 255 * level)
             p.setPen(Qt.NoPen)
             p.setBrush(face)
             p.drawRoundedRect(rect, 5 * ui, 5 * ui)
-            glow(p, rect, 5 * ui, tk["accent"], level, ui)
             ink = colour(lit[1]) if on else blend(tk["muted"], tk["text"], level)
             if name == "lock":
                 side = 13 * ui
@@ -2194,14 +1811,6 @@ def _classes():
             except Exception:                                # noqa: BLE001
                 print(traceback.format_exc())
 
-        def leaveEvent(self, event):
-            try:
-                if self.panel.lane_aimed is not None:
-                    self.panel.lane_aimed = None
-                    self.update()
-            except Exception:                                # noqa: BLE001
-                print(traceback.format_exc())
-
         def mouseReleaseEvent(self, event):
             try:
                 self.panel.lane_release()
@@ -2237,16 +1846,6 @@ def _classes():
             t = self._track()
             p = QtGui.QPainter(self)
             p.setRenderHint(QtGui.QPainter.Antialiasing)
-            b = pn.lanes_burst if pn.motion else None
-            if b is not None:
-                age = pn._age(b)
-                if b["open"]:
-                    e = look.ease_out_quint(age / float(look.UNROLL_MS))
-                else:
-                    e = 1.0 - look.ease_in_quint((age - b["close_at"]) / float(look.CLOSE_MS))
-                clip = QtGui.QPainterPath()
-                clip.addRect(QtCore.QRectF(w * (1 - e), 0, w * e, h))
-                p.setClipPath(clip)
             tkey = (t.v0, t.v1, t.left, t.right) if t is not None else None
             keys_sig = tuple(sorted((n, tuple(v)) for n, v in pn.keys.items()))
             sel = pn.lane_sel
@@ -2255,29 +1854,25 @@ def _classes():
             view = pn.drag_view()
             view_key = (tuple(view["names"]), tuple(view["span"])) if view else None
             key = (self.width(), self.height(), ui, round(pn.scroll, 2), L.signature(pn.rows["anim"]),
-                   keys_sig, tkey, b is not None, sel_key, dragging, view_key, self._active_hex())
-            if b is not None:
-                self._draw(p, lay, t, w, h, True)
-                self._draw_dragged(p, lay, t, w)
-            else:
-                if key != self._cache_key or self._cache is None:
-                    ratio = self.devicePixelRatioF() or 1.0
-                    pic = QtGui.QPixmap(int(round(max(1, w) * ratio)), int(round(max(1, h) * ratio)))
-                    pic.setDevicePixelRatio(ratio)
-                    pic.fill(Qt.transparent)
-                    q = QtGui.QPainter(pic)
-                    q.setRenderHint(QtGui.QPainter.Antialiasing)
-                    self._draw(q, lay, t, w, h, False)
-                    q.end()
-                    self._cache, self._cache_key = pic, key
-                    self.rebuilds += 1
-                p.drawPixmap(0, 0, self._cache)
-                self._draw_dragged(p, lay, t, w)
+                   keys_sig, tkey, sel_key, dragging, view_key, self._active_hex())
+            if key != self._cache_key or self._cache is None:
+                ratio = self.devicePixelRatioF() or 1.0
+                pic = QtGui.QPixmap(int(round(max(1, w) * ratio)), int(round(max(1, h) * ratio)))
+                pic.setDevicePixelRatio(ratio)
+                pic.fill(Qt.transparent)
+                q = QtGui.QPainter(pic)
+                q.setRenderHint(QtGui.QPainter.Antialiasing)
+                self._draw(q, lay, t, w, h)
+                q.end()
+                self._cache, self._cache_key = pic, key
+                self.rebuilds += 1
+            p.drawPixmap(0, 0, self._cache)
+            self._draw_dragged(p, lay, t, w)
             # the highlight's first and last frame over the ruler (2026-10-20)
             #  at the block's edges, on its top lane, as on the timeline (2026-10-20:
             #  «там же где и на таймлайне возле концов рамки а не там где корректа»)
             if t is not None and sel:
-                tops = [lane.top() for _i, row, lane, _s, _o in self._lanes_of(lay, t, False)
+                tops = [lane.top() for _i, row, lane in self._lanes_of(lay, t)
                         if row["name"] in sel["names"]]
                 if tops:
                     span = pn.lane_preview if dragging else (sel["a"], sel["b"])
@@ -2299,7 +1894,6 @@ def _classes():
                     p.setBrush(colour(tk["accent"], 255 * 0.2))
                     p.drawRect(QtCore.QRectF(x0, well[1], max(1.0, x1 - x0), well[3]))
                     self._flag(p, lay, t, now, x0, x1, w)
-                self._aimed(p, lay, t)
             p.end()
 
         def _flag(self, p, lay, t, now, x0, x1, w):
@@ -2321,31 +1915,8 @@ def _classes():
             p.setPen(colour(tk["panel"]))
             p.drawText(r, Qt.AlignCenter, text)
 
-        def _aimed(self, p, lay, t):
-            """The key under the mouse lifted and lit, as on the timeline."""
-            pn = self.panel
-            aim = pn.lane_aimed
-            if not aim or pn.lane_drag:
-                return
-            rows = pn.rows["anim"]
-            index = next((i for i, r in enumerate(rows) if r["name"] == aim[0]), None)
-            if index is None or index not in pn._visible_rows(lay):
-                return
-            ui, tk = pn.ui, pn.tokens
-            r = lay.row_at(index, pn.scroll)
-            top, bottom = r[1] + 4 * ui, r[1] + r[3] - 4 * ui
-            well = qrect(lay.well)
-            p.save()
-            p.setClipRect(QtCore.QRectF(0, well.top(), float(self.width()), well.height()))
-            rect = _key_rect(t, aim[1], top, bottom, ui, KEY_LIFT)
-            glow(p, rect, 2 * ui, tk["accent"], 1.0, ui)
-            p.setPen(Qt.NoPen)
-            p.setBrush(colour(tk["accent_text"]))
-            p.drawRoundedRect(rect, 1.5 * ui, 1.5 * ui)
-            p.restore()
-
-        def _lanes_of(self, lay, t, moving):
-            """(row index, row, lane rect, scale, opacity) of every lane shown."""
+        def _lanes_of(self, lay, t):
+            """(row index, row, lane rect) of every lane shown."""
             pn = self.panel
             rows = pn.rows["anim"]
             out = []
@@ -2354,9 +1925,7 @@ def _classes():
                     continue
                 r = lay.row_at(i, pn.scroll)
                 lane = QtCore.QRectF(t.left, r[1], max(1.0, t.right - t.left), r[3])
-                scale, opacity = pn.lane_of(i) if moving else (1.0, 1.0)
-                if opacity > 0.001:
-                    out.append((i, rows[i], lane, scale, opacity))
+                out.append((i, rows[i], lane))
             return out
 
         def _active_hex(self):
@@ -2389,7 +1958,7 @@ def _classes():
                 if not (t.v0 - 1 <= frame <= t.v1 + 1) or round(frame, 4) in drawn:
                     continue
                 drawn.add(round(frame, 4))
-                rect = _key_rect(t, frame, top, bottom, ui, 1.0)
+                rect = _key_rect(t, frame, top, bottom, ui)
                 if ingot_hex and t.cells and look.on_frame(frame):
                     brush = p.brush()
                     k.ingot(p, rect, ingot_hex, ui)
@@ -2406,7 +1975,7 @@ def _classes():
             p.drawRoundedRect(block, 3 * ui, 3 * ui)
             p.setPen(Qt.NoPen)
 
-        def _draw(self, p, lay, t, w, h, moving):
+        def _draw(self, p, lay, t, w, h):
             """The still picture: the face, the ruler, every lane with its keys. While a key
             drag stands, the dragged lanes' block and the keys in it are left to
             `_draw_dragged`, drawn over the picture on every step (the picture is made once
@@ -2445,8 +2014,8 @@ def _classes():
             view = pn.drag_view()                # a key drag here, or the timeline's
             p.save()
             p.setClipRect(QtCore.QRectF(0, well.top(), w, well.height()), Qt.IntersectClip)
-            for i, row, lane, scale, opacity in self._lanes_of(lay, t, moving):
-                scaled(p, lane, scale, opacity)
+            for i, row, lane in self._lanes_of(lay, t):
+                p.save()
                 if L.dimmed(row, rows):
                     p.setOpacity(p.opacity() * DIM)
                 p.setPen(Qt.NoPen)
@@ -2483,7 +2052,7 @@ def _classes():
             for frame in sorted(set(round(float(k), 4) for k in frames)):
                 if not (t.v0 - 1 <= frame <= t.v1 + 1):
                     continue
-                rect = _key_rect(t, frame, top, bottom, ui, 1.0)
+                rect = _key_rect(t, frame, top, bottom, ui)
                 if rect.width() < least:
                     c = rect.center()
                     rect = QtCore.QRectF(c.x() - least / 2.0, rect.top(), least, rect.height())
@@ -2507,7 +2076,7 @@ def _classes():
             well = qrect(lay.well)
             p.save()
             p.setClipRect(QtCore.QRectF(0, well.top(), w, well.height()), Qt.IntersectClip)
-            for i, row, lane, _scale, _opacity in self._lanes_of(lay, t, False):
+            for i, row, lane in self._lanes_of(lay, t):
                 if row["name"] not in view["names"]:
                     continue
                 p.save()
@@ -2524,20 +2093,15 @@ def _classes():
                 p.restore()
             p.restore()
 
-    def _key_rect(t, frame, top, bottom, ui, z):
+    def _key_rect(t, frame, top, bottom, ui):
         """A key's mark as the timeline draws it: its cell on a whole frame, a line
-        between frames; `z` grows it about its middle (the lift under the mouse)."""
+        between frames."""
         if look.on_frame(frame) and t.cells:
             l, tp, kw, kh = look.key_cell(t.x(frame), t.scale, top, bottom, ui)
         else:
             kw = bar.KEY_W * ui * bar.DASH_W
             l, tp, kh = t.x(frame) - kw / 2, top, bottom - top
-        cx, cy = l + kw / 2.0, tp + kh / 2.0
-        kw, kh = kw * z, kh * min(z, 1.15)
-        return QtCore.QRectF(cx - kw / 2, cy - kh / 2, kw, kh)
-
-    def _key_shape(path, t, frame, top, bottom, ui, z):
-        path.addRoundedRect(_key_rect(t, frame, top, bottom, ui, z), 1.5 * ui, 1.5 * ui)
+        return QtCore.QRectF(l, tp, kw, kh)
 
     _CLASSES.append((Column, Lanes, NameField))
     return _CLASSES[0]

@@ -1,4 +1,4 @@
-"""The AT bar's strip (`maya_atbar.bar`) offscreen: its painted buttons and their motion, the blend tracks,
+"""The AT bar's strip (`maya_atbar.bar`) offscreen: its painted buttons (no motion, no glow), the blend tracks,
 the select sets' cells, the Blend pop-up of the compact bar, the flow layout, every button wired to its
 tool, and where the strip stands (its own control, the Time Bar's top row, the F row).
 
@@ -200,12 +200,6 @@ class Helpers(BarTest):
         self.cmds.dpi = RuntimeError("no ui")
         self.assertEqual(bar._ui(), 1.0)
 
-    def test_the_clock_is_in_milliseconds(self):
-        a = bar._now()
-        b = bar._now()
-        self.assertGreaterEqual(b, a)
-        self.assertGreater(a, 0)
-
     def test_colours_mix_and_take_an_alpha_clamped(self):
         self.assertEqual(bar._mix("#000000", "#ffffff", 0.5).name(), "#808080")
         self.assertEqual(bar._mix("#102030", "#ffffff", -1).name(), "#102030")
@@ -213,10 +207,10 @@ class Helpers(BarTest):
         self.assertAlmostEqual(bar._alpha("#e07a36", 0.25).alphaF(), 0.25, places=2)
         self.assertEqual(bar._alpha("#e07a36", 3).alphaF(), 1.0)
 
-    def test_the_pop_overshoots_and_lands(self):
-        self.assertAlmostEqual(bar._back_out(0.0), 0.0)
-        self.assertAlmostEqual(bar._back_out(1.0), 1.0)
-        self.assertGreater(max(bar._back_out(u / 20.0) for u in range(21)), 1.0)
+    def test_nothing_of_the_motion_is_left(self):
+        for name in ("Driver", "_now", "_back_out", "HOVER_MS", "FLASH_MS", "POP_MS", "LIFT", "FRAME_MS",
+                     "POP_OPEN_MS", "START_SCALE"):
+            self.assertFalse(hasattr(bar, name), name)
 
     def test_a_glyph_is_drawn_in_its_colour_once_per_size(self):
         bar._PIXMAPS.clear()
@@ -252,37 +246,6 @@ class Helpers(BarTest):
         self.assertEqual(bar._pos(mock.Mock(spec=["x"], x=lambda: 7)), 7)
 
 
-class Driving(BarTest):
-
-    def test_the_driver_ticks_what_moves_and_stops_at_rest(self):
-        class Part(object):
-            def __init__(self, busy):
-                self.busy, self.updates = list(busy), 0
-
-            def step(self, now):
-                return self.busy.pop(0)
-
-            def update(self):
-                self.updates += 1
-
-        class Gone(object):
-            def step(self, now):
-                raise RuntimeError("deleted")
-
-        driver = bar.Driver()
-        a, b = Part([True, False]), Part([False])
-        for part in (a, b, Gone()):
-            driver.kick(part)
-        self.assertTrue(driver._timer.isActive())
-        driver._tick()
-        self.assertEqual(driver._busy, {a})
-        self.assertTrue(driver._timer.isActive())
-        driver._tick()
-        self.assertEqual(driver._busy, set())
-        self.assertFalse(driver._timer.isActive())
-        self.assertEqual((a.updates, b.updates), (2, 1))
-
-
 # ---------------------------------------------------------------- buttons
 
 class Button(BarTest):
@@ -306,55 +269,37 @@ class Button(BarTest):
         self.assertEqual(btn.height(), bar.COMPACT_FACE + 2 * bar.COMPACT_PAD)
         self.assertFalse(btn.grab().isNull())
 
-    def test_hover_lifts_it_and_settles(self):
+    def test_hover_changes_the_face_at_once_and_leave_takes_it_back(self):
         btn = self.button()
+        plain = pixel(btn, 5, 15)
         with mock.patch.object(btn, "update") as update:
             btn.enterEvent(enter())
         update.assert_called()
-        self.assertEqual(btn._goal, 1.0)
-        self.assertTrue(btn.step(0.0))
-        self.assertEqual(btn._hover, 0.0)
-        self.assertTrue(btn.step(55.0))
-        self.assertAlmostEqual(btn._hover, 1.0 - 2.718281828 ** -1.5, places=3)
-        self.assertFalse(btn.step(5000.0))
-        self.assertEqual(btn._hover, 1.0)
+        self.assertTrue(btn._hover)
+        self.assertEqual(pixel(btn, 5, 15), bar.HOVER)
         btn.leaveEvent(QtCore.QEvent(QtCore.QEvent.Leave))
-        self.assertEqual(btn._goal, 0.0)
+        self.assertFalse(btn._hover)
+        self.assertEqual(pixel(btn, 5, 15), plain)
 
-    def test_hover_and_presses_go_through_the_bar_s_driver(self):
-        driver = mock.MagicMock()
-        btn = self.button(driver=driver, checkable=True)
+    def test_no_glow_round_a_hovered_button(self):
+        btn = self.button()
+        before = btn.grab().toImage()
         btn.enterEvent(enter())
-        btn.mousePressEvent(press(5))
-        btn.setChecked(True)
-        self.assertEqual(driver.kick.call_count, 3)
+        after = btn.grab().toImage()
+        #  outside the face (its 3 px margin) nothing is drawn, hovered or not
+        for x, y in ((0, 0), (1, 15), (btn.width() - 1, 15), (15, 0)):
+            self.assertEqual(after.pixelColor(x, y), before.pixelColor(x, y))
 
-    def test_a_press_flashes_and_a_toggle_pops_for_their_time(self):
-        btn = self.button(checkable=True)
-        with mock.patch.object(bar, "_now", return_value=1000.0):
-            btn.mousePressEvent(press(5))
-            btn.mousePressEvent(press(5, button=Qt.RightButton))
-            btn.setChecked(True)
-        self.assertEqual((btn._flash_t, btn._pop_t), (1000.0, 1000.0))
-        self.assertTrue(btn.step(1000.0 + bar.FLASH_MS - 1))
-        self.assertTrue(btn.step(1000.0 + bar.POP_MS - 1))
-        self.assertFalse(btn.step(1000.0 + bar.POP_MS + 1))
-
-    def test_a_checked_button_wears_the_accent_tint_and_a_press_flashes_the_accent(self):
+    def test_a_checked_button_wears_the_accent_tint_flat(self):
         btn = self.button(checkable=True)
         plain = pixel(btn, 5, 15)
         btn.setChecked(True)
-        btn._pop_t = None
         self.assertEqual(pixel(btn, 5, 15), bar.ACCENT_TINT)
         self.assertNotEqual(plain, bar.ACCENT_TINT)
+        btn.mousePressEvent(press(5))                     # a press flashes nothing
+        self.assertEqual(pixel(btn, 5, 15), bar.ACCENT_TINT)
         btn.setChecked(False)
-        btn._pop_t = None
-        with mock.patch.object(bar, "_now", return_value=5000.0):
-            btn._flash_t = 5000.0
-            self.assertEqual(pixel(btn, 5, 15), bar.ACCENT)
-        btn._flash_t = None
-        btn._hover = 1.0
-        self.assertFalse(btn.grab().isNull())
+        self.assertEqual(pixel(btn, 5, 15), plain)
 
     def test_its_menu_shows_rows_separators_and_submenus(self):
         first, second = mock.MagicMock(), mock.MagicMock()
@@ -504,16 +449,14 @@ class Sets(BarTest):
         self.assertTrue(cells[0].toolTip().startswith("a: 3 objects"))
         self.assertTrue(cells[2].toolTip().startswith("Make a select set"))
 
-    def test_it_opens_above_the_button_with_the_nearest_cell_popping_first(self):
+    def test_it_opens_above_the_button_with_every_cell_whole_at_once(self):
         self.popup.open_at()
         corner = self.anchor.mapToGlobal(QtCore.QPoint(0, 0))
         self.assertTrue(self.popup.isVisible())
         self.assertTrue(self.popup._above)
         self.assertEqual(self.popup.y(), corner.y() - self.popup.height() - 4)
-        delays = [c._delay for c in self.popup.cells]
-        self.assertGreaterEqual(min(delays), 48.0)
-        self.assertEqual(delays, sorted(delays))
-        self.assertTrue(all(c._born is not None for c in self.popup.cells))
+        cell = self.popup.cells[0]
+        self.assertEqual(pixel(cell, cell.width() // 2, 6), bar.FIELD)
 
     def test_with_no_room_above_it_opens_below(self):
         self.anchor.move(self.anchor.x(), 0)
@@ -615,34 +558,23 @@ class Sets(BarTest):
         picked.assert_called_once_with(cell)
         self.assertFalse(self.popup.cells[-1]._over_x(press(*[x.x(), x.y()])))
 
-    def test_a_cell_pops_in_lifts_and_settles(self):
-        cell = self.popup.cells[0]
-        cell.pop_in(1000.0, 50.0)
-        self.assertTrue(cell.step(1000.0))
-        self.assertFalse(cell.step(1000.0 + 50.0 + bar.POP_OPEN_MS + 1))
-        with mock.patch.object(self.popup.driver, "kick") as kick:
-            cell.enterEvent(enter())
-            cell.leaveEvent(QtCore.QEvent(QtCore.QEvent.Leave))
-            cell.mousePressEvent(press(20, 17))
-        self.assertEqual(kick.call_count, 3)
-        self.assertTrue(cell.step(cell._flash_t))
-
-    def test_a_cell_is_drawn_on_the_field_and_lit_under_the_cursor(self):
+    def test_a_cell_is_drawn_on_the_field_and_the_hover_grey_under_the_cursor(self):
         cell = self.popup.cells[0]
         middle = cell.width() // 2
         self.assertEqual(pixel(cell, middle, 6), bar.FIELD)
-        cell._hover = 1.0
+        with mock.patch.object(cell, "update") as update:
+            cell.enterEvent(enter())
+        update.assert_called()
+        self.assertEqual(pixel(cell, middle, 6), bar.HOVER)
+        cell.mousePressEvent(press(20, 17))               # a press flashes nothing
         self.assertEqual(pixel(cell, middle, 6), bar.HOVER)
         cell._on_x = True
         self.assertFalse(cell.grab().isNull())
-        with mock.patch.object(bar, "_now", return_value=100.0):
-            cell.pop_in(100.0, 50.0)
-            unborn = cell.grab().toImage()
-            self.assertEqual(unborn.pixelColor(middle, 6), unborn.pixelColor(0, 0))
-            self.assertNotEqual(unborn.pixelColor(middle, 6).name(), bar.FIELD)
-            cell._flash_t = 100.0
-            self.popup.cells[-1]._flash_t = 100.0
-            self.assertFalse(self.popup.cells[-1].grab().isNull())
+        cell.leaveEvent(QtCore.QEvent(QtCore.QEvent.Leave))
+        self.assertEqual(pixel(cell, middle, 6), bar.FIELD)
+        self.assertFalse(cell._on_x)
+        self.popup.cells[-1].enterEvent(enter())
+        self.assertFalse(self.popup.cells[-1].grab().isNull())
 
     def test_escape_closes_it(self):
         self.popup.open_at()
@@ -666,7 +598,7 @@ class Blend(BarTest):
         self.anchor.show()
         self.tracks = [bar.BlendSlider(code, code, bar.BLEND, code) for code in ("SM", "TW")]
 
-    def test_the_tracks_rise_into_place_above_the_chip(self):
+    def test_the_tracks_stand_in_place_above_the_chip_at_once(self):
         popup = self.keep(bar.BlendPopup(self.anchor, 1.0, self.tracks))
         caption = [w.text() for w in popup.findChildren(QtWidgets.QLabel)]
         self.assertEqual(caption, ["BLEND"])
@@ -675,16 +607,15 @@ class Blend(BarTest):
         corner = self.anchor.mapToGlobal(QtCore.QPoint(0, 0))
         final = corner.y() - popup.height() - 4
         self.assertTrue(popup.isVisible())
-        self.assertEqual(popup.y(), final + 4)
-        popup._fade.setCurrentTime(int(bar.POP_MS))
         self.assertEqual((popup.x(), popup.y()), (corner.x(), final))
+        self.assertEqual(popup.windowOpacity(), 1.0)
+        self.assertFalse(popup.findChildren(QtCore.QVariantAnimation))
         self.assertFalse(popup.grab().isNull())
 
     def test_with_no_room_above_it_opens_below_and_escape_closes_it(self):
         self.anchor.move(self.anchor.x(), 0)
         popup = self.keep(bar.BlendPopup(self.anchor, 1.0, self.tracks))
         popup.open_at()
-        popup._fade.setCurrentTime(int(bar.POP_MS))
         self.assertEqual(popup.y(), self.anchor.mapToGlobal(QtCore.QPoint(0, 0)).y() + self.anchor.height() + 4)
         popup.keyPressEvent(QtGui.QKeyEvent(QtCore.QEvent.KeyPress, Qt.Key_B, Qt.NoModifier))
         popup.keyPressEvent(QtGui.QKeyEvent(QtCore.QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))

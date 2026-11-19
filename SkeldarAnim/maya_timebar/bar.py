@@ -1,19 +1,18 @@
 """The Time Bar (2026-10-16): Maya's two rows - the range row on top, the time row
-below - painted in the hub's look and moving as the radial menu does.
+below - painted in the hub's look.
 
 Range row: animation start | playback start | the range block | playback end |
-animation end | bookmarks (previous, add, next) | character set | layer | fps |
-loop | cached playback | speed | sound | Auto key | preferences.
+animation end | character set | layer | fps | loop | cached playback | speed |
+sound | Auto key | layers | preferences.
 Time row: the timeline (bookmarks, the sound's waveform, keys and breakdowns, the
 highlight that moves and scales keys, the playhead) | the current frame | eight
 transport buttons.
 
-Motion: the controls open from small with a bounce, lift and glow under the
-mouse, flash on a press; the key under the mouse grows; a key the playhead
-reaches lights up and fades back. ⋮ -> Interface animations off makes it all
-instant. The widget talks to Maya only through a `link` (scene.py in Maya, a
-fake in the tests); the jobs find the strip through the module state - never a
-held wrapper (trap 135).
+No motion and no light (2026-11-19, «удаляем все подсветки и анимации из плагина»):
+everything is drawn in its end state at once, a control's face changes flatly under
+the mouse. The widget talks to Maya only through a `link` (scene.py in Maya, a fake
+in the tests); the jobs find the strip through the module state - never a held
+wrapper (trap 135).
 Spec: docs/superpowers/specs/2026-10-16-time-bar-design.md
 """
 
@@ -26,17 +25,7 @@ from . import CONTROL, look, _state
 
 ROOT_NAME = "skeldarTimeBarRoot"
 TIMER_MS = 250
-FRAME_MS = 16
-QUIET_MS = 800         # after a key move: the key edits Maya reports for it play no effect
-HOVER_MS = look.HOVER_MS    # the radial menu's lift (maya_timebar.look)
-FLASH_MS = look.FLASH_MS      # a press (maya_timebar.look)
-POP_MS = 200            # a toggle
-KEY_FADE_MS = 600       # a key the playhead reached
-LIFT = 0.10             # +10 % under the mouse
-KEY_LIFT = 0.6          # a key grows 60 % (under the mouse or reached)
-KEY_PULSE = 1.3         # ... and a key reached or just set swells and shrinks back 30 % more
-                        # (2026-10-18: «анимация сжатия должна быть на 30 % сильнее»)
-PAD = 1                 # logical px either side of the timeline's frames: inside its border only
+PAD = 1                # logical px either side of the timeline's frames: inside its border only
 #  (was 10, 2026-10-22: the pads read as black gaps at both ends, dimmed as outside the range)
 TIMELINE_H = 40         # logical px: the bookmarks band, the keys, the ruler
 BAND_H = 11             # the bookmarks band, its name inside
@@ -59,8 +48,6 @@ REC = "#e0524a"
 BREAKDOWN = "#6fb7c9"
 HIGHLIGHT = "#7fa9e6"
 WAVE = "#565a68"
-RIM = look.RIM
-SET_GLOW = 44       # logical px: the flash of a key set (2026-10-17: stronger, «глоу должен быть сильнее»)
 
 #  the mockup's glyphs (16 x 16 SVG paths), drawn with QtSvg in the control's colour
 GLYPHS = {
@@ -153,15 +140,6 @@ class Link(object):
 def _tokens():
     import maya_hubstyle
     return maya_hubstyle.TOKENS
-
-
-def animations_on():
-    """⋮ -> Interface animations (maya_hubmotion; on where it cannot be asked)."""
-    try:
-        import maya_hubmotion
-        return bool(maya_hubmotion.enabled())
-    except Exception:                                        # noqa: BLE001
-        return True
 
 
 def steel_on():
@@ -261,36 +239,7 @@ def classes():
         if renderer is not None:
             renderer.render(p, rect)
 
-    halos = {}
-
-    def halo(hex_, ui):
-        """A key's glow at full strength - three rings fading outward - drawn once
-        per colour and size into a picture: a lit key is one drawPixmap, not three
-        antialiased rectangles (2026-10-16, a dense take lights dozens at a time)."""
-        key = (hex_, round(ui, 3))
-        picture = halos.get(key)
-        if picture is None:
-            z = 1.0 + KEY_LIFT
-            kw, kh = 3 * ui * min(z, 1.5), 14 * ui * z
-            grow = 4.5 * ui
-            w, h = kw + 2 * grow, kh + 2 * grow
-            picture = QtGui.QPixmap(int(round(w * 2)), int(round(h * 2)))
-            picture.setDevicePixelRatio(2.0)
-            picture.fill(Qt.transparent)
-            hp = QtGui.QPainter(picture)
-            hp.setRenderHint(QtGui.QPainter.Antialiasing)
-            hp.setPen(Qt.NoPen)
-            body = QtCore.QRectF(grow, grow, kw, kh)
-            for i in range(3, 0, -1):
-                g = i * 1.5 * ui
-                hp.setBrush(colour(hex_, 40 * (4 - i) / 3.0))
-                hp.drawRoundedRect(body.adjusted(-g, -g, g, g), 1.5 * ui + g, 1.5 * ui + g)
-            hp.end()
-            halos[key] = picture
-        return picture
-
     ingots = {}
-    glows = {}
 
     def _ratio(p):
         try:
@@ -300,10 +249,9 @@ def classes():
 
     def ingot(p, rect, hex_, ui, shadow=True):
         """A steel key on a whole frame, drawn once per size, place within its pixel,
-        colour and scale into a picture (2026-10-27: playback lights twenty keys at a
-        time, and drawing each ingot's gradient and faces cost 3.7 ms a frame - with a
-        picture it is one drawPixmap). Sizes and the place inside the pixel are kept to
-        a quarter pixel."""
+        colour and scale into a picture (2026-10-27: drawing each ingot's gradient and
+        faces cost 3.7 ms a frame on a dense take - with a picture it is one
+        drawPixmap). Sizes and the place inside the pixel are kept to a quarter pixel."""
         x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
         if w <= 0 or h <= 0:
             return
@@ -363,54 +311,17 @@ def classes():
             p.fillRect(QtCore.QRectF(x + side * 0.5, y + h - line, w - side, line),
                        colour("#000000", 255 * look.INGOT_EDGE[1]))
 
-    def ingot_glow(p, rect, hex_, level):
-        """A steel key's glow (the mockup's): a round soft light in its colour, as added
-        light, `level` its strength (look.steel_glow)."""
-        if level <= 0.01:
-            return
-        c = rect.center()
-        reach = round(max(rect.width(), rect.height()) * look.STEEL_GLOW_REACH * 2) / 2.0
-        if reach <= 0:
-            return
-        dpr = _ratio(p)
-        key = (hex_, reach, dpr)
-        picture = glows.get(key)
-        if picture is None:
-            if len(glows) >= 200:
-                glows.clear()
-            side = int(math.ceil(2 * reach * dpr))
-            picture = QtGui.QPixmap(side, side)
-            picture.setDevicePixelRatio(dpr)
-            picture.fill(Qt.transparent)
-            gp = QtGui.QPainter(picture)
-            g = QtGui.QRadialGradient(QtCore.QPointF(reach, reach), reach)
-            g.setColorAt(0.0, colour(hex_, 255))
-            g.setColorAt(1.0, colour(hex_, 0))
-            gp.fillRect(QtCore.QRectF(0, 0, 2 * reach, 2 * reach), QtGui.QBrush(g))
-            gp.end()
-            glows[key] = picture
-        #  the full-strength picture at `level` of it: a premultiplied texel times the
-        #  painter's opacity is the gradient drawn with that alpha
-        opacity = p.opacity()
-        p.setOpacity(opacity * min(1.0, level))
-        p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-        p.drawPixmap(QtCore.QRectF(c.x() - reach, c.y() - reach, 2 * reach, 2 * reach), picture,
-                     QtCore.QRectF(picture.rect()))
-        p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
-        p.setOpacity(opacity)
-
-    def add_key(path, x, h, ui, whole, width=None, cell=None, grow=0.0):
+    def add_key(path, x, h, ui, whole, cell=None):
         """A key's mark into `path`: on a whole frame its frame's cell filled, with a
-        gap between neighbours (`cell`, px a frame; the animator's mockup, 2026-10-17),
-        grown by `grow` when lit; where it stands between frames a dashed line on its
-        time (Maya's slider: the mark is where the key is in time)."""
+        gap between neighbours (`cell`, px a frame; the animator's mockup, 2026-10-17);
+        where it stands between frames a dashed line on its time (Maya's slider: the
+        mark is where the key is in time)."""
         top, bottom = key_span(h, ui)
         if whole and cell:
             l, tp, w, hh = look.key_cell(x, cell, top, bottom, ui)
-            path.addRoundedRect(QtCore.QRectF(l - grow, tp - grow, w + 2 * grow, hh + 2 * grow),
-                                1.5 * ui, 1.5 * ui)
+            path.addRoundedRect(QtCore.QRectF(l, tp, w, hh), 1.5 * ui, 1.5 * ui)
             return
-        kw = (width or KEY_W * ui) * (1.0 if whole else DASH_W)
+        kw = KEY_W * ui * (1.0 if whole else DASH_W)
         if whole:
             path.addRect(QtCore.QRectF(x - kw / 2, top, kw, bottom - top))
             return
@@ -420,45 +331,11 @@ def classes():
             path.addRect(QtCore.QRectF(x - kw / 2, y, kw, min(dash, bottom - y)))
             y += dash + gap
 
-    def glow(p, rect, radius, hex_, level, ui):
-        """The radial menu's lit ring: rings fading outward, then a 2 px edge."""
-        if level <= 0.01:
-            return
-        p.setBrush(Qt.NoBrush)
-        for i in range(4, 0, -1):
-            p.setPen(QtGui.QPen(colour(hex_, 46 * level * (5 - i) / 4.0), max(1.0, ui)))
-            grow = i * 1.6 * ui
-            p.drawRoundedRect(rect.adjusted(-grow, -grow, grow, grow), radius + grow, radius + grow)
-        p.setPen(QtGui.QPen(colour(hex_, 255 * level), 2 * ui))
-        p.drawRoundedRect(rect, radius, radius)
-
-    def soft_dot(p, cx, cy, r, hex_, alpha):
-        """A round glow: a radial gradient from `alpha` at the centre to nothing."""
-        if r <= 0.5 or alpha <= 1:
-            return
-        g = QtGui.QRadialGradient(QtCore.QPointF(cx, cy), r)
-        g.setColorAt(0.0, colour(hex_, alpha))
-        g.setColorAt(0.45, colour(hex_, alpha * 0.45))
-        g.setColorAt(1.0, colour(hex_, 0))
-        p.setPen(Qt.NoPen)
-        p.setBrush(QtGui.QBrush(g))
-        p.drawEllipse(QtCore.QPointF(cx, cy), r, r)
-
-    def band(p, x, h, half, hex_, alpha):
-        """A soft vertical band of light at `x`, `half` each side, the whole height `h`."""
-        if half <= 0.25 or alpha <= 1:
-            return
-        g = QtGui.QLinearGradient(x - half, 0, x + half, 0)
-        g.setColorAt(0.0, colour(hex_, 0))
-        g.setColorAt(0.5, colour(hex_, alpha))
-        g.setColorAt(1.0, colour(hex_, 0))
-        p.fillRect(QtCore.QRectF(x - half, 0, half * 2, h), QtGui.QBrush(g))
-
     # -- a painted control -------------------------------------------------------
 
     class Pill(QtWidgets.QAbstractButton):
-        """A button the strip paints and moves: an icon, a text or both; plain,
-        a chip, the orange play, a toggle lit when on."""
+        """A button the strip paints: an icon, a text or both; plain, a chip, the
+        orange play, a toggle lit when on. Its face changes flatly under the mouse."""
 
         def __init__(self, strip, glyph="", text="", tip="", style="plain", toggle=False, accent_glyph=False):
             super(Pill, self).__init__(strip)
@@ -468,13 +345,8 @@ def classes():
             self.setToolTip(tip)
             self.setCheckable(toggle)
             self.setCursor(Qt.PointingHandCursor)
-            self.hover = 0.0            # 0..1, eased toward self.goal
-            self.goal = 0.0
-            self.flash_at = None
-            self.pop_at = None
+            self.hovered = False        # the mouse over it: the hover face
             self.badge = ""             # a small round count at the top-right (2026-10-18)
-            self._was_busy = False
-            self.index = strip.register(self)
             self._fit()
 
         def margin(self):
@@ -509,31 +381,14 @@ def classes():
                 self.update()
 
         def enterEvent(self, event):
-            self.goal = 1.0
-            self.strip.kick()
+            self.hovered = True
+            self.update()
             super(Pill, self).enterEvent(event)
 
         def leaveEvent(self, event):
-            self.goal = 0.0
-            self.strip.kick()
+            self.hovered = False
+            self.update()
             super(Pill, self).leaveEvent(event)
-
-        def mousePressEvent(self, event):
-            self.flash_at = self.strip.clock()
-            self.strip.kick()
-            super(Pill, self).mousePressEvent(event)
-
-        def nextCheckState(self):
-            super(Pill, self).nextCheckState()
-            self.pop_at = self.strip.clock()
-
-        def busy(self, now):
-            return (abs(self.hover - self.goal) > 0.005
-                    or (self.flash_at is not None and now - self.flash_at < FLASH_MS)
-                    or (self.pop_at is not None and now - self.pop_at < POP_MS))
-
-        def step(self, dt):
-            self.hover = look.approach(self.hover, self.goal, dt, HOVER_MS) if self.strip.motion else self.goal
 
         def paintEvent(self, _event):
             try:
@@ -544,49 +399,33 @@ def classes():
                 self._failed = True
 
         def _paint(self):
-            s, tk, ui = self.strip, self.strip.tokens, self.strip.ui
-            now = s.clock()
-            scale, opacity = s.opening_of(self.index)
-            flash = 0.0
-            if self.flash_at is not None and s.motion and now - self.flash_at < FLASH_MS:
-                flash = 1.0 - (now - self.flash_at) / float(FLASH_MS)
-            pop = 1.0
-            if self.pop_at is not None and s.motion and now - self.pop_at < POP_MS:
-                pop = 0.7 + 0.3 * look.back_out((now - self.pop_at) / float(POP_MS))
-            z = scale * pop * (1.0 + LIFT * self.hover) * (1.0 - 0.06 * flash)
+            tk, ui = self.strip.tokens, self.strip.ui
+            hover = self.hovered
             m = self.margin()
             base = QtCore.QRectF(self.rect()).adjusted(m, m, -m, -m)
             p = QtGui.QPainter(self)
             p.setRenderHint(QtGui.QPainter.Antialiasing)
-            p.setOpacity(opacity)
-            c = base.center()
-            p.translate(c)
-            p.scale(z, z)
-            p.translate(-c)
             radius = (base.height() / 2.0) if self.style_ == "chip" else 5 * ui
             on = self.isCheckable() and self.isChecked()
             if self.style_ == "play":
-                face = blend(tk["accent"], tk["accent_hover"], self.hover)
+                face = colour(tk["accent_hover"] if hover else tk["accent"])
             elif self.style_ == "chip":
-                face = blend(tk["card"], tk["hover"], self.hover)
+                face = colour(tk["hover"] if hover else tk["card"])
             elif on:
                 face = colour("#3a2323") if self.style_ == "rec" else colour(tk["accent_tint"])
             else:
-                face = colour(tk["hover"], 255 * self.hover)
-            if flash > 0:
-                face = blend(face.name(), tk["accent"], flash)
+                face = colour(tk["hover"], 255 if hover else 0)
             p.setPen(QtGui.QPen(colour(tk["line"]), 1) if self.style_ == "chip" else Qt.NoPen)
             p.setBrush(face)
             p.drawRoundedRect(base, radius, radius)
-            glow(p, base, radius, RIM if self.style_ == "play" else tk["accent"], self.hover, ui)
-            if self.style_ == "play" or flash > 0.5:
+            if self.style_ == "play":
                 ink = colour(tk["on_accent"])
             elif self.style_ == "rec" and on:
                 ink = colour(REC)
             elif on or self.accent_glyph:
                 ink = colour(tk["accent_text"])
             else:
-                ink = blend(tk["muted"], tk["text"], self.hover)
+                ink = colour(tk["text"] if hover else tk["muted"])
             left = base.left()
             if self.glyph:
                 side = 15 * ui
@@ -635,10 +474,6 @@ def classes():
             self.setMouseTracking(True)
             self.setCursor(Qt.OpenHandCursor)
             self.drag = None
-            self.hover = {"l": 0.0, "r": 0.0}
-            self.goal = {"l": 0.0, "r": 0.0}
-            self._was_busy = False
-            self.index = strip.register(self)
 
         def edges(self):
             s, ui = self.strip.state, self.strip.ui
@@ -659,14 +494,6 @@ def classes():
                 return "r"
             return "m" if x0 < x < x1 else None
 
-        def busy(self, now):
-            return any(abs(self.hover[k] - self.goal[k]) > 0.005 for k in self.hover)
-
-        def step(self, dt):
-            for k in self.hover:
-                self.hover[k] = (look.approach(self.hover[k], self.goal[k], dt, HOVER_MS)
-                                 if self.strip.motion else self.goal[k])
-
         def paintEvent(self, _event):
             try:
                 self._paint()
@@ -677,15 +504,9 @@ def classes():
 
         def _paint(self):
             s, tk, ui = self.strip.state, self.strip.tokens, self.strip.ui
-            scale, opacity = self.strip.opening_of(self.index)
             p = QtGui.QPainter(self)
             p.setRenderHint(QtGui.QPainter.Antialiasing)
-            p.setOpacity(opacity)
             r = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-            c = r.center()
-            p.translate(c)
-            p.scale(1.0, scale)
-            p.translate(-c)
             p.setPen(QtGui.QPen(colour(tk["track_edge"]), 1))
             p.setBrush(colour(tk["track"]))
             p.drawRoundedRect(r, 6 * ui, 6 * ui)
@@ -694,14 +515,10 @@ def classes():
             p.setPen(Qt.NoPen)
             p.setBrush(colour(tk["thumb"]))
             p.drawRoundedRect(thumb, 4 * ui, 4 * ui)
-            for key, x in (("l", thumb.left() + 2 * ui), ("r", thumb.right() - 6 * ui)):
-                h = self.hover[key]
-                cx_, cy_ = x + 2 * ui, thumb.center().y()
-                ew, eh = 4 * ui * (1 + 0.6 * h), (thumb.height() - 2 * ui) * (1 + 0.25 * h)
-                edge = QtCore.QRectF(cx_ - ew / 2, cy_ - eh / 2, ew, eh)
-                glow(p, edge, 2 * ui, tk["accent"], h * 0.7, ui)
-                p.setPen(Qt.NoPen)
-                p.setBrush(colour(tk["accent"]))
+            p.setBrush(colour(tk["accent"]))
+            for x in (thumb.left() + 2 * ui, thumb.right() - 6 * ui):
+                ew, eh = 4 * ui, thumb.height() - 2 * ui
+                edge = QtCore.QRectF(x + 2 * ui - ew / 2, thumb.center().y() - eh / 2, ew, eh)
                 p.drawRoundedRect(edge, 2 * ui, 2 * ui)
             font = QtGui.QFont("Consolas")
             font.setPixelSize(max(8, int(11 * ui)))
@@ -720,10 +537,7 @@ def classes():
             x = self._x(event)
             if self.drag is None:
                 part = self.part(x)
-                for k in self.goal:
-                    self.goal[k] = 1.0 if part == k else 0.0
                 self.setCursor(Qt.SizeHorCursor if part in ("l", "r") else Qt.OpenHandCursor)
-                self.strip.kick()
                 return
             kind, x_start, p0, p1 = self.drag
             s = self.strip.state
@@ -756,11 +570,6 @@ def classes():
             self.drag = None
             self.setCursor(Qt.OpenHandCursor)
             self.strip.refresh()
-
-        def leaveEvent(self, event):
-            for k in self.goal:
-                self.goal[k] = 0.0
-            self.strip.kick()
 
     # -- keys during a drag ------------------------------------------------------
 
@@ -826,14 +635,10 @@ def classes():
                     tl.stamped = got            # the keys dragged: the release moves only them
             elif action[0] == "range":
                 self.strip.call("key_range", action[1], action[2], name)
-                #  every key of the highlight was set: each flashes (and, steel, cools) -
-                #  not only the current frame's (2026-10-20: «при простановке ключей на
-                #  массив все ключи которые проставлены должны остывать»)
-                self.strip.mark_set(action[1], action[2])
             else:
                 self.strip.call("run_key_command", name)
             #  the strip's tick reads no keys while the playhead is dragged: the key
-            #  and its flash show now, not on the release (2026-10-18)
+            #  shows now, not on the release (2026-10-18)
             self.strip.refresh(keys=True)
             self.strip.timeline.repaint()
             return True
@@ -863,15 +668,6 @@ def classes():
             self.live_timer.setSingleShot(True)
             self.live_timer.setInterval(0)
             self.live_timer.timeout.connect(self._flush_live)
-            self.aim_key = None         # the key under the mouse
-            self.aim_head = False
-            self.key_lift = {}          # key -> 0..1, eased
-            self.head_lift = 0.0
-            self.reached = {}           # key -> clock() when the playhead reached it
-            self.cooling = {}           # key -> clock() when it was set hot (Steel keys)
-            self.plates = []            # [(a, b, clock())]: a highlight keyed at once, one hot plate
-            self.trail = {}             # cell -> clock() when the playhead left it (scrub, play)
-            self.play_at = None         # Play pressed: a glow fills in from the edge
             self.right_at = None        # ms of a right press whose key menu waits for a second one
             self.menu_wait = QtCore.QTimer(self)    # the key menu, opened once no second press came
             self.menu_wait.setSingleShot(True)
@@ -880,185 +676,11 @@ def classes():
             self._static = None         # the still part, drawn once (`_paint`)
             self._static_for = None
             self.static_builds = 0
-            self._was_busy = False
-            self.index = strip.register(self)
 
         def track(self):
             s, pad = self.strip.state, PAD * self.strip.ui
             v0, v1 = self.view or (s["p0"], s["p1"])
             return look.Track(v0, v1, pad, self.width() - pad, cells=True)
-
-        # motion -------------------------------------------------------------
-        def busy(self, now):
-            if abs(self.head_lift - (1.0 if self.aim_head else 0.0)) > 0.005:
-                return True
-            if any(abs(v - (1.0 if k == self.aim_key else 0.0)) > 0.005 for k, v in self.key_lift.items()):
-                return True
-            if self.aim_key is not None and self.key_lift.get(self.aim_key, 0.0) < 0.995:
-                return True
-            if self.trail:
-                return True
-            if self.play_at is not None and look.progress(now - self.play_at, "play") is not None:
-                return True
-            if any(now - t0 < look.COOL_MS for t0 in self.cooling.values()):
-                return True
-            if any(now - t0 < look.plate_ms(self.strip.steel) for _a, _b, t0 in self.plates):
-                return True
-            return any(now - t0 < KEY_FADE_MS for t0 in self.reached.values())
-
-        def step(self, dt):
-            on = self.strip.motion
-            goal = 1.0 if self.aim_head else 0.0
-            self.head_lift = look.approach(self.head_lift, goal, dt, HOVER_MS) if on else goal
-            keys = set(self.key_lift) | ({self.aim_key} if self.aim_key is not None else set())
-            for k in keys:
-                g = 1.0 if k == self.aim_key else 0.0
-                v = look.approach(self.key_lift.get(k, 0.0), g, dt, HOVER_MS) if on else g
-                if v <= 0.0 and g == 0.0:
-                    self.key_lift.pop(k, None)
-                else:
-                    self.key_lift[k] = v
-            now = self.strip.clock()
-            for k in [k for k, t0 in self.reached.items() if now - t0 >= KEY_FADE_MS]:
-                del self.reached[k]
-            for k in [k for k, t0 in self.cooling.items() if now - t0 >= look.COOL_MS or not self.strip.steel]:
-                del self.cooling[k]
-            self.plates = [pl for pl in self.plates if now - pl[2] < look.plate_ms(self.strip.steel)]
-            self._prune_trail(now)
-
-        def _prune_trail(self, now):
-            for f in [f for f, t0 in self.trail.items() if look.progress(now - t0, "trail") is None]:
-                del self.trail[f]
-
-        def leave(self, frame):
-            """The playhead left `frame`'s cell (a scrub, playback): it glows and fades."""
-            if not self.strip.motion:
-                return
-            now = self.strip.clock()
-            self._prune_trail(now)          # playback turns no timer: prune here too
-            self.trail[math.floor(frame + 1e-9)] = now
-            self.strip.kick()
-
-        def played(self):
-            """Play pressed: a soft accent glow fills the timeline in from its edge."""
-            if self.strip.motion:
-                self.play_at = self.strip.clock()
-                self.strip.kick()
-
-        def _draw_trail(self, p, t, h):
-            now, accent = self.strip.clock(), self.strip.tokens["accent"]
-            p.setPen(Qt.NoPen)
-            for frame, t0 in self.trail.items():
-                u = look.progress(now - t0, "trail")
-                if u is None:
-                    continue
-                c0, c1 = t.cell(frame)
-                p.setBrush(colour(accent, look.TRAIL_ALPHA * 255 * (1.0 - u)))
-                p.drawRect(QtCore.QRectF(c0, 0, max(1.0, c1 - c0), h))
-
-        def _draw_play_frame(self, p, w, h):
-            st = self.strip
-            u = look.progress(st.clock() - self.play_at, "play") if self.play_at is not None else None
-            level = look.play_glow(u)
-            if level <= 0:
-                return
-            ui = st.ui
-            p.save()
-            p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-            p.setBrush(Qt.NoBrush)
-            # rings one physical px wide from the edge in, the accent fading as (1 - d)^2
-            rings = max(1, int(round(look.PLAY_GLOW_DEPTH * ui)))
-            radius = 6 * ui
-            accent = st.tokens["accent"]
-            for i in range(rings):
-                k = 1.0 - i / float(rings)
-                a = level * k * k * look.PLAY_GLOW_RING
-                if a * 255 < 1:
-                    continue
-                inset = 1.5 + i
-                if 2 * inset >= min(w, h):
-                    break
-                p.setPen(QtGui.QPen(colour(accent, 255 * a), 1.0))
-                r = max(1.0, radius - i * 0.3)
-                p.drawRoundedRect(QtCore.QRectF(inset, inset, w - 2 * inset, h - 2 * inset), r, r)
-            p.setPen(QtGui.QPen(colour(RIM, 255 * level * look.PLAY_GLOW_RIM), 1.0 * ui))
-            p.drawRoundedRect(QtCore.QRectF(1.75, 1.75, w - 3.5, h - 3.5), radius, radius)
-            p.restore()
-
-        def key_effect(self, kind, frame, breakdown=False, glow=True, **timing):
-            """A key set ("set": a round glow) or deleted ("delete": sparks) at `frame`;
-            `timing` the delay, life and spark count of a key in a wave. `glow` False: a
-            key set swells (and cools) without its round flash - one of many set at once."""
-            st = self.strip
-            t = self.track()
-            if not st.motion or not (t.v0 - 0.5 <= frame <= t.v1 + 1.5):
-                return False
-            cx, cy, rect = self._key_place(frame)
-            timing.setdefault("rect", rect)
-            hex_ = BREAKDOWN if breakdown else (st.tokens["accent"] if kind == "set" else st.key_hex())
-            if glow or kind != "set":
-                st.fx.add(kind, cx=cx, cy=cy, hex=hex_, **timing)
-            if kind == "set" and st.steel and not breakdown:
-                # forged steel: the key is set hot and cools (2026-10-20)
-                self.cooling[frame] = st.clock()
-            if kind == "set":
-                # the key itself swells and shrinks back, as one the playhead reaches
-                # (2026-10-18: «при появлении ключа тоже»)
-                self.reached[frame] = st.clock()
-                st.kick()
-            return True
-
-        def _key_place(self, frame):
-            """A key's middle and its drawn rectangle (left, top, w, h), in the overlay's
-            points: the cell it fills on a whole frame, its thin line between frames."""
-            st, t = self.strip, self.track()
-            ui = st.ui
-            top, bottom = key_span(float(self.height()), ui)
-            cx, cy = st.point_of(self, look.key_centre(t, frame), (top + bottom) / 2.0)
-            if look.on_frame(frame):
-                l, tp, w, h = look.key_cell(t.x(frame), t.scale, top, bottom, ui)
-            else:
-                w = KEY_W * ui
-                l, tp, h = t.x(frame) - w / 2.0, top, bottom - top
-            ox, oy = st.point_of(self, l, tp)
-            return cx, cy, (ox, oy, w, h)
-
-        def delete_wave(self, removed):
-            """Keys deleted: each breaks into pieces, one after another, left to right, the whole
-            wave within look.DELETE_TOTAL_MS however many (2026-10-17). `removed`:
-            [(frame, breakdown)]. Only the keys in view play; the keys themselves are
-            already gone."""
-            t = self.track()
-            shown = sorted(r for r in removed if t.v0 - 0.5 <= r[0] <= t.v1 + 1.5)
-            if not look.DELETE_SHARDS or not self.strip.motion or not shown:
-                return
-            groups = look.shard_groups(len(shown))
-            delays, life = look.delete_plan(len(groups))
-            for (a, b), delay in zip(groups, delays):
-                # neighbours too dense to tell apart break as one block of their keys
-                rects = [self._key_place(f)[2] for f, _bd in shown[a:b]]
-                left = min(r[0] for r in rects)
-                right = max(r[0] + r[2] for r in rects)
-                top, h = rects[0][1], rects[0][3]
-                frame, bd = shown[a]
-                # the keys stay drawn where they stood until they break (`ghosts`): the data
-                # is gone already, the picture of each key waits for its turn
-                self.key_effect("delete", frame, bd, delay=delay, life=life,
-                                rect=(left, top, right - left, h), ghosts=rects, quiet=True)
-            if shown:
-                self.strip.fx.raise_()
-                self.strip.kick()
-
-        def reach(self, before, after):
-            """The playhead went from `before` to `after`: the keys it reached light up."""
-            if not self.strip.motion:
-                return
-            hit = look.passed(self.strip.keys + self.strip.breakdowns, before, after)
-            if hit:
-                now = self.strip.clock()
-                for k in hit:
-                    self.reached[k] = now
-                self.strip.kick()
 
         # painting -------------------------------------------------------------
         def paintEvent(self, _event):
@@ -1072,18 +694,13 @@ def classes():
         def _paint(self):
             """The still part - the track, the sound, the bookmarks, the highlight, the
             ruler and the keys - is one cached picture, drawn again only when it
-            changes (`_static_key`); each frame paints that picture, the keys that are
-            lit or lifted and the playhead over it (2026-10-16, «фпс проседает когда
-            перетаскиваешь ползунок»: the whole timeline drawn element by element was
-            3-5 ms a step and the key-fade tick 10 ms every 16 ms on a dense take)."""
-            st = self.strip
+            changes (`_static_key`); each frame paints that picture and the playhead
+            over it (2026-10-16, «фпс проседает когда перетаскиваешь ползунок»: the
+            whole timeline drawn element by element was 3-5 ms a step)."""
             t = self.drag[2] if self.drag else self.track()
-            tk, ui, s = st.tokens, st.ui, st.state
             w, h = float(self.width()), float(self.height())
-            scale, opacity = st.opening_of(self.index)
-            entrance = st.entrance is not None
             moving = self.moving()
-            key = self._static_key(t, w, h, not entrance, moving)
+            key = self._static_key(t, w, h, moving)
             if key != self._static_for or self._static is None:
                 dpr = max(1.0, float(self.devicePixelRatioF()))
                 picture = QtGui.QPixmap(max(1, int(round(w * dpr))), max(1, int(round(h * dpr))))
@@ -1091,27 +708,16 @@ def classes():
                 picture.fill(Qt.transparent)
                 sp = QtGui.QPainter(picture)
                 sp.setRenderHint(QtGui.QPainter.Antialiasing)
-                self._draw_static(sp, t, w, h, not entrance, moving)
+                self._draw_static(sp, t, w, h, moving)
                 sp.end()
                 self._static, self._static_for = picture, key
                 self.static_builds += 1
             p = QtGui.QPainter(self)
             p.setRenderHint(QtGui.QPainter.Antialiasing)
-            p.setOpacity(opacity)
-            p.translate(0, h / 2)
-            p.scale(1.0, scale)
-            p.translate(0, -h / 2)
             p.drawPixmap(0, 0, self._static)
             p.setClipRect(QtCore.QRectF(1, 1, w - 2, h - 2))
             p.setPen(Qt.NoPen)
-            if st.motion and self.trail:
-                self._draw_trail(p, t, h)
-            self._draw_moving_keys(p, t, entrance, moving, opacity)
-            if self.plates and not entrance:
-                self._draw_plates(p, t, h, opacity)
             self._draw_playhead(p, t, w, h)
-            if st.motion and self.play_at is not None:
-                self._draw_play_frame(p, w, h)
             p.end()
 
         def own_moving(self):
@@ -1137,16 +743,16 @@ def classes():
                 print(traceback.format_exc())
                 return None
 
-        def _static_key(self, t, w, h, with_keys, moving):
+        def _static_key(self, t, w, h, moving):
             """What the cached picture shows; a new one is drawn when this changes."""
             st, s = self.strip, self.strip.state
             return (int(w), int(h), st.ui, round(t.v0, 4), round(t.v1, 4), s["p0"], s["p1"],
                     bool(s.get("sound_shown")), id(st.wave), len(st.wave), tuple(st.marks),
-                    self.preview or s.get("highlight"), moving, with_keys,
+                    self.preview or s.get("highlight"), moving,
                     hash(tuple(st.keys)), hash(tuple(st.breakdowns)), self.devicePixelRatioF(),
                     st.key_hex())
 
-        def _draw_static(self, p, t, w, h, with_keys, moving):
+        def _draw_static(self, p, t, w, h, moving):
             st = self.strip
             tk, ui, s = st.tokens, st.ui, st.state
             p.setPen(QtGui.QPen(colour(tk["track_edge"]), 1))
@@ -1237,156 +843,31 @@ def classes():
                     tx = min(max(x - tw / 2.0, 2 * ui), w - 2 * ui - tw)
                     p.setPen(label_pen)
                     p.drawText(QtCore.QPointF(tx, ry + metrics.ascent()), text)
-            # the keys at rest
-            if with_keys:
+            # the keys
+            p.setPen(Qt.NoPen)
+            for frames, hex_ in ((st.keys, st.key_hex()), (st.breakdowns, BREAKDOWN)):
+                path = QtGui.QPainterPath()
+                #  a copy S put down stands where its key is dragged: under the default
+                #  odd-even fill two equal shapes cancel out (2026-10-19)
+                path.setFillRule(Qt.WindingFill)
+                bars = []                    # Steel keys: each whole-frame key an ingot
+                top, bottom = key_span(h, ui)
+                for frame in frames:
+                    for shown in (look.shown_at(frame, *moving) if moving else (frame,)):
+                        if t.v0 - 1 <= shown <= t.v1 + 2:
+                            whole = look.on_frame(shown)
+                            if st.steel and whole and t.cells:
+                                bars.append(QtCore.QRectF(
+                                    *look.key_cell(t.x(shown), t.scale, top, bottom, ui)))
+                            else:
+                                add_key(path, t.x(shown), h, ui, whole, cell=t.scale)
+                p.fillPath(path, colour(hex_))
+                for rect in bars:
+                    ingot(p, rect, hex_, ui)
                 p.setPen(Qt.NoPen)
-                for frames, hex_ in ((st.keys, st.key_hex()), (st.breakdowns, BREAKDOWN)):
-                    path = QtGui.QPainterPath()
-                    #  a copy S put down stands where its key is dragged: under the default
-                    #  odd-even fill two equal shapes cancel out (2026-10-19)
-                    path.setFillRule(Qt.WindingFill)
-                    bars = []                    # Steel keys: each whole-frame key an ingot
-                    top, bottom = key_span(h, ui)
-                    for frame in frames:
-                        for shown in (look.shown_at(frame, *moving) if moving else (frame,)):
-                            if t.v0 - 1 <= shown <= t.v1 + 2:
-                                whole = look.on_frame(shown)
-                                if st.steel and whole and t.cells:
-                                    bars.append(QtCore.QRectF(
-                                        *look.key_cell(t.x(shown), t.scale, top, bottom, ui)))
-                                else:
-                                    add_key(path, t.x(shown), h, ui, whole, cell=t.scale)
-                    p.fillPath(path, colour(hex_))
-                    for rect in bars:
-                        ingot(p, rect, hex_, ui)
-                    p.setPen(Qt.NoPen)
             # the highlight's first and last frame, over the ruler (2026-10-20)
             if sel:
                 draw_span_labels(p, t, sel, 1.5 * ui, w, ui, tk)
-
-        def plate(self, a, b):
-            """Keys set on every frame a..b at once: one plate over them flashes and (Steel
-            keys) cools, in place of a flash on each key (2026-10-20: «растянуть какую-то
-            плашку и проиграть анимацию на плашке»)."""
-            st = self.strip
-            if not st.motion:
-                return False
-            self.plates = [pl for pl in self.plates if not (pl[0] >= a and pl[1] <= b)]
-            self.plates.append((float(a), float(b), st.clock()))
-            st.kick()
-            return True
-
-        def _draw_plates(self, p, t, h, opacity):
-            """Each plate: a bar over its keys' cells, hot and glowing, cooling into the
-            keys' own colour, then gone - the keys under it already are that colour."""
-            st = self.strip
-            ui, now = st.ui, st.clock()
-            top, bottom = key_span(h, ui)
-            for a, b, t0 in self.plates:
-                if b < t.v0 - 1 or a > t.v1 + 1:
-                    continue
-                look_ = look.plate(now - t0, st.steel, st.key_hex())
-                if look_ is None:
-                    continue
-                hex_, heat, alpha, swell = look_
-                la = look.key_cell(t.x(a), t.scale, top, bottom, ui)
-                lb = look.key_cell(t.x(b), t.scale, top, bottom, ui)
-                grow = 2.0 * ui * swell
-                rect = QtCore.QRectF(la[0] - grow, la[1] - grow,
-                                     lb[0] + lb[2] - la[0] + 2 * grow, la[3] + 2 * grow)
-                if heat > 0.01:
-                    # the glow: a few soft rings round the plate, added light
-                    p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-                    for i, spread in enumerate((7.0, 4.5, 2.5)):
-                        g = spread * ui
-                        p.setBrush(colour(hex_, 255 * 0.16 * heat * opacity))
-                        p.drawRoundedRect(rect.adjusted(-g, -g, g, g), 3 * ui + g, 3 * ui + g)
-                    p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
-                p.setBrush(colour(hex_, 255 * alpha * opacity))
-                p.drawRoundedRect(rect, 2 * ui, 2 * ui)
-
-        def _draw_moving_keys(self, p, t, entrance, moving, opacity):
-            """Over the picture: the keys that are lit or lifted, bigger and glowing -
-            or, while the bar bursts out or folds, every key at its own size."""
-            st = self.strip
-            tk, ui = st.tokens, st.ui
-            h = float(self.height())
-            now = st.clock()
-            if entrance:
-                frames = [(f, st.key_hex()) for f in st.keys] + [(f, BREAKDOWN) for f in st.breakdowns]
-            else:
-                live = (set(self.reached) | set(self.cooling)
-                        | set(k for k, v in self.key_lift.items() if v > 0.005))
-                if not live:
-                    return
-                keys, bds = set(st.keys), set(st.breakdowns)
-                frames = [(f, st.key_hex() if f in keys else BREAKDOWN) for f in live if f in keys or f in bds]
-            plain = {}
-            keys_now = set(st.keys)
-            for frame, hex_, shown in [(f, c, x) for f, c in frames
-                                       for x in (look.shown_at(f, *moving) if moving else (f,))]:
-                if not (t.v0 - 1 <= shown <= t.v1 + 1):
-                    continue
-                lit = look.flash(now - self.reached[frame], KEY_FADE_MS) if frame in self.reached else 0.0
-                heat, tint = 0.0, lit
-                if frame in self.cooling and frame in keys_now:
-                    #  forged steel: hot white to orange to cherry red, then cold steel
-                    hex_, heat = look.cooling(now - self.cooling[frame], st.key_hex())
-                    tint = 0.0          # the colour is the heat: no RIM over it
-                lift = max(self.key_lift.get(frame, 0.0), lit, heat)
-                swell = max(self.key_lift.get(frame, 0.0), lit * KEY_PULSE)
-                z = 1.0 + KEY_LIFT * swell
-                burst = 1.0
-                if entrance:
-                    g = self.mapToGlobal(QtCore.QPoint(int(look.key_centre(t, shown)), int(KEY_Y * ui)))
-                    ks, burst = st.entrance_of(g.x(), g.y())
-                    z *= ks
-                x = t.x(shown)
-                whole = look.on_frame(shown)
-                top, bottom = key_span(h, ui)
-                kw = KEY_W * ui * min(z, 1.0 + KEY_LIFT * KEY_PULSE)
-                grow = 0.0
-                if whole:
-                    #  the cell, grown a little when lit and squeezed toward its middle
-                    #  while it pops in
-                    l, tp, cw, ch = look.key_cell(x, t.scale, top, bottom, ui)
-                    grow = 1.5 * ui * swell
-                    if z < 1.0:
-                        cx, cy = l + cw / 2.0, tp + ch / 2.0
-                        cw, ch = cw * max(z, 0.05), ch * max(z, 0.05)
-                        l, tp = cx - cw / 2.0, cy - ch / 2.0
-                    rect = QtCore.QRectF(l - grow, tp - grow, cw + 2 * grow, ch + 2 * grow)
-                else:
-                    rect = QtCore.QRectF(x - kw / 2, top, kw, bottom - top)
-                if st.steel and whole:
-                    #  a steel ingot: the mockup's round glow, then the bevelled bar
-                    p.setOpacity(opacity * burst)
-                    ingot_glow(p, rect, hex_, look.steel_glow(heat, max(self.key_lift.get(frame, 0.0), lit)))
-                    #  the tint in 32 steps: a fading key reuses its pictures
-                    face = hex_ if tint <= 0.01 else blend(hex_, RIM, round(tint * 32) / 32.0 * 0.7).name()
-                    ingot(p, rect, face, ui, shadow=False)
-                    continue
-                if lift > 0.01:
-                    picture = halo(hex_, ui)
-                    grow = 4.5 * ui * z / (1.0 + KEY_LIFT)
-                    p.setOpacity(opacity * burst * lift)
-                    p.drawPixmap(rect.adjusted(-grow, -grow, grow, grow), picture,
-                                 QtCore.QRectF(picture.rect()))
-                p.setOpacity(opacity * burst)
-                if tint > 0.01:
-                    p.setBrush(blend(hex_, RIM, tint * 0.7))
-                else:
-                    brush = plain.get(hex_)
-                    if brush is None:
-                        brush = plain[hex_] = colour(hex_)
-                    p.setBrush(brush)
-                mark = QtGui.QPainterPath()
-                if whole:
-                    mark.addRoundedRect(rect, 1.5 * ui, 1.5 * ui)
-                else:
-                    add_key(mark, x, h, ui, whole, width=kw)
-                p.drawPath(mark)
-            p.setOpacity(opacity)
 
         def _draw_playhead(self, p, t, w, h):
             st = self.strip
@@ -1559,7 +1040,6 @@ def classes():
                 selection, target = self.drag[3], self.preview
                 if self.live:
                     self.live = None
-                    st.quiet_keys()
                     st.call("live_end", tuple(target or selection))
                     if target and target != selection:
                         loose = len(self.drag) > 4 and self.drag[4] == "loose"
@@ -1568,7 +1048,6 @@ def classes():
                     self.drag, self.preview = None, None
                     st.refresh(keys=True)
                 elif target and target != selection:
-                    st.quiet_keys()                     # a move is no set and delete
                     if self.stamped:
                         st.call("move_keys", selection, target, self.stamped)
                     else:
@@ -1634,25 +1113,12 @@ def classes():
             #  the wheel does not zoom the timeline (2026-10-19)
             event.ignore()
 
-        def leaveEvent(self, event):
-            self.aim_key, self.aim_head = None, False
-            self.strip.kick()
-
         def _aim(self, x):
+            """The cursor: an open hand over what a press would drag."""
             t, ui = self.track(), self.strip.ui
-            best, near = None, 7 * ui
-            near = max(near, t.scale / 2.0)
-            for k in self.strip.keys + self.strip.breakdowns:
-                d = abs(look.key_centre(t, k) - x)
-                if d < near:
-                    best, near = k, d
-            head = abs(t.x(self.strip.state["now"]) - x) < 8 * ui
             part = look.highlight_hit(t, x, self.strip.state.get("highlight"), ui)
             grab = part == "hmove" or (not part and self._key_under(x, t) is not None)
             self.setCursor(Qt.OpenHandCursor if grab else Qt.SizeHorCursor)
-            if best != self.aim_key or head != self.aim_head:
-                self.aim_key, self.aim_head = best, head
-                self.strip.kick()
 
         def _key_under(self, x, t):
             """The key whose cell the press is in (a key between frames: within half a
@@ -1689,16 +1155,6 @@ def classes():
             self.setCursor(Qt.SizeHorCursor)
             self.setMouseTracking(True)
             self.aim = False            # the mouse over the flag
-            self.lift = 0.0
-            self._was_busy = False
-            self.index = strip.register(self)
-
-        def busy(self, _now):
-            return abs(self.lift - (1.0 if self.aim or self._dragging() else 0.0)) > 0.005
-
-        def step(self, dt):
-            goal = 1.0 if self.aim or self._dragging() else 0.0
-            self.lift = look.approach(self.lift, goal, dt, HOVER_MS) if self.strip.motion else goal
 
         def _dragging(self):
             drag = self.strip.timeline.drag
@@ -1715,32 +1171,35 @@ def classes():
             t = t or st.timeline.track()
             c0, c1 = t.cell(st.state["now"])
             x = (c0 + c1) / 2.0 - self._x_on_timeline(0.0)
-            z = 1.0 + LIFT * self.lift
-            metrics = QtGui.QFontMetricsF(self._font(z))
-            tw = max(CARET_MIN_W * ui, metrics.horizontalAdvance(look.frame_text(st.state["now"])) + 8 * ui) * z
-            th = CARET_FLAG_H * ui * z
+            metrics = QtGui.QFontMetricsF(self._font())
+            tw = max(CARET_MIN_W * ui, metrics.horizontalAdvance(look.frame_text(st.state["now"])) + 8 * ui)
+            th = CARET_FLAG_H * ui
             fx = min(max(x - tw / 2.0, 1.0), self.width() - tw - 1.0)
             line = self.height() - 1.5 * ui
             return QtCore.QRectF(fx, line - 1.5 * ui - th, tw, th), x, line
 
-        def _font(self, z=1.0):
+        def _font(self):
             font = QtGui.QFont("Consolas")
             font.setBold(True)
-            font.setPixelSize(max(7, int(round(9 * self.strip.ui * z))))
+            font.setPixelSize(max(7, int(round(9 * self.strip.ui))))
             return font
 
         # painting -------------------------------------------------------------
+        def _lit(self):
+            """The flag under the mouse or held: its face a little lighter, nothing more."""
+            return self.aim or self._dragging()
+
         def _shown(self):
-            """What the line's picture reads: the time, the track, the flag's lift."""
+            """What the line's picture reads: the time, the track, the flag's face."""
             st = self.strip
             t = st.timeline.track()
+            drag = st.timeline.drag
             return (st.state.get("now"), t.v0, t.v1, t.left, t.right, self.width(), self.height(),
-                    round(self.lift, 3), self.aim, st.opening_of(self.index), st.ui)
+                    self._lit(), bool(drag and drag[0] == "mid"), st.ui)
 
         def stale(self):
             """The timeline repainting asks the line too only when the line would look
-            different: the keys' glow and fade repaint the timeline sixty times a
-            second, the line stays as it was (2026-10-27, half a millisecond a paint)."""
+            different (2026-10-27, half a millisecond a paint)."""
             try:
                 return self._shown() != getattr(self, "_painted", None)
             except Exception:                                # noqa: BLE001
@@ -1762,14 +1221,9 @@ def classes():
             except Exception:                                # noqa: BLE001
                 self._painted = None
             t = st.timeline.track()
-            w, h = float(self.width()), float(self.height())
-            scale, opacity = st.opening_of(self.index)
+            w = float(self.width())
             p = QtGui.QPainter(self)
             p.setRenderHint(QtGui.QPainter.Antialiasing)
-            p.setOpacity(opacity)
-            p.translate(0, h / 2)
-            p.scale(1.0, scale)
-            p.translate(0, -h / 2)
             p.setPen(Qt.NoPen)
             off = self._x_on_timeline(0.0)
             flag, x, line = self.flag_rect(t)
@@ -1789,14 +1243,13 @@ def classes():
             # the caret: a flag with the frame, a stem down to the line
             drag = st.timeline.drag
             head = colour(HIGHLIGHT if drag and drag[0] == "mid" else
-                          (tk["accent_text"] if self.lift > 0.5 else tk["accent"]))
-            glow(p, flag, 3 * ui, head.name(), self.lift * 0.8, ui)
+                          (tk["accent_text"] if self._lit() else tk["accent"]))
             p.setPen(Qt.NoPen)
             p.setBrush(head)
             p.drawRoundedRect(flag, 3 * ui, 3 * ui)
             stem = 1.5 * ui
             p.drawRect(QtCore.QRectF(x - stem / 2.0, flag.bottom() - 0.5, stem, line - flag.bottom() + 1.5 * ui))
-            p.setFont(self._font(1.0 + LIFT * self.lift))
+            p.setFont(self._font())
             p.setPen(colour(tk["on_accent"]))
             p.drawText(flag, Qt.AlignCenter, look.frame_text(st.state["now"]))
             p.end()
@@ -1818,7 +1271,7 @@ def classes():
             else:
                 return
             self.setCursor(Qt.ClosedHandCursor)
-            self.strip.kick()
+            self.update()
 
         def mouseMoveEvent(self, event):
             tl = self.strip.timeline
@@ -1829,7 +1282,7 @@ def classes():
             self.setCursor(Qt.OpenHandCursor if over else Qt.SizeHorCursor)
             if over != self.aim:
                 self.aim = over
-                self.strip.kick()
+                self.update()
 
         def mouseReleaseEvent(self, event):
             tl, st = self.strip.timeline, self.strip
@@ -1844,143 +1297,23 @@ def classes():
                 st.refresh()
             self.setCursor(Qt.OpenHandCursor if self.aim else Qt.SizeHorCursor)
             tl.update()
-            st.kick()
+            self.update()
 
         def leaveEvent(self, event):
             if self.aim:
                 self.aim = False
-                self.strip.kick()
-
-    # -- the key effects' overlay -------------------------------------------------
-
-    class FxLayer(QtWidgets.QWidget):
-        """Over the whole strip, deaf to the mouse: a key set flashes a round glow,
-        a key deleted throws sparks (2026-10-17). Each is drawn from its age alone -
-        a spark's flight is a formula - and the layer paints only while one lives."""
-
-        def __init__(self, strip):
-            super(FxLayer, self).__init__(strip)
-            self.strip = strip
-            self.setObjectName("skeldarTimeBarFx")
-            self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-            self.setAttribute(Qt.WA_NoSystemBackground, True)
-            self.items = []
-            self._was_busy = False
-            self._seed = 1
-
-        def add(self, kind, **data):
-            if not self.strip.motion:
-                return
-            self._seed += 1
-            data.setdefault("delay", 0.0)
-            data.setdefault("life", look.EFFECT_MS[kind])
-            data.update(kind=kind, t0=self.strip.clock(), seed=self._seed)
-            self.items.append(data)
-            if not data.get("quiet"):
-                self.raise_()
-                self.strip.kick()
-
-        @staticmethod
-        def age(item, now):
-            return now - item["t0"] - item["delay"]
-
-        def busy(self, now):
-            self.items = [i for i in self.items if self.age(i, now) < i["life"]]
-            return bool(self.items)
-
-        def paintEvent(self, _event):
-            if not self.items:
-                return
-            try:
-                p = QtGui.QPainter(self)
-                p.setRenderHint(QtGui.QPainter.Antialiasing)
-                now, ui = self.strip.clock(), self.strip.ui
-                broken = []         # the deleted keys mid-flight, drawn after the flashes
-                waiting = []        # deleted keys not broken yet: still drawn as keys
-                for i in self.items:
-                    age = self.age(i, now)
-                    if age < 0 and i.get("ghosts"):
-                        waiting.append(i)
-                        continue
-                    if age < 0 or age >= i["life"]:
-                        continue                                # waiting its turn, or over
-                    u = age / float(i["life"])
-                    # added light: what is under the flash brightens instead of being covered
-                    p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-                    if i["kind"] == "set":
-                        # a round flash, out and gone: a wide halo laid twice, a hot core
-                        grow = 0.6 + 0.4 * look.back_out(min(1.0, u / 0.4))
-                        fade = (1.0 - u) ** 1.5
-                        soft_dot(p, i["cx"], i["cy"], SET_GLOW * ui * grow, i["hex"], 255 * fade)
-                        soft_dot(p, i["cx"], i["cy"], SET_GLOW * 0.55 * ui * grow, i["hex"], 255 * fade)
-                        soft_dot(p, i["cx"], i["cy"], 13 * ui, RIM, 255 * (1.0 - u) ** 2)
-                    elif i["kind"] == "reveal":
-                        self._paint_reveal(p, i, age, ui)
-                    else:
-                        broken.append((i, age))
-                    p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
-                if waiting:
-                    p.setPen(Qt.NoPen)
-                    for i in waiting:
-                        p.setBrush(QtGui.QColor(i["hex"]))
-                        for l, tp, w, h in i["ghosts"]:
-                            p.drawRoundedRect(QtCore.QRectF(l, tp, w, h), 1.5 * ui, 1.5 * ui)
-                if broken:
-                    self._paint_shards(p, broken, ui)
-                p.end()
-            except Exception:                                # noqa: BLE001
-                if not getattr(self, "_failed", False):
-                    print(traceback.format_exc())
-                self._failed = True
-
-        def _paint_reveal(self, p, item, age, ui):
-            """The bar coming out (2026-10-17, of five flashes the animator took B):
-            the two unrolling edges carry the light outward, brightest on the cursor
-            and fading as they slow; behind them the top edge stays lit a moment. The
-            host's mask clips it to the unrolled span like everything else."""
-            accent = self.strip.tokens["accent"]
-            h = float(self.height())
-            x0, x1, edges, edge, top = look.reveal_glow(age, item["cx"], float(self.width()))
-            for x in edges:
-                band(p, x, h, look.EDGE_GLOW * ui, accent, 255 * 0.75 * edge)
-                band(p, x, h, look.EDGE_CORE * ui, RIM, 255 * 0.9 * edge)
-            if top <= 0.0 or x1 - x0 < 1:
-                return
-            g = QtGui.QLinearGradient(0, 0, 0, look.TOP_GLOW * ui)
-            g.setColorAt(0.0, colour(accent, 255 * 0.4 * top))
-            g.setColorAt(1.0, colour(accent, 0))
-            p.fillRect(QtCore.QRectF(x0, 0, x1 - x0, look.TOP_GLOW * ui), QtGui.QBrush(g))
-            p.fillRect(QtCore.QRectF(x0, 0, x1 - x0, 1.5 * ui), colour(accent, 255 * 0.95 * top))
-
-        @staticmethod
-        def _paint_shards(p, broken, ui):
-            """A deleted key broken into three cubes, each flying off spinning and falling
-            (2026-10-17: «ключик сломался и разлетелся»; cubes since 2026-10-18).
-            A piece is a fillRect under its own transform: the cheapest rotated rectangle
-            measured (3000 in 8.7 ms antialiased, against 13 for save/rotate/rounded)."""
-            for i, age in broken:
-                body = QtGui.QColor(i["hex"])
-                for cx, cy, w, h, angle, alpha in look.shards(i["seed"], i["rect"], age, i["life"],
-                                                              look.SHARD_SPEED * ui, look.SHARD_FALL * ui):
-                    body.setAlphaF(alpha)
-                    move = QtGui.QTransform()
-                    move.translate(cx, cy)
-                    move.rotate(angle)
-                    p.setTransform(move)
-                    p.fillRect(QtCore.QRectF(-w / 2.0, -h / 2.0, w, h), body)
-            p.resetTransform()
+                self.update()
 
     # -- the strip -------------------------------------------------------------------
 
     class Strip(QtWidgets.QWidget):
 
-        def __init__(self, link, ui=1.0, tokens=None, parent=None, motion=None):
+        def __init__(self, link, ui=1.0, tokens=None, parent=None):
             super(Strip, self).__init__(parent)
             self.setObjectName(ROOT_NAME)
             self.setAttribute(Qt.WA_StyledBackground, True)
             self.link, self.ui = link, float(ui)
             self.tokens = tokens or _tokens()
-            self.motion = animations_on() if motion is None else bool(motion)
             self.steel = steel_on()          # ⋮ -> Time bar ▸ Steel keys (2026-10-20)
             self.state = {"now": 0.0, "a0": 0.0, "a1": 120.0, "p0": 0.0, "p1": 120.0,
                           "unit": "ntsc", "auto": False, "playing": False, "highlight": None,
@@ -1989,14 +1322,6 @@ def classes():
             self.keys, self.breakdowns, self.marks, self.wave = [], [], [], []
             self._wave_key = None
             self.keys_dirty = True
-            self.keys_edited = False    # Maya said keys were edited since the last read
-            self.keys_set = []          # setKeyframe since the last read: [(frame or None, breakdown)]
-            self.moving = []
-            self._t0 = time.time()
-            self.opened = 0.0
-            self.entrance = None        # the burst from / fold to the cursor (the bottom edge)
-            self.fades = []             # Qt's own fields and the dividers: faded in the burst
-            self._last_step = None
             self.setStyleSheet(stylesheet(self.tokens, self.ui))
             ui = self.ui
             column = QtWidgets.QVBoxLayout(self)
@@ -2087,7 +1412,6 @@ def classes():
             self.field.setToolTip("Current frame")
             self.field.setFocusPolicy(Qt.ClickFocus)
             self.field.returnPressed.connect(self._typed)
-            self._fading(self.field)
             bottom.addWidget(self.field)
             bottom.addWidget(self._sep())
             self.transport = {}
@@ -2105,20 +1429,11 @@ def classes():
                 bottom.addWidget(b)
                 self.transport[name] = b
             self.play, self.prev, self.next = self.transport["play"], self.transport["pkey"], self.transport["nkey"]
-            # the key effects (2026-10-17)
-            self.fx = FxLayer(self)
-            self.fx.setGeometry(self.rect())
-            self._keys_read = False     # the first read of the keys is no edit
-            self._quiet_keys = False    # a key move is no set and delete
-            self._quiet_until = 0.0     # ... nor the key edits Maya reports for it a moment later
             self._apply_page()
-            # timers
+            # the timer
             self.timer = QtCore.QTimer(self)
             self.timer.setInterval(TIMER_MS)
             self.timer.timeout.connect(self.tick)
-            self.anim = QtCore.QTimer(self)
-            self.anim.setInterval(FRAME_MS)
-            self.anim.timeout.connect(self._animate)
             # S on the strip: during a drag, and over a highlight (2026-10-18)
             self.drag_keys = DragKeys(self)
             app = QtWidgets.QApplication.instance()
@@ -2126,8 +1441,6 @@ def classes():
                 app.installEventFilter(self.drag_keys)
             self.refresh(keys=True, force=True)     # read once even if Maya is playing
             self.timer.start()
-            self.opened = self.clock()
-            self.kick()
 
         # building -----------------------------------------------------------
         def set_edge(self, controller):
@@ -2135,39 +1448,11 @@ def classes():
             self.edge = controller
             self.pin.setVisible(controller is not None)
 
-        def register(self, widget):
-            self.moving.append(widget)
-            return len(self.moving) - 1
-
         def _sep(self):
             sep = QtWidgets.QFrame(self)
             sep.setObjectName("skeldarTimeBarSep")
             sep.setFixedSize(max(1, int(self.ui)), int(20 * self.ui))
-            return self._fading(sep)
-
-        def _fading(self, widget):
-            """A widget we do not paint (a field, a divider) fades in the burst:
-            an opacity effect, held here (PySide deletes an effect whose wrapper is
-            collected, CLAUDE.md trap 201) and switched off at rest (trap 204)."""
-            effect = QtWidgets.QGraphicsOpacityEffect(widget)
-            effect.setEnabled(False)
-            widget.setGraphicsEffect(effect)
-            self.fades.append((widget, effect))
-            return widget
-
-        def _fade(self):
-            for widget, effect in self.fades:
-                try:
-                    if self.entrance is None:
-                        if effect.isEnabled():
-                            effect.setOpacity(1.0)
-                            effect.setEnabled(False)
-                        continue
-                    c = widget.mapToGlobal(widget.rect().center())
-                    effect.setOpacity(self.entrance_of(c.x(), c.y())[1])
-                    effect.setEnabled(True)
-                except RuntimeError:
-                    pass
+            return sep
 
         def _field(self, tip, on_value):
             field = QtWidgets.QLineEdit(self)
@@ -2176,7 +1461,6 @@ def classes():
             field.setFixedSize(int(52 * self.ui), int(24 * self.ui))
             field.setToolTip(tip)
             field.setFocusPolicy(Qt.ClickFocus)
-            self._fading(field)
 
             def done():
                 try:
@@ -2188,149 +1472,17 @@ def classes():
             field.returnPressed.connect(done)
             return field
 
-        # motion -------------------------------------------------------------
-        def clock(self):
-            return (time.time() - self._t0) * 1000.0
-
-        def opening_of(self, index):
-            if not self.motion:
-                return 1.0, 1.0
-            e = self.entrance
-            if e is not None:
-                age = self.clock() - e["t0"]
-                delay = e["delays"].get(index, 0.0)
-                return look.popping(age, delay) if e["open"] else look.folding(age, delay)
-            return look.opening(self.clock() - self.opened, index)
-
-        def entrance_of(self, gx, gy):
-            """(scale, opacity) of a thing at the global point (gx, gy) in the
-            burst or the fold standing (a key on the timeline)."""
-            e = self.entrance
-            if e is None or not self.motion:
-                return 1.0, 1.0
-            age = self.clock() - e["t0"]
-            if e["open"]:
-                return look.popping(age, look.burst_delay(gx - e["gx"], gy - e["gy"], self.ui))
-            return look.folding(age, look.fold_delay(gx - e["gx"], self.ui))
-
-        def burst_at(self, gx, gy, opening=True, instant=False, glow=True):
-            """The controls - and the keys - pop in from the global point (gx, gy),
-            the nearest first, or fold toward it, the farthest first (2026-10-16,
-            mockup A, 1.5x slower). Returns how long it takes, ms."""
-            delays, far = {}, 0.0
-            points = [(w.index, w.mapToGlobal(w.rect().center())) for w in self.moving]
-            t = self.timeline.track()
-            points += [(None, self.timeline.mapToGlobal(QtCore.QPoint(int(look.key_centre(t, k)), int(KEY_Y * self.ui))))
-                       for k in self.keys + self.breakdowns]
-            for index, c in points:
-                if opening:
-                    d = look.burst_delay(c.x() - gx, c.y() - gy, self.ui)
-                else:
-                    d = look.fold_delay(c.x() - gx, self.ui)
-                far = max(far, d)
-                if index is not None:
-                    delays[index] = d
-            # the reveal's racing edges (2026-10-17, mockup B): a new reveal replaces the
-            # last one's flash, going back takes it away
-            self.fx.items = [i for i in self.fx.items if i["kind"] != "reveal"]
-            if not self.motion or instant:
-                self.entrance = None
-                self._fade()
-                self.update()
-                return 0.0
-            if opening and glow:
-                self.fx.add("reveal", cx=float(self.mapFromGlobal(QtCore.QPoint(int(gx), int(gy))).x()))
-            for widget, _effect in self.fades:
-                c = widget.mapToGlobal(widget.rect().center())
-                far = max(far, look.burst_delay(c.x() - gx, c.y() - gy, self.ui) if opening
-                          else look.fold_delay(c.x() - gx, self.ui))
-            self.entrance = {"open": bool(opening), "t0": self.clock(), "gx": gx, "gy": gy,
-                             "delays": delays,
-                             "ends": far + (look.POP_OPEN_MS if opening else look.FOLD_MS)}
-            self._fade()
-            self.kick()
-            return self.entrance["ends"]
-
-        def replay_opening(self):
-            self.opened = self.clock()
-            self.kick()
-
-        def resizeEvent(self, event):
-            super(Strip, self).resizeEvent(event)
-            fx = getattr(self, "fx", None)
-            if fx is not None:
-                fx.setGeometry(self.rect())
-                fx.raise_()
-
-        def point_of(self, widget, x, y):
-            """(x, y) in `widget` as a point of the strip (the overlay's)."""
-            g = widget.mapTo(self, QtCore.QPoint(int(round(x)), int(round(y))))
-            return float(g.x()), float(g.y())
-
-        def mark_set(self, a, b, breakdown=False):
-            """Keys were set on every whole frame a..b (S over a highlight, over a lane
-            block): one plate over them flashes and cools (`Timeline.plate`); a single
-            frame is an ordinary key set."""
-            a, b = int(a), int(b)
-            if b <= a:
-                self.keys_set.append((float(a), bool(breakdown)))
-                return
-            self._plated = (float(a), float(b))
-            self.timeline.plate(a, b)
-            self.timeline.update()
-
         def key_hex(self):
             """The keys' colour: steel with ⋮ -> Time bar ▸ Steel keys, else the accent."""
             return look.STEEL if self.steel else self.tokens["accent"]
 
         def set_steel(self, on):
-            """Steel keys on or off: the keys repaint at once (a key cooling just goes on)."""
+            """Steel keys on or off: the keys repaint at once."""
             self.steel = bool(on)
-            if not self.steel:
-                self.timeline.cooling.clear()
             self.timeline.update()
             lanes = getattr(self.layer_panel, "lanes", None)
             if lanes is not None:
                 lanes.update()
-
-        def kick(self):
-            if not self.anim.isActive():
-                self._last_step = self.clock()
-                self.anim.start()
-
-        def _animate(self):
-            try:
-                now = self.clock()
-                dt = now - (self._last_step or now)
-                self._last_step = now
-                opening = self.motion and now - self.opened < 260 + 18 * len(self.moving)
-                e = self.entrance
-                if e is not None:
-                    if now - e["t0"] < e["ends"] + 20:
-                        opening = True
-                    elif e["open"]:
-                        self.entrance = None        # popped in: the controls as they are
-                        opening = True              # one more paint at rest
-                self._fade()
-                busy = opening
-                for widget in self.moving:
-                    widget.step(dt)
-                    moving = widget.busy(now)
-                    if opening or moving or widget._was_busy:
-                        widget.update()
-                    widget._was_busy = moving
-                    busy = busy or moving
-                fx = self.fx
-                moving = fx.busy(now)
-                if moving or fx._was_busy:
-                    fx.update()
-                fx._was_busy = moving
-                busy = busy or moving
-                if not busy:
-                    self.anim.stop()
-            except Exception:                                # noqa: BLE001
-                self.anim.stop()
-                print(traceback.format_exc())
 
         # Maya ---------------------------------------------------------------
         def call(self, name, *args):
@@ -2363,14 +1515,9 @@ def classes():
                 read_keys = False       # a live key drag: drawn from the keys read before it
             if read_keys:
                 found = self.call("keys")
-                old_keys, old_bds = self.keys, self.breakdowns
                 if found is not None:
                     self.keys, self.breakdowns = list(found[0]), list(found[1])
                     self.keys_dirty = False
-                    if self._keys_read and not self._quiet_keys and self.clock() >= self._quiet_until:
-                        self._key_effects(old_keys, old_bds, self.keys_edited)
-                    self._keys_read, self._quiet_keys, self.keys_edited = True, False, False
-                    self.keys_set = []
                 self.marks = self.call("bookmarks") or []
             self._sound()
             if idle and not read_keys:
@@ -2391,29 +1538,13 @@ def classes():
         def add_drawn_copies(self, stamped, selection, target):
             """The copies S put down in a live drag, drawn where they went down: the
             scene holds them, but the strip reads keys again only on the release."""
-            keys, bds, put = set(self.keys), set(self.breakdowns), {}
+            keys, bds = set(self.keys), set(self.breakdowns)
             for rec in stamped.values():
                 for t, data in rec.get("keys", ()):
                     nt = round(look.mapped(t, selection, target), 4)
                     if round(nt, 4) in rec.get("stamped", ()):
-                        bd = bool(data.get("breakdown"))
-                        (bds if bd else keys).add(nt)
-                        put[nt] = put.get(nt, False) or bd
+                        (bds if data.get("breakdown") else keys).add(nt)
             self.keys, self.breakdowns = sorted(keys), sorted(bds)
-            #  the flash and the swell a set key gets (2026-10-19: «пропали эффекты и
-            #  анимация когда я ставлю его копию хоткеем S» - no key read, no effect)
-            for nt, bd in sorted(put.items()):
-                self.timeline.key_effect("set", nt, bd)
-
-        def quiet_keys(self):
-            """Keys MOVED (the timeline's or the layer lanes' drag, 2026-10-19: «при переносе
-            ключей по слоям или по таймлайну эффекты разрушения ключа и вспышек не должны
-            отыгрываться»): the next read plays nothing, and neither do the reads for
-            `QUIET_MS` after - Maya reports the move's key edits a moment later, and a
-            moved lone key is a curve cut and made again."""
-            self._quiet_keys = True
-            self._quiet_until = self.clock() + QUIET_MS
-            self.keys_set = []
 
         def scrub_to(self, frame, update=True):
             """One playhead for the timeline and the layer lanes, whichever is dragged
@@ -2424,10 +1555,7 @@ def classes():
             s, tl = self.state, self.timeline
             if frame == s["now"]:
                 return
-            before = s["now"]
             s["now"] = frame
-            tl.reach(before, frame)
-            tl.leave(before)
             self.show_now()
             tl.repaint()
             self.field.repaint()
@@ -2467,51 +1595,8 @@ def classes():
             return bool(moving()) if moving is not None else False
 
         def selection_changed(self):
-            """Another object's keys: read quietly - a key list that changed with the
-            selection is no key set or deleted (2026-10-19, the animator: «Если мы не
-            ставим ключ или не удаляем его то и анимации эффектов ... недолжно быть»)."""
-            self._quiet_keys = True
-            self.keys_set = []
+            """Another object's keys: read again."""
             self.refresh(True)
-
-        def _key_effects(self, old_keys, old_bds, edited=False):
-            """A key set flashes, keys deleted throw sparks one after another left to
-            right - a whole highlight of them when Maya reported the deletion as a key
-            edit (`edited`). Only after a key edit: Maya's key-edited message, our own
-            Cut / Delete or a setKeyframe; any other change of the keys read (an undo of
-            a selection, a layer shown) plays nothing."""
-            if not self.motion:
-                return
-            if not (edited or self.keys_set or getattr(self, "_plated", None)):
-                return
-            gone, sets = [], {}
-            for old, new, bd in ((old_keys, self.keys, False), (old_bds, self.breakdowns, True)):
-                added, removed, _snapped = look.key_changes(old, new, edited)
-                for k in added:
-                    sets[k] = bd
-                gone.extend((k, bd) for k in removed)
-            if gone:
-                import maya_hubsound
-                maya_hubsound.deleted()     # keys deleted: the fireball (2026-10-22)
-                self.timeline.delete_wave(gone)
-            # a key set over one that stood: no key time changed, it flashes all the same;
-            # a highlight keyed at once (`mark_set`): every key of it, however many
-            keys, bds = set(self.keys), set(self.breakdowns)
-            plated = getattr(self, "_plated", None)
-            self._plated = None
-            if plated is not None:
-                # the keys under a plate play nothing of their own
-                sets = {k: v for k, v in sets.items() if not (plated[0] <= k <= plated[1])}
-            for frame, _bd in self.keys_set:
-                frame = self.state.get("now", 0.0) if frame is None else frame
-                if frame not in sets and (frame in keys or frame in bds):
-                    sets[frame] = frame in bds
-            # many at once: each swells and cools, the round flash on a few of them spread
-            # along (200 flashes cost 100 ms a frame, measured 2026-10-20)
-            order = sorted(sets)
-            lit = set(look.spread(len(order), look.SET_FLASH_MAX))
-            for i, frame in enumerate(order):
-                self.timeline.key_effect("set", frame, sets[frame], glow=i in lit)
 
         def _sound(self):
             s, t = self.state, self.timeline.track()
@@ -2538,11 +1623,7 @@ def classes():
             """timeChanged: the playhead only (playback calls it every frame)."""
             now = self.call("now")
             if now is not None and now != self.state["now"]:
-                before = self.state["now"]
                 self.state["now"] = now
-                self.timeline.reach(before, now)
-                if self.state.get("playing"):
-                    self.timeline.leave(before)
                 self.show_now()
                 #  painted now, inside Maya's frame: Maya's playback does not let
                 #  the event loop run between frames, so `update()` drew one frame
@@ -2570,7 +1651,7 @@ def classes():
             nothing (`refresh(idle=True)`)."""
             return (tuple(sorted((k, repr(v)) for k, v in self.state.items())),
                     tuple(self.keys), tuple(self.breakdowns), repr(self.marks),
-                    repr(self.call("layer_state")), self.steel, self.motion,
+                    repr(self.call("layer_state")), self.steel,
                     bool(self.layer_panel and self.layer_panel.is_open()))
 
         def _paint_widgets(self):
@@ -2581,9 +1662,6 @@ def classes():
                 if not field.hasFocus():
                     field.setText(look.frame_text(s[key]))
             playing = bool(s["playing"])
-            if playing and getattr(self, "_was_playing", None) is False:
-                self.timeline.played()
-            self._was_playing = playing
             self.play.glyph = "pause" if playing else "play"
             self.play.update()
             self.fps.set_label(look.fps_label(s["unit"]) + u" ▾")
@@ -2610,11 +1688,9 @@ def classes():
             except ValueError:
                 self.show_now()
                 return
-            before = self.state["now"]
             self.call("set_time", frame)
             self.field.clearFocus()
             self.refresh()
-            self.timeline.reach(before, self.state["now"])
 
         def _typed_range(self, which, value):
             s = self.state
@@ -2625,15 +1701,11 @@ def classes():
             s, n = self.state, int(round(self.state["now"]))
             frame = {"start": s["p0"], "end": s["p1"], "pfrm": max(s["p0"], n - 1),
                      "nfrm": min(s["p1"], n + 1)}[where]
-            before = s["now"]
             self.call("set_time", frame)
-            self.timeline.reach(before, frame)
 
         def _step(self, forward):
-            before = self.state["now"]
             self.call("step_key", forward, self.keys + self.breakdowns)
             self.refresh()
-            self.timeline.reach(before, self.state["now"])
 
         def toggle_layers(self):
             """The layers pill or the chip: the layer panel opened or closed out of the pill."""
@@ -2646,7 +1718,7 @@ def classes():
                 except Exception:                            # noqa: BLE001
                     parent = None
                 self.layer_panel = layerpanel.Panel(self, self.link.layer_link(), self.ui, self.tokens,
-                                                    self.motion, parent)
+                                                    parent)
             c = self.layers_btn.mapToGlobal(self.layers_btn.rect().center())
             self.layer_panel.toggle((c.x(), c.y()))
             self.layers_btn.setChecked(self.layer_panel.is_open())
@@ -2675,24 +1747,15 @@ def classes():
                 self.call("page_height", self)
 
         def show_page(self, n, origin=None):
-            """Page n (1 the Time Bar, 2-12 skills): shown, its parts popping in from `origin`
-            (a global point: the pressed tab, the cursor), the host sized to it."""
+            """Page n (1 the Time Bar, 2-12 skills): shown at once, the host sized to it.
+            `origin` (where it was asked from) is taken and not used: nothing moves."""
             look_ = skill_look()
             if n != look_.TIME_PAGE and not look_.is_skill_page(n):
                 return
-            before = self.skills.page()
             self.skills.set_page(n)
             self._apply_page()
-            if origin is None:
-                origin = self.tabs.tab_centre(n) or (0, 0)
-            gx, gy = origin
             if n == look_.TIME_PAGE:
-                if before != n and self.motion and self.entrance is None:
-                    self.burst_at(gx, gy, True, glow=False)
                 self.refresh(keys=True)
-            else:
-                self.skill_grid.pop_from(gx, gy)
-            self.kick()
 
         def skill_aim(self, gx, gy):
             """("cell", n, r, c) / ("tab", n) / None under the global point (gx, gy)."""
@@ -2741,12 +1804,8 @@ def classes():
                     return message
             self.skills.set_data(data)
             message = "%s on %s" % (label, look_.cell_caption(n, place[0], place[1]))
-            if n == self.skills.page():
-                self.skill_grid.flash_at[place] = self.clock()
-                self.skill_grid.run_at[place] = self.clock()
             self.tabs.update()
             self.skill_grid.update()
-            self.kick()
             self.skills.say(message)
             return message
 
@@ -2762,7 +1821,6 @@ def classes():
                 if tuple(aim[1:]) == tuple(source):
                     return ""
                 self.skills.set_data(look_.swap(data, source, aim[1:]))
-                self.skill_grid.flash_at[(aim[2], aim[3])] = self.clock()
             else:
                 if aim[1] == source[0]:
                     return ""
@@ -2774,7 +1832,6 @@ def classes():
                 self.skills.set_data(moved)
             self.tabs.update()
             self.skill_grid.update()
-            self.kick()
             return "moved"
 
         def cell_rows(self, n, r, c):
@@ -2950,17 +2007,13 @@ def classes():
             caption = ("Keys in %s-%s" % (look.frame_text(sel[0]), look.frame_text(sel[1])) if sel
                        else "Keys at frame %s" % look.frame_text(frame))
             c = self.call
-
-            def edit(name, *args):
-                self.keys_edited = True         # our own Cut / Delete: a wave, however many
-                return c(name, *args)
             return [(caption, None),
-                    ("Set key", lambda: (self.keys_set.append((None, False)), c("set_key"))),
+                    ("Set key", lambda: c("set_key")),
                     ("Breakdown", lambda: c("breakdown", sel, frame)), None,
-                    ("Cut", lambda: edit("cut_keys", sel, frame)),
+                    ("Cut", lambda: c("cut_keys", sel, frame)),
                     ("Copy", lambda: c("copy_keys", sel, frame)),
                     ("Paste", lambda: c("paste_keys", sel, frame)),
-                    ("Delete", lambda: edit("delete_keys", sel, frame)), None,
+                    ("Delete", lambda: c("delete_keys", sel, frame)), None,
                     ("Tangents", [(label, (lambda k=kind: c("tangents", sel, frame, k)))
                                   for label, kind in look.TANGENTS]),
                     ("Snap to whole frames", lambda: c("snap_keys", sel, frame)), None,
@@ -2995,15 +2048,21 @@ def classes():
             self._menu(point, self.key_rows(frame))
 
     global _KIT
-    _KIT = types.SimpleNamespace(colour=colour, blend=blend, draw_glyph=draw_glyph, glow=glow,
-                                 halo=halo, soft_dot=soft_dot, ingot=ingot, ingot_glow=ingot_glow,
-                                 draw_span_labels=draw_span_labels)
+    _KIT = types.SimpleNamespace(colour=colour, blend=blend, draw_glyph=draw_glyph,
+                                 ingot=ingot, draw_span_labels=draw_span_labels)
     return Strip, Timeline, RangeBlock, Pill
 
 
-def make(link=None, ui=1.0, tokens=None, parent=None, motion=None):
+def make(link=None, ui=1.0, tokens=None, parent=None):
     strip_class = classes()[0]
-    return strip_class(link or Link(), ui, tokens, parent, motion)
+    strip = strip_class(link or Link(), ui, tokens, parent)
+    try:
+        #  no field holds the keyboard until clicked, no button ever (2026-11-19)
+        import maya_hubqt
+        maya_hubqt.quiet_focus(strip)
+    except Exception:                                        # noqa: BLE001
+        pass
+    return strip
 
 
 # -- in Maya ---------------------------------------------------------------------------
@@ -3054,7 +2113,6 @@ def _keys_edited(*_args):
     widget = current()
     if widget is not None:
         widget.keys_dirty = True
-        widget.keys_edited = True       # a deletion of many keys plays as a wave, not a reload
         if widget.layer_panel is not None:
             widget.layer_panel.keys_dirty()
 
@@ -3072,11 +2130,8 @@ def _command(command, *_args):
     if not command.startswith("setKeyframe"):
         return
     widget = current()
-    if widget is not None:
-        found = look.set_key_command(command)
-        if found is not None:
-            widget.keys_set.append(found)
-            widget.keys_dirty = True
+    if widget is not None and look.set_key_command(command) is not None:
+        widget.keys_dirty = True
     edge = _state().get("edge")
     if edge is not None and look.set_key_command(command) is not None:
         #  a key set (the S hotkey, the Channel Box): the bar out, its wait for the

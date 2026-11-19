@@ -12,7 +12,6 @@ except ImportError:
     HAVE_MAYA = False
 
 if HAVE_MAYA:
-    import maya_camflight
     import maya_camradial
     import maya_radial
 
@@ -67,7 +66,6 @@ class FakeCmds(object):
         self.looked = []
         self.messages = []
         self.panel_cam = "|persp"
-        self.subs = set()
 
     def ls(self, *args, **kw):
         if kw.get("type") == "camera":
@@ -98,8 +96,6 @@ class FakeCmds(object):
         return list(IDENTITY)
 
     def objExists(self, node):
-        if node.endswith(".skeldarCameraFlight"):
-            return node.rsplit(".", 1)[0] in self.subs
         return node in self.cams
 
     def lookThru(self, panel, cam):
@@ -116,14 +112,6 @@ class Scene(unittest.TestCase):
         saved = maya_camradial.cmds
         maya_camradial.cmds = self.fake
         self.addCleanup(setattr, maya_camradial, "cmds", saved)
-        self.flown, self.taking, self.flying_to = [], False, None
-        for name, fn in (("fly", self._fly), ("target_of", lambda panel: self.flying_to)):
-            self.addCleanup(setattr, maya_camflight, name, getattr(maya_camflight, name))
-            setattr(maya_camflight, name, fn)
-
-    def _fly(self, panel, path):
-        self.flown.append((panel, path))
-        return self.taking
 
     def test_cameras(self):
         views, scene = maya_camradial.cameras()
@@ -144,28 +132,19 @@ class Scene(unittest.TestCase):
         maya_camradial.look_through("|shotCam")
         self.assertEqual(self.fake.looked, [("modelPanel4", "|shotCam")])
 
-    def test_a_flight_takes_the_switch_over(self):
-        self.taking = True
+    def test_the_switch_is_a_plain_look_through_at_once(self):
+        """2026-11-19: no flight - the panel looks through the camera in the same call."""
+        import importlib.util
+        self.assertIsNone(importlib.util.find_spec("maya_camflight"))
+        self.assertIsNone(importlib.util.find_spec("maya_camflight_rules"))
+        with open(maya_camradial.__file__, encoding="utf-8") as handle:
+            self.assertNotIn("maya_camflight", handle.read())
         maya_camradial.spec()
-        maya_camradial.look_through("|shotCam")
-        self.assertEqual(self.flown, [("modelPanel4", "|shotCam")])
-        self.assertEqual(self.fake.looked, [])
-
-    def test_without_a_flight_the_panel_switches_at_once(self):
-        maya_camradial.spec()
-        maya_camradial.look_through("|shotCam")
-        self.assertEqual(self.flown, [("modelPanel4", "|shotCam")])
+        self.assertEqual(maya_camradial.look_through("|shotCam"), "shotCam")
         self.assertEqual(self.fake.looked, [("modelPanel4", "|shotCam")])
 
-    def test_a_flight_s_substitute_is_not_in_the_menu(self):
-        self.fake.cams["|skeldarCameraFlight"] = False
-        self.fake.subs.add("|skeldarCameraFlight")
-        views, scene = maya_camradial.cameras()
-        self.assertNotIn("|skeldarCameraFlight", scene)
-
-    def test_mid_flight_the_target_is_the_camera_marked(self):
-        self.fake.panel_cam = "|skeldarCameraFlight"
-        self.flying_to = "|shotCam"
+    def test_the_camera_shown_is_the_one_marked(self):
+        self.fake.panel_cam = "|shotCam"
         spec = maya_camradial.spec()
         self.assertEqual(spec["marked"], {spec["items"].index("camera:|shotCam")})
 
@@ -185,10 +164,8 @@ class MenuWithCameras(unittest.TestCase):
         self.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
         import maya_hubqt
         self.q = maya_hubqt.qt()
-        self.clock = [1000.0]
         self.ran, self.tapped, self.later = [], [], []
-        for name, value in (("animated", lambda: True), ("_now_ms", lambda: self.clock[0]),
-                            ("_run_later", lambda q, item, point: self.ran.append(item)),
+        for name, value in (("_run_later", lambda q, item, point: self.ran.append(item)),
                             ("_call_later", lambda q, func: self.later.append(func))):
             old = getattr(maya_radial, name)
             setattr(maya_radial, name, value)
@@ -196,7 +173,7 @@ class MenuWithCameras(unittest.TestCase):
         state = maya_radial._state()
         saved = dict(state)
         self.addCleanup(lambda: (state.clear(), state.update(saved)))
-        state["menu"] = state["leaving"] = None
+        state["menu"] = None
 
     def _menu(self, axes=True):
         items = rules.camera_slots({"persp": "|persp", "top": "|top", "front": "|front",
@@ -243,18 +220,17 @@ class MenuWithCameras(unittest.TestCase):
         self.assertEqual(len(self.later), 1)
         self.later[0]()
         self.assertEqual(self.tapped, [1])
-        self.assertNotEqual(menu.phase, "open")
+        self.assertIsNone(menu.window)               # gone at once
+        self.assertFalse(maya_radial.is_up())
 
     def test_release_on_a_camera_runs_it(self):
         menu = self._menu()
-        self.clock[0] += rules.open_total(8)
         menu.cursor = lambda: (300 + 112, 300)       # east: Side
         menu.released()
         self.assertEqual(self.ran, ["camera:|side"])
 
     def test_the_pills_draw_the_axes(self):
         menu = self._menu(axes=True)
-        self.clock[0] += rules.open_total(8)
         with_axes = self._ink(menu, colour="red")
         plain = self._menu(axes=False)
         self.assertGreater(with_axes, self._ink(plain, colour="red"))

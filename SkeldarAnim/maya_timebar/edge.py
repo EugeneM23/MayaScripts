@@ -6,9 +6,9 @@ window, not the screen).
 Two windows of ours, frameless Qt.Tool children of Maya's main window (above Maya,
 never above another application, gone with Maya minimized):
 
-    host    the band along the bottom of Maya's window; holds the strip. A slide
-            moves the strip inside the host and the host's mask shows only the
-            part standing in it, so nothing is laid out again per frame.
+    host    the band along the bottom of Maya's window; holds the strip. Shown and
+            hidden at once: nothing slides (2026-11-19, «удаляем все подсветки и
+            анимации из плагина»).
     sensor  a 2 px strip at the very bottom at window opacity 1/255 (Qt keeps it
             layered and it still takes the mouse - CLAUDE.md trap 110). Shown only
             while the bar is hidden.
@@ -184,7 +184,7 @@ class BottomEdge(object):
     out when the cursor rests on the bottom edge and goes when it leaves."""
 
     def __init__(self, make_strip, parent=None, window_rect=None, cursor=None, buttons=None,
-                 app_active=None, motion=None, over_maya=None, playing=None, suspended=None,
+                 app_active=None, over_maya=None, playing=None, suspended=None,
                  span=None, pane=None, on_pinned=None):
         q = hubqt.qt()
         self._on_pinned = on_pinned            # (on) the 📌 pressed: remembered (2026-10-20)
@@ -202,11 +202,8 @@ class BottomEdge(object):
         self.run = 0                  # time changes since the event loop last turned
         self.baking = False
         self.dwelt = 0.0              # ms the cursor has rested in the band (the zone)
-        self.motion = motion
         self.pinned = False
         self.shown = False
-        self.offset = 0               # px the strip stands below its place
-        self._slide = None            # (started clock ms, showing, from offset)
         self._rect = None
         if parent is None:
             parent = main_window()
@@ -242,7 +239,6 @@ class BottomEdge(object):
         self.hide_timer = timer(look.HIDE_MS, self.hide_due)
         self.place_timer = timer(PLACE_MS, self.place, single=False)
         self.watch = timer(WATCH_MS, self.watch_tick, single=False)
-        self.anim = timer(16, self.slide_tick, single=False)
         self.idle = timer(BAKE_GAP_MS, self._idle)   # restarted by every time change
         #  the zone (2026-10-16, «когда мышка не на самом краю а в области где
         #  стандартный таймлайн»): the whole band, watched by a poll - a window
@@ -311,11 +307,6 @@ class BottomEdge(object):
         main = main_window()
         return top is main or top is self.host or top is self.sensor
 
-    def _motion(self):
-        if self.motion is not None:
-            return self.motion
-        return bool(getattr(self.strip, "motion", True))
-
     def _guard(self, call):
         try:
             if self.alive():
@@ -341,9 +332,7 @@ class BottomEdge(object):
         self._rect = rect
         x, y, w, h = band
         self.host.setGeometry(x, y, w, h)
-        self.strip.setGeometry(0, self.offset, w, h)
-        if self._slide is None:
-            self._mask()
+        self.strip.setGeometry(0, 0, w, h)
         self.sensor.setGeometry(*sensor)
         if self.shown:
             self._reserve(True)
@@ -373,12 +362,6 @@ class BottomEdge(object):
         band = look.band_in(window, height, span)
         sx, sy, sw, sh = look.sensor_band(window, rules.SENSOR_PX)
         return band, (int(span[0]), sy, int(span[1] - span[0]), sh)
-
-    def _mask(self):
-        q = hubqt.qt()
-        w, h = self.host.width(), self.host.height()
-        shown = max(0, h - self.offset)
-        self.host.setMask(q.QtGui.QRegion(0, h - shown, w, max(1, shown)))
 
     def _host_rect(self):
         g = self.host.geometry()
@@ -417,10 +400,8 @@ class BottomEdge(object):
     def on_time(self):
         """Every time change (playback's frames too): Play pressed - a hotkey,
         Maya's own - while the bar is hidden brings it out (2026-10-17, «если мы
-        нажимаем хоткеем плей а тайм слайдер спрятан то он должен показаться»).
-        The same burst as a reveal by the mouse («тоже должен с анимацией»), from
-        the cursor's x on the bar's row; playback turns no event loop, so its timers
-        do not tick - each frame of playback steps it here instead.
+        нажимаем хоткеем плей а тайм слайдер спрятан то он должен показаться»),
+        painted at once: playback turns no event loop.
 
         A bake (Bake Simulation, 2026-10-17: «когда мы делаем bake simulation
         таймслайдер тоже должен быть виден и проигрываться») is not playback: it
@@ -435,41 +416,35 @@ class BottomEdge(object):
             if self.run >= BAKE_RUN and not self.baking and not self.suspended():
                 self.baking = True
         if self.shown:
-            if self._slide is not None or getattr(self.strip, "entrance", None) is not None:
-                self.step()
             return
         if not (playing or self.baking):
             return
-        self.reveal(on_row=True)
-        self.step()
+        self.reveal()
+        self.strip.repaint()                      # no event loop turns in playback or a bake
 
     def _idle(self):
         """BAKE_GAP_MS with no time change: whatever walked the time is done."""
         self.run = 0
         self.baking = False
 
-    def step(self):
-        """One step of a burst, painted now (from playback, where no timer ticks)."""
-        if self._slide is not None:
-            self.slide_tick()
-        animate = getattr(self.strip, "_animate", None)
-        if animate is not None:
-            animate()
-        self.strip.repaint()
-
-    def reveal(self, instant=False, on_row=False):
+    def reveal(self):
+        """Out at once: the host shown on its place, the viewport given up under it."""
         if self.shown:
             return
         self.place()
         self.shown = True
         self.sensor.hide()
+        self.strip.move(0, 0)
         self.host.show()
         self.host.raise_()
         self._reserve(True)
-        self._start_slide(True, instant=instant, on_row=on_row)
+        panel = getattr(self.strip, "layer_panel", None)
+        if panel is not None and panel.is_open():
+            panel.place()                         # on the bar, not 300 ms on
         self.watch.start()
 
     def conceal(self):
+        """Back at once: the host hidden, the viewport given its bottom back."""
         if not self.shown:
             return
         self.shown = False
@@ -481,83 +456,10 @@ class BottomEdge(object):
             btn = getattr(self.strip, "layers_btn", None)
             if btn is not None:
                 btn.setChecked(False)             # dark with it, not on the next tick
-        self._start_slide(False)
-
-    def _start_slide(self, showing, instant=False, on_row=False):
-        """The burst from the cursor (2026-10-16, mockup A, «скорость на 50 %
-        медленнее»): the panel unrolls sideways from where the mouse rests while
-        the controls and keys pop in, the nearest first; going back, they fold
-        toward the mouse and the panel closes onto it behind them."""
-        if instant or not self._motion():
-            self._slide = None
-            self.anim.stop()
-            self.strip.burst_at(0, 0, showing, instant=instant)
-            self.offset = 0 if showing else self.host.height()
-            self._settle(showing)
-            return
-        gx, gy = self.cursor()
-        g = self.host.geometry()
-        if on_row:                         # a hotkey: the cursor may be anywhere
-            gx = max(g.x(), min(g.x() + g.width(), gx))
-            gy = g.y() + g.height() // 2
-        cx = gx - g.x()
-        self.offset = 0
-        self.strip.move(0, 0)
-        folded = self.strip.burst_at(gx, gy, showing)
-        self._slide = {"t0": self.strip.clock(), "showing": bool(showing), "cx": float(cx),
-                       "after": 0.0 if showing else folded + look.CLOSE_AFTER_MS}
-        if showing:
-            self._mask_span(cx, cx)
-        self.anim.start()
-
-    def slide_tick(self):
-        b = self._slide
-        if b is None:
-            self.anim.stop()
-            return
-        w = self.host.width()
-        age = self.strip.clock() - b["t0"]
-        if b["showing"]:
-            u = age / look.UNROLL_MS
-        else:
-            u = (age - b["after"]) / look.CLOSE_MS
-            if u <= 0:
-                self._mask_span(0, w)
-                return
-        x0, x1 = look.unroll(u, b["cx"], w, b["showing"])
-        self._mask_span(x0, x1)
-        if u >= 1:
-            self.anim.stop()
-            self._slide = None
-            self._settle(b["showing"])
-
-    def _mask_span(self, x0, x1):
-        """Only [x0, x1] of the host shows, its corners rounding while it is narrow."""
-        q = hubqt.qt()
-        w, h = self.host.width(), self.host.height()
-        x0, x1 = max(0.0, x0), min(float(w), x1)
-        if x1 - x0 < 1:
-            x1 = x0 + 1
-        if x1 - x0 >= w - 0.5:
-            self.host.setMask(q.QtGui.QRegion(0, 0, w, h))
-            return
-        radius = 12 * getattr(self.strip, "ui", 1.0) * (1 - (x1 - x0) / float(max(w, 1)))
-        path = q.QtGui.QPainterPath()
-        path.addRoundedRect(q.QtCore.QRectF(x0, 0, x1 - x0, h), radius, radius)
-        self.host.setMask(q.QtGui.QRegion(path.toFillPolygon().toPolygon()))
-
-    def _settle(self, showing):
-        self.offset = 0 if showing else self.host.height()
-        self.strip.move(0, self.offset)
-        self._mask()
-        panel = getattr(self.strip, "layer_panel", None)
-        if showing and panel is not None and panel.is_open():
-            panel.place()                         # on the bar where the slide ended, not 300 ms on
-        if not showing:
-            self._reserve(False)
-            self.host.hide()
-            self.sensor.show()
-            self.sensor.raise_()
+        self._reserve(False)
+        self.host.hide()
+        self.sensor.show()
+        self.sensor.raise_()
 
     # going back ------------------------------------------------------------------
     def watch_tick(self):
@@ -607,11 +509,11 @@ class BottomEdge(object):
         self.conceal()
 
     def key_set(self):
-        """A key was set (the S hotkey, the Channel Box's Key): the bar out - from
-        the cursor's x on its row, as a Play hotkey brings it - or, out already, its
-        wait for the hide begun again (2026-10-17)."""
+        """A key was set (the S hotkey, the Channel Box's Key): the bar out, as a
+        Play hotkey brings it - or, out already, its wait for the hide begun again
+        (2026-10-17)."""
         if not self.shown:
-            self.reveal(on_row=True)
+            self.reveal()
             return True
         if self.hide_timer.isActive():
             self.hide_timer.start()
@@ -640,7 +542,7 @@ class BottomEdge(object):
             self._reserve(False)
         except Exception:                                    # noqa: BLE001
             pass
-        for t in (self.dwell, self.hide_timer, self.place_timer, self.watch, self.anim, self.zone,
+        for t in (self.dwell, self.hide_timer, self.place_timer, self.watch, self.zone,
                   self.idle):
             try:
                 t.stop()

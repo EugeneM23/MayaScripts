@@ -301,59 +301,6 @@ def list_height(rows, row_px, frame_px):
     return int(round(rows * row_px + frame_px))
 
 
-# --------------------------------------------------------------- the light
-
-#  The lit card (2026-10-01, «красивый глоу и анимацию подсветки»): its face
-#  card_active and its 2 px ring card_edge as before (the stylesheet switched
-#  them at once; the card paints them now, fading -- maya_hubqt.paint_light),
-#  plus an INNER glow `width` logical px deep inward from the ring, the accent
-#  at `alpha` at the edge falling off as (1 - depth)^2. A flash (the card just
-#  chosen) adds `flash_alpha`, falling off linearly, and deepens the glow by
-#  `flash_widen`. Drawn as rings ONE PHYSICAL PIXEL wide: wider ones showed
-#  as bands (photographed live at 150 %).
-GLOW = {
-    "width": 10.0,
-    "alpha": 0.28,
-    "flash_alpha": 0.30,
-    "flash_widen": 0.6,
-}
-
-
-#  A control under the mouse (2026-10-02, «все надпись немного подсвечивались
-#  легким свечением когда мы наводим на них мышкой»; prototype A, the glow in
-#  the text's own colour): its ink - luminance above its face by `lo`, fully
-#  by `lo + span` - blurred `radius` logical px, x `gain`, taken off the ink
-#  itself, added at `strength`. The orange primary button (dark letters on a
-#  lit face) gets a `rim` inside its edge instead, `rim_depth` px deep.
-#  maya_hubglow is the arithmetic, maya_hubqt.HoverGlow the drawing.
-HOVER_GLOW = {
-    "lo": 25.0,
-    "span": 70.0,
-    "radius": 5.0,
-    "gain": 2.2,
-    "strength": 0.42,
-    "rim": "#fff1e2",
-    "rim_strength": 0.38,
-    "rim_depth": 6.0,
-}
-
-
-def glow_rings(level, flash, scale=1.0):
-    """The inner glow at `level` (0..1) and `flash` (0..1) at the display's
-    `scale`: [(inset, width, alpha)] in logical px from the inside of the
-    ring, outermost first, each one physical px wide."""
-    scale = float(scale or 1.0)
-    depth = GLOW["width"] * (1.0 + GLOW["flash_widen"] * flash)
-    steps = max(1, int(round(depth * scale)))
-    width = 1.0 / scale
-    rings = []
-    for i in range(steps):
-        fall = 1.0 - i / float(steps)
-        alpha = (level * GLOW["alpha"] * fall * fall
-                 + flash * GLOW["flash_alpha"] * fall)
-        rings.append((i * width, width, min(1.0, alpha)))
-    return rings
-
 
 def mix(a, b, k):
     """Colour `k` (clamped 0..1) of the way from "#rrggbb" `a` to `b`."""

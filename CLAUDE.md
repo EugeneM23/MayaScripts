@@ -4854,22 +4854,26 @@ is one flag each whenever it is asked for.
 
 ## Conventions
 
-- **Every interface looks and moves like the Time Bar** (the animator,
-  2026-10-18: «Я хочу что бы мы всегда делали интерфейс в стиле в котором у
-  нас сейчас сделан тайм слайдер»). The look and animation rules, the numbers
-  and the checklist are in **`docs/interface-motion.md`**: the visual style
-  and the motion only, no behaviour or mouse rules (the animator, the same
-  day). Read it before building or reworking anything that shows or moves,
-  and copy its checklist into the spec. In short:
-  - a panel opens out of a point and closes into it (in nearest first, out
-    farthest first);
-  - every part moves on its own;
-  - a control's states: hover 110 ms + 10 % + glow, a press flash 120 ms, a
-    toggle pop 200 ms; an effect is added light, where its thing is;
-  - the data is instant, only the picture animates;
-  - numbers in a stdlib module, imported from `maya_timebar.look`;
-  - one 16 ms driver that stops at rest, the still part cached;
-  - ⋮ → Interface animations off gives the same end state at once.
+- **No animations and no highlights** (the animator, 2026-11-19: «удаляем все
+  подсветки и анимации из плагина больше они не нужны. интерфейс должен быть
+  максимально легким»). A panel appears, changes and goes at once; no burst,
+  slide, fade, pop, spring, flight, zoom, eased transition or 16 ms driver,
+  and no decorative light (hover glow, card light, window light, key glows,
+  sparks, fire). State - selected, current, active, armed - is drawn FLAT: a
+  face colour or a plain outline. A plain stylesheet hover face is fine.
+  Content previews (a Pose Library animation card playing its sheet under the
+  mouse) are content, not decoration. The LOOK is still the Time Bar's (the
+  dark tokens of `maya_hubstyle`, painted controls); the motion half of
+  `docs/interface-motion.md` is retired. Everything this file says below
+  about motion, glows, bursts and the Interface animations switch describes
+  code that is gone (see "No animations, no highlights, fields that wait for
+  a click" at the end).
+- **A field takes the keyboard only when it is clicked** (2026-11-19, «пока
+  я не кликнул в поле опция не должна быть активна»): a Qt surface of ours
+  goes through `maya_hubqt.quiet_focus(root)` once built - fields and lists
+  ClickFocus, every button NoFocus, Enter or Esc in a field gives the keys
+  back - or Qt hands an activated window's keyboard to its first Tab-focus
+  widget and Maya's hotkeys type into it.
 - **No more per-tool shelf icons** (the animator, 2026-09-17: «точечные
   иконки для полки мы не рисуем, они больше не нужны»). Since the hub, a
   new tool is a SECTION of `maya_hub.SECTIONS` — a `build_panel()` and a
@@ -11974,16 +11978,16 @@ walk tests were kept green; one of them counts the card's popup menus and now ex
   strength, the physics' two flags, the pose's share, In place, the clean's Seam and Smooth, the pose parts and
   the pose card's path. Never the walk cycle, never a walker: a preset is a look, put on whatever cycle is
   active.
-- **`SkeldarAnim/maya_walk/presets.py`** (stdlib): `<walks folder>/presets.json` - `{"version": 1, "presets":
-  {name: {"params": …, "parts": […], "pose_card": "…"}}}`, written through a `.part` file; `read` / `names` /
-  `get` / `save` / `remove` / `rename` / `clean_name` (whitespace collapsed, no path separator, ≤ 60
-  characters) / `record` / `fields` (whatever is in the file read back in its kind). The folder is handed in,
 - **…and, since 2026-11-19, the first working walker's own edits** («сохраняло все изменения в том числе и
   аддитив который накладывает риг поза»): `edits` = `scene.dump_edits` (the rig pose's cycle layer and the four
   key poses, Fix posture, Snap weapon, Head aim) without the walk's name; applied, they replace every working
   walker's own, each under the walk it walks (`panel._put_preset_edits`). A preset saved before keeps none and
   leaves a walker's edits alone. A rig pose standing keeps showing the old pose until Create again. Tests
   `tests/test_walk_preset_edits.py`; not seen in a GUI Maya.
+- **`SkeldarAnim/maya_walk/presets.py`** (stdlib): `<walks folder>/presets.json` - `{"version": 1, "presets":
+  {name: {"params": …, "parts": […], "pose_card": "…"}}}`, written through a `.part` file; `read` / `names` /
+  `get` / `save` / `remove` / `rename` / `clean_name` (whitespace collapsed, no path separator, ≤ 60
+  characters) / `record` / `fields` (whatever is in the file read back in its kind). The folder is handed in,
   so it is outside the plugin an install replaces and a verify can point it at a temporary one.
 - **The card**: a row `Preset [▾] [Save...]` right above the Main head. The dropdown lists `(none)` and the
   presets; picking one puts it on at once and keys the selected walkers (`apply_preset` → `_rekey`, the card
@@ -18650,3 +18654,29 @@ Proof: `docs/superpowers/plans/relink/verify_relink_import.py` 10/10 mayapy stan
 markers, heal gives all four back and skips the leftover, a second heal finds nothing, Bake refuses and
 keeps the lost knot); `tests/test_tools_relink.py`. The animator's live scenes (9.0034, 9.0035) were
 mended by the same rules before the module existed. Not yet seen in a GUI Maya with the build.
+
+## No animations, no highlights, fields that wait for a click (2026-11-19)
+
+The animator: «удаляем все подсветки и анимации из плагина больше они не нужны. интерфейс должен
+быть максимально легким», and «пока я не кликнул в поле опция не должна быть активна». **This retires
+everything above about bursts, springs, slides, glides, fades, pops, card light, hover glow, window
+light, key glows and sparks, the portraits' fire, the camera flight, and ⋮ -> Interface animations.**
+- **Gone whole** (in git before this): `maya_hubburst.py`, `maya_hubglow.py`, `maya_windowlight.py`,
+  `maya_charfire.py`, `maya_camflight.py` / `maya_camflight_rules.py`, their tests, and their payload
+  rows in `install.py` (a row naming a missing file would stop an install half way, trap 113).
+  `maya_hubstyle.GLOW` / `HOVER_GLOW` / `glow_rings` went with them.
+- **The hub**: no `animations` / `hover` / `windowlight` callbacks or menu rows, no
+  `set_animations` / `set_windowlight*`, no rail burst (`_rail_burst*`); the edge rail's card is
+  shown and taken back with no origin; every card opens, shuts and scrolls at once.
+  `maya_hubmotion.enabled()` answers False whatever is remembered, so any code still asking is
+  instant. `maya_hub._retire_window_light()` stops a window-light watch an older build left on
+  `sys` (an install purges modules, not their timers).
+- **Kept**: the look (the Time Bar's dark tokens, painted controls), a plain stylesheet hover face,
+  state drawn flat (a face colour or an outline), the Pose Library's animation cards playing their
+  sheet under the mouse (content, not decoration), the interface sounds.
+- **`maya_hubqt.quiet_focus(root)`**: fields and lists ClickFocus, other Tab-focus widgets NoFocus,
+  Enter / Esc in a field gives the keys back - called on the hub's skin, a section's window, the AT
+  bar, the Pose Library, the scene tabs bar and the Time Bar's strip (`tests/test_quiet_focus.py`).
+  A new Qt surface of ours goes through it once built.
+- Proof: 13384 unit tests, the one failure the known `test_chat_deploy.Keys`. **Not seen in a GUI
+  Maya.**

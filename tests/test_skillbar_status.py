@@ -251,7 +251,7 @@ class Widget(unittest.TestCase):
         from tests.test_skillbar_grid import SkillLink
         self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
         self.link = SkillLink(look.defaults())
-        self.strip = bar.make(self.link, 1.0, maya_hubstyle.TOKENS, motion=False)
+        self.strip = bar.make(self.link, 1.0, maya_hubstyle.TOKENS)
         self.strip.resize(1200, 160)
         self.strip.move(3000, 3000)
         self.strip.show()

@@ -5,8 +5,8 @@ html, body { margin: 0; height: 100%; background: var(--panel); color: var(--tex
 #grid.n3, #grid.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
 #grid.focus { grid-auto-rows: auto; }   /* columns, rows and places set by layout() */
 .tile { position: relative; background: var(--card); border-radius: 8px; overflow: hidden;
-  box-shadow: 0 0 0 1px var(--line) inset; transition: box-shadow 120ms; }
-.tile.speaking { box-shadow: 0 0 0 2px var(--accent) inset, 0 0 14px var(--accent); }
+  box-shadow: 0 0 0 1px var(--line) inset; }
+.tile.speaking { box-shadow: 0 0 0 2px var(--accent) inset; }
 .tile video { width: 100%; height: 100%; object-fit: cover; display: block; background: #000; }
 .tile.screen video { object-fit: contain; }
 .tile.nocam video { display: none; }
@@ -43,4 +43,3 @@ body.stage .tile .name { font-size: 13px; }
 #note { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); padding: 3px 10px;
   border-radius: 10px; background: rgba(0,0,0,.6); color: #fff; font-size: 12px; display: none; }
 #note.on { display: block; }
-@media (prefers-reduced-motion: reduce) { .tile { transition: none; } }

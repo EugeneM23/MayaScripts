@@ -161,7 +161,7 @@ def ensure_edge():
     if pinned():
         try:
             controller.set_pinned(True)
-            controller.reveal(instant=True)
+            controller.reveal()
         except Exception:                                    # noqa: BLE001
             print(traceback.format_exc())
     return controller
@@ -321,14 +321,14 @@ def toggle():
 
 
 def steel():
-    """⋮ -> Time bar ▸ Steel keys: the keys in steel, a key set glowing hot and cooling."""
+    """⋮ -> Time bar ▸ Steel keys: the keys drawn as steel ingots."""
     from . import bar
     return bar.steel_on()
 
 
 def set_steel(on):
-    """Steel keys on or off (2026-10-20, «эффект остывания стали»): remembered, and every
-    standing strip repainted at once."""
+    """Steel keys on or off (2026-10-20): remembered, and every standing strip repainted
+    at once. The cooling they had is gone with every other effect (2026-11-19)."""
     import maya.cmds as cmds
     from . import bar, look
     cmds.optionVar(intValue=(look.STEEL_VAR, 1 if on else 0))
@@ -340,4 +340,4 @@ def set_steel(on):
     except Exception:                                        # noqa: BLE001
         import traceback
         print(traceback.format_exc())
-    return "Steel keys: a key set glows hot and cools into steel" if on else "Keys in the accent orange"
+    return "Steel keys: the keys in steel" if on else "Keys in the accent orange"

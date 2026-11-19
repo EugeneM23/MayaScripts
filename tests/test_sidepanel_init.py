@@ -502,7 +502,7 @@ class EnsureEdge(Base):
         self.assertEqual(names, ["drop_edge", "destroy_all", "_borrow", "_skin", "_fit", "_start_job"])
         self.assertEqual(self.calls[3][1], (controller, 1.5))
         self.assertEqual(controller.calls, [("set_tab", "attributes"), ("set_pinned", True),
-                                            ("reveal", {"instant": True}), ("selection_changed",)])
+                                            ("reveal", {}), ("selection_changed",)])
 
     def test_defaults_and_unpinned(self):
         self.cmds.vars[sp.PIN_VAR] = 0
@@ -520,7 +520,7 @@ class EnsureEdge(Base):
         args, kw = made[0][1], made[0][2]
         self.assertEqual(args, ("parent", 1.5, maya_hubstyle.TOKENS))
         self.assertEqual((kw["on_tab"], kw["on_pin"], kw["on_width"]), ("on_tab", "on_pin", "on_width"))
-        self.assertIn("motion", kw)
+        self.assertNotIn("motion", kw)
         controller.kw["on_tab"]("attributes")
         self.assertEqual(self.cmds.vars[sp.TAB_VAR], "attributes")
         self.assertEqual(len(refreshed), 1)

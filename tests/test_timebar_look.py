@@ -54,9 +54,6 @@ class CellTests(unittest.TestCase):
         self.assertAlmostEqual(look.mapped(40.6, (30, 40), (33, 43)), 43.6)
         self.assertEqual(look.mapped(35.0, (30, 40), (30, 50)), 40)
 
-    def test_the_playhead_lights_the_keys_in_its_cell(self):
-        self.assertEqual(look.passed([6.0, 6.47, 7.0], 30.0, 6.0), [6.0, 6.47])
-
     def test_without_cells_nothing_changes(self):
         t = look.Track(0, 10, 0, 100)
         self.assertAlmostEqual(t.scale, 10.0)
@@ -196,24 +193,16 @@ class FullBarTests(unittest.TestCase):
         self.assertEqual(look.mapped(10, (20, 40), (20, 60)), 10)
         self.assertEqual(look.mapped(30, (30, 30), (33, 33)), 33)
 
-    def test_passed_keys(self):
-        keys = [0, 6, 12, 30]
-        self.assertEqual(look.passed(keys, 10, 13), [12])
-        self.assertEqual(look.passed(keys, 12, 13), [])                # leaving a key lights nothing
-        self.assertEqual(look.passed(keys, 13, 10), [12])              # backwards too
-        self.assertEqual(look.passed(keys, 60, 0), [0])                # the loop's jump: the landing only
-        self.assertEqual(look.passed(keys, None, 6), [])
-
-    def test_the_motion_curves(self):
-        self.assertEqual(look.flash(0, 600), 1.0)
-        self.assertEqual(look.flash(600, 600), 0.0)
-        self.assertGreater(look.flash(100, 600), look.flash(300, 600))
-        self.assertEqual(look.approach(0.0, 1.0, 1000, 110), 1.0)
-        self.assertLess(look.approach(0.0, 1.0, 16, 110), 1.0)
-        self.assertGreater(max(look.back_out(u / 20.0) for u in range(21)), 1.0)   # it overshoots
-        self.assertEqual(look.back_out(1.0), 1.0)
-        self.assertEqual(look.opening(0, 3), (0.3, 0.0))
-        self.assertEqual(look.opening(10000, 3), (1.0, 1.0))
+    def test_no_motion_is_left_for_the_time_bar(self):
+        """2026-11-19, «удаляем все подсветки и анимации из плагина»: the playhead's
+        reached keys, the slide, the unroll, the reveal glow, the key effects and the
+        steel cooling are gone."""
+        for name in ("passed", "flash", "opening", "slide", "unroll", "reveal_glow", "EFFECT_MS",
+                     "key_changes", "progress", "play_glow", "delete_plan", "shards", "shard_groups",
+                     "sparks", "cooling", "plate", "spread", "steel_glow", "HEAT", "COOL_MS", "RIM",
+                     "HOVER_MS", "FLASH_MS", "approach", "back_out", "popping", "folding",
+                     "burst_delay", "fold_delay", "UNROLL_MS", "REVEAL_MS", "EDGE_GLOW"):
+            self.assertFalse(hasattr(look, name), name)
 
     def test_envelope(self):
         samples = [0.0] * 100 + [0.5] * 100 + [1.0] * 100        # 300 samples at 30 Hz: 10 s
@@ -245,85 +234,6 @@ class EdgeTests(unittest.TestCase):
         self.assertEqual(look.bottom_band((100, 50, 1900, 1000), 126), (100, 924, 1900, 126))
         self.assertEqual(look.sensor_band((100, 50, 1900, 1000), 2), (100, 1048, 1900, 2))
         self.assertEqual(look.bottom_band((0, 0, 800, 60), 126)[3], 60)
-
-    def test_the_slide(self):
-        self.assertEqual(look.slide(0, 120, True, 180), 120)
-        self.assertEqual(look.slide(180, 120, True, 180), 0)
-        self.assertLess(look.slide(60, 120, True, 180), 60)          # eases out: most of the way early
-        self.assertEqual(look.slide(0, 120, False, 140), 0)
-        self.assertEqual(look.slide(140, 120, False, 140), 120)
-        self.assertEqual(look.slide(5, 120, True, 0), 0)
-
-
-class BurstTests(unittest.TestCase):
-
-    def test_the_mockup_s_timings_1_2_times_longer(self):
-        self.assertEqual((look.UNROLL_MS, look.POP_OPEN_MS, look.FOLD_MS, look.CLOSE_MS), (288, 240, 168, 216))
-
-    def test_nearer_pops_sooner_and_farther_folds_sooner(self):
-        self.assertLess(look.burst_delay(10, 0), look.burst_delay(600, 0))
-        self.assertLess(look.burst_delay(0, 0), look.burst_delay(0, 40))       # a row down counts more
-        self.assertEqual(look.burst_delay(0, 0), 48.0)
-        self.assertEqual(look.burst_delay(120, 0, ui=2.0), look.burst_delay(60, 0))
-        self.assertGreater(look.fold_delay(10), look.fold_delay(600))
-        self.assertEqual(look.fold_delay(5000), 0.0)
-
-    def test_pop_and_fold(self):
-        self.assertEqual(look.popping(0, 50), (look.START_SCALE, 0.0))
-        self.assertEqual(look.popping(50 + look.POP_OPEN_MS, 50), (1.0, 1.0))
-        self.assertGreater(max(look.popping(50 + look.POP_OPEN_MS * u / 20.0, 50)[0] for u in range(21)), 1.0)
-        self.assertEqual(look.folding(0, 50), (1.0, 1.0))
-        self.assertEqual(look.folding(50 + look.FOLD_MS, 50), (look.START_SCALE, 0.0))
-        self.assertGreater(look.folding(50 + look.FOLD_MS * 0.1, 50)[0], 1.0)  # draws back first
-
-    def test_unroll_from_and_onto_the_cursor(self):
-        self.assertEqual(look.unroll(0, 300, 1000, True), (300.0, 300.0))
-        self.assertEqual(look.unroll(1, 300, 1000, True), (0.0, 1000.0))
-        x0, x1 = look.unroll(0.5, 300, 1000, True)
-        self.assertTrue(0 < x0 < 300 < x1 < 1000)
-        self.assertEqual(look.unroll(1, 300, 1000, False), (300.0, 300.0))
-        self.assertEqual(look.unroll(0, 300, 1000, False), (0.0, 1000.0))
-
-
-class RevealGlowTests(unittest.TestCase):
-    """The racing edges of the reveal (2026-10-17, mockup B of five)."""
-
-    def test_the_mockup_s_numbers(self):
-        self.assertEqual((look.REVEAL_MS, look.EDGE_GLOW, look.EDGE_CORE, look.TOP_GLOW), (780, 24, 3, 16))
-        self.assertEqual(look.EFFECT_MS["reveal"], look.REVEAL_MS)
-
-    def test_both_edges_start_on_the_cursor_at_full_light(self):
-        x0, x1, edges, edge, top = look.reveal_glow(0, 300, 1000)
-        self.assertEqual((x0, x1), (300.0, 300.0))
-        self.assertEqual(edges, [300.0, 300.0])
-        self.assertEqual((edge, top), (1.0, 1.0))
-
-    def test_the_edges_ride_the_unroll_and_fade_as_they_slow(self):
-        mid = look.UNROLL_MS * 0.3
-        x0, x1, edges, edge, top = look.reveal_glow(mid, 300, 1000)
-        u0, u1 = look.unroll(0.3, 300, 1000, True)
-        self.assertAlmostEqual(x0, u0, places=6)
-        self.assertAlmostEqual(x1, u1, places=6)
-        self.assertEqual(edges, [x0, x1])
-        self.assertTrue(0.0 < edge < 1.0)
-        self.assertTrue(0.0 < top < 1.0)
-        later = look.reveal_glow(look.UNROLL_MS * 0.6, 300, 1000)
-        self.assertLess(later[3], edge)
-        self.assertLess(later[4], top)
-
-    def test_an_edge_at_the_window_s_end_carries_nothing(self):
-        x0, x1, edges, edge, _top = look.reveal_glow(look.UNROLL_MS, 300, 1000)
-        self.assertEqual((x0, x1), (0.0, 1000.0))
-        self.assertEqual(edges, [])
-        self.assertEqual(edge, 0.0)
-        _x0, _x1, edges, _e, _t = look.reveal_glow(look.UNROLL_MS * 0.4, 0, 1000)
-        self.assertEqual(len(edges), 1)                 # from the left end: one edge races
-
-    def test_the_top_edge_stays_lit_after_the_unroll_and_is_gone_at_the_end(self):
-        top = look.reveal_glow(look.UNROLL_MS + 100, 300, 1000)[4]
-        self.assertGreater(top, 0.0)
-        self.assertEqual(look.reveal_glow(look.REVEAL_MS, 300, 1000)[4], 0.0)
-        self.assertEqual(look.reveal_glow(look.REVEAL_MS + 50, 300, 1000)[4], 0.0)
 
 
 class MeterTests(unittest.TestCase):
@@ -361,120 +271,6 @@ class Purity(unittest.TestCase):
         done = subprocess.run([sys.executable, "-c", code], cwd=plugin,
                               capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-
-
-class KeyEffectTests(unittest.TestCase):
-
-    def test_key_changes_reads_sets_deletes_and_snaps(self):
-        self.assertEqual(look.key_changes([1.0, 2.0], [1.0, 2.0, 5.0]), ([5.0], [], []))
-        self.assertEqual(look.key_changes([1.0, 2.0], [1.0]), ([], [2.0], []))
-        self.assertEqual(look.key_changes([1.0, 2.5], [1.0, 3.0]), ([], [], [(2.5, 3.0)]))
-        self.assertEqual(look.key_changes(None, [1.0]), ([], [], []))
-        self.assertEqual(look.key_changes([], list(map(float, range(20)))), ([], [], []))
-
-    def test_sparks_are_a_formula_of_their_age_and_fall(self):  # the old delete effect, kept
-        a = look.sparks(3, 24, 500, 600, 170, 620)
-        self.assertEqual(a, look.sparks(3, 24, 500, 600, 170, 620))
-        self.assertEqual(len(a), 24)
-        self.assertGreater(sum(dy for _dx, dy, _l in a) / len(a), 0)
-        self.assertEqual(look.sparks(3, 24, 600, 600, 170, 620), [])
-
-    def test_progress(self):
-        self.assertIsNone(look.progress(-1, "set"))
-        self.assertAlmostEqual(look.progress(260, "set"), 0.5)
-        self.assertIsNone(look.progress(look.EFFECT_MS["delete"], "delete"))
-
-    def test_the_play_glow_comes_up_then_fades(self):
-        self.assertEqual(look.play_glow(None), 0.0)
-        self.assertEqual(look.play_glow(1.0), 0.0)
-        self.assertAlmostEqual(look.play_glow(look.PLAY_GLOW_RISE), look.PLAY_GLOW_PEAK)
-        self.assertLess(look.play_glow(0.05), look.play_glow(look.PLAY_GLOW_RISE))
-        self.assertGreater(look.play_glow(0.3), look.play_glow(0.7))
-        self.assertLess(look.play_glow(0.99), 0.01)
-
-
-class DeleteWaveTests(unittest.TestCase):
-    """Keys deleted together break one after another left to right, the wave within
-    600 ms (2026-10-17: 300, then «замедлить в двое»)."""
-
-    def test_an_edited_pure_deletion_of_many_keys_is_read(self):
-        old = list(map(float, range(1000)))
-        self.assertEqual(look.key_changes(old, [], edited=True), ([], old, []))
-        self.assertEqual(look.key_changes(old, []), ([], [], []))      # a selection change: a reload
-        self.assertEqual(look.key_changes(old, [5000.0], edited=True), ([], [], []))
-
-    def test_one_key_plays_its_whole_effect(self):
-        self.assertEqual(look.delete_plan(1), ([0.0], look.EFFECT_MS["delete"]))
-
-    def test_a_few_keys_follow_each_other(self):
-        delays, life = look.delete_plan(3)
-        self.assertEqual(delays, [0, look.DELETE_STEP_MS, 2 * look.DELETE_STEP_MS])
-        self.assertEqual(life, look.EFFECT_MS["delete"])
-
-    def test_every_key_flies_whole_and_the_last_starts_within_half_a_second(self):
-        self.assertEqual(look.DELETE_START_MS, 500)
-        for n in (2, 7, 13, 50, 1000, 10000):
-            delays, life = look.delete_plan(n)
-            self.assertEqual(len(delays), n)
-            self.assertEqual(delays, sorted(delays))
-            self.assertEqual(life, look.EFFECT_MS["delete"])        # the flight of a single key
-            self.assertLessEqual(delays[-1], look.DELETE_START_MS + 1e-6)
-        self.assertEqual(look.delete_plan(7)[0][1], look.DELETE_STEP_MS)   # a few: one step apart
-
-    def test_a_key_always_breaks_into_three_cubes_stacked_down_it(self):
-        # 2026-10-18: «из 3 кубиков (всегда кубики разлетаются)»
-        cuts = look.shard_cuts(42.0)
-        self.assertEqual(cuts, [(0.0, 14.0), (14.0, 28.0), (28.0, 42.0)])
-        for rect in ((100.0, 20.0, 12.0, 42.0), (100.0, 20.0, 2.0, 42.0), (100.0, 20.0, 60.0, 42.0)):
-            for seed in range(1, 60):
-                start = look.shards(seed, rect, 0, 700, 260, 900)
-                self.assertEqual(len(start), 3)
-                for (cx, cy, w, h, angle, alpha), (a, b) in zip(start, cuts):
-                    self.assertAlmostEqual(cx, rect[0] + rect[2] / 2.0)   # down the key's middle
-                    self.assertAlmostEqual(cy, 20.0 + (a + b) / 2.0)
-                    self.assertEqual((w, h, angle, alpha), (14.0, 14.0, 0.0, 1.0))   # a square
-                for age in (100, 400, 650):
-                    for _cx, _cy, w, h, _a, _al in look.shards(seed, rect, age, 700, 260, 900):
-                        self.assertEqual(w, h)
-
-    def test_the_pieces_fly_apart_fall_and_fade(self):
-        rect = (100.0, 20.0, 12.0, 40.0)
-        late = look.shards(7, rect, 600, 700, 260, 900)
-        xs = [p[0] for p in late]
-        self.assertTrue(min(xs) < 106.0 < max(xs))      # some go left, some right
-        self.assertTrue(all(p[5] < 0.5 for p in late))
-        self.assertEqual(look.shards(7, rect, 700, 700, 260, 900), [])
-        self.assertEqual(look.shards(7, rect, 300, 700, 260, 900),
-                         look.shards(7, rect, 300, 700, 260, 900))
-
-
-class ShardFlightTests(unittest.TestCase):
-
-    def test_the_flight_is_shorter(self):
-        # variant B of the six played side by side (2026-10-17)
-        self.assertEqual((look.SHARD_SPEED, look.SHARD_FALL, look.SHARD_SPIN), (170.0, 900.0, 420.0))
-        self.assertEqual(look.EFFECT_MS["delete"], 700)
-        rect = (100.0, 30.0, 12.0, 44.0)
-        far = 0.0
-        for seed in range(1, 40):
-            for age in range(0, 700, 20):
-                for cx, cy, _w, _h, _a, _al in look.shards(seed, rect, age, 700, look.SHARD_SPEED,
-                                                            look.SHARD_FALL):
-                    far = max(far, abs(cx - 106.0))
-        self.assertLess(far, 130.0)                     # shorter than the first flight's
-
-
-class ShardGroupTests(unittest.TestCase):
-
-    def test_each_key_alone_until_the_budget_then_runs_of_neighbours(self):
-        self.assertEqual(look.shard_groups(0), [])
-        self.assertEqual(look.shard_groups(5), [(i, i + 1) for i in range(5)])
-        many = look.shard_groups(1000)
-        self.assertEqual(many[0][0], 0)
-        self.assertEqual(many[-1][1], 1000)
-        for (a, b), (c, _d) in zip(many, many[1:]):
-            self.assertEqual(b, c)                      # every key in exactly one run
-        self.assertLessEqual(len(many) * look.SHARDS[0], look.SHARD_BUDGET + look.SHARDS[0])
 
 
 class SetKeyCommandTests(unittest.TestCase):
@@ -647,49 +443,6 @@ class IngotTests(unittest.TestCase):
         self.assertEqual(look.ingot_side(1.0), 0.75)
         self.assertEqual(look.ingot_side(100.0), 2.0)
         self.assertAlmostEqual(look.ingot_side(10.0), 1.4)
-
-    def test_the_glow_grows_with_heat_and_a_little_with_a_lift(self):
-        self.assertEqual(look.steel_glow(0.0, 0.0), 0.0)
-        self.assertAlmostEqual(look.steel_glow(1.0, 0.0), look.STEEL_GLOW)
-        self.assertAlmostEqual(look.steel_glow(0.0, 1.0), look.STEEL_GLOW * look.STEEL_GLOW_LIFT)
-        self.assertAlmostEqual(look.steel_glow(1.0, 1.0), look.STEEL_GLOW)
-
-
-class CoolingTests(unittest.TestCase):
-    """Steel keys (2026-10-20): a key set glows hot and cools into steel."""
-
-    def test_white_hot_then_cherry_red_then_steel(self):
-        hot, heat = look.cooling(0)
-        self.assertEqual((hot, heat), (look.HEAT[0][1], 1.0))
-        red, _ = look.cooling(look.COOL_MS * 0.45)
-        r, g, b = look._rgb(red)
-        self.assertGreater(r, g + 100)
-        self.assertEqual(look.cooling(look.COOL_MS), (look.STEEL, 0.0))
-        self.assertEqual(look.cooling(look.COOL_MS * 3)[0], look.STEEL)
-
-    def test_the_heat_only_falls_and_is_gone_before_the_end(self):
-        heats = [look.cooling(t)[1] for t in range(0, look.COOL_MS + 1, 30)]
-        self.assertEqual(heats, sorted(heats, reverse=True))
-        self.assertEqual(look.cooling(look.COOL_MS * 0.75)[1], 0.0)
-
-    def test_a_handful_of_colours_so_each_glow_is_cached_once(self):
-        colours = {look.cooling(t)[0] for t in range(0, look.COOL_MS + 1)}
-        self.assertLessEqual(len(colours), look.COOL_STEPS + 1)
-
-    def test_the_last_stop_is_the_steel_asked_for(self):
-        self.assertEqual(look.cooling(look.COOL_MS, steel="#808080")[0], "#808080")
-
-
-class SpreadTests(unittest.TestCase):
-    """Many keys set at once: the round flash on a few of them, spread along."""
-
-    def test_all_when_few_else_spread_with_both_ends(self):
-        self.assertEqual(look.spread(5, 8), [0, 1, 2, 3, 4])
-        got = look.spread(200, 8)
-        self.assertEqual(len(got), 8)
-        self.assertEqual((got[0], got[-1]), (0, 199))
-        self.assertEqual(got, sorted(got))
-        self.assertEqual(look.spread(3, 1), [0])
 
 
 class SteelDefaultTests(unittest.TestCase):

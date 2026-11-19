@@ -13,8 +13,8 @@ after the status-line tools, the four blend tracks behind one Blend chip (spec
 docs/superpowers/specs/2026-10-26-atbar-compact-design.md). Nothing heavy at import.
 
 Its look is layout B of the mockups (https://claude.ai/artifact/FG74SWkoW6u2UoQ2Xw6Ak4): every animBot icon
-redrawn 1:1 in our line style (`glyphs`), a caption over each group in its colour, the Time Bar's controls
-and motion (`bar`). The tools are `core`.
+redrawn 1:1 in our line style (`glyphs`), a caption over each group in its colour, painted controls with
+no motion or glow (`bar`, 2026-11-19). The tools are `core`.
 """
 
 import os

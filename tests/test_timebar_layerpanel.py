@@ -114,13 +114,11 @@ class FakeStrip(object):
 @unittest.skipIf(QT is None, "no Qt")
 class Panel(unittest.TestCase):
 
-    motion = False
-
     def setUp(self):
         from maya_timebar import layerpanel
         self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
         self.link = FakeLink()
-        self.panel = layerpanel.Panel(FakeStrip(), self.link, 1.0, maya_hubstyle.TOKENS, self.motion)
+        self.panel = layerpanel.Panel(FakeStrip(), self.link, 1.0, maya_hubstyle.TOKENS)
         self.addCleanup(self.panel.destroy)
 
     def click(self, widget, x, y, button=None):
@@ -461,11 +459,6 @@ class Members(Presses):
 
 class LaneStrip(FakeStrip):
 
-    quiets = 0
-
-    def quiet_keys(self):
-        self.quiets += 1
-
     def track(self):
         from maya_timebar import look
         return look.Track(0, 99, 0, 1000, cells=True)        # 10 px a frame
@@ -480,7 +473,7 @@ class Lanes(unittest.TestCase):
         self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
         self.link = FakeLink()
         self.link.opts = {"skeldarTimeBarLayerLanes": 1}
-        self.panel = layerpanel.Panel(LaneStrip(), self.link, 1.0, maya_hubstyle.TOKENS, False)
+        self.panel = layerpanel.Panel(LaneStrip(), self.link, 1.0, maya_hubstyle.TOKENS)
         self.addCleanup(self.panel.destroy)
         self.panel.open((1300, 815))
         self.lay = self.panel.column.layout_()
@@ -717,24 +710,12 @@ class Lanes(unittest.TestCase):
         QT.QtWidgets.QApplication.sendEvent(self.panel.lanes, ev)
         self.assertNotIn("lane_live_stamp", [e[0] for e in self.link.log])
 
-    def test_the_key_under_the_mouse_lifts(self):
+    def test_the_key_under_the_mouse_takes_the_open_hand(self):
         Qt = QT.QtCore.Qt
         self.send("MouseMove", 104, self.y[1], Qt.NoButton, Qt.NoButton)
-        self.assertEqual(self.panel.lane_aimed, ("A1", 10.0))
         self.assertEqual(self.panel.lanes.cursor().shape(), Qt.OpenHandCursor)
         self.panel.lanes.repaint()
         self.assertFalse(self.panel.lanes._failed)
-        self.send("MouseMove", 555, self.y[1], Qt.NoButton, Qt.NoButton)
-        self.assertIsNone(self.panel.lane_aimed)
-
-    def test_a_key_move_on_the_lanes_quiets_the_strip_s_effects(self):
-        # 2026-10-19: «при переносе ключей по слоям ... эффекты разрушения ключа и вспышек не
-        # должны отыгрываться»
-        self.drag(105, self.y[1], 205, self.y[1])                 # a key dragged alone
-        self.assertEqual(self.panel.strip.quiets, 1)
-        self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}
-        self.drag(155, self.y[0], 255, self.y[0])                 # the highlight's body
-        self.assertEqual(self.panel.strip.quiets, 2)
 
     def test_the_lanes_read_no_keys_while_they_drag_keys(self):
         # 2026-10-19: «Ключи мигают при переносе по выдвижной панели» - a read mid-drag took
@@ -760,10 +741,6 @@ class Lanes(unittest.TestCase):
         self.panel.refresh(keys=True)
         self.assertEqual(reads, [])
         self.send("MouseButtonRelease", 105, self.y[1], Qt.LeftButton, Qt.NoButton)
-
-    def test_a_scrub_on_the_lanes_does_not_quiet_them(self):
-        self.drag(305, self.y[0], 405, self.y[0])
-        self.assertEqual(self.panel.strip.quiets, 0)
 
     def ink_at(self, frame, row=1):
         """Whether frame `frame`'s cell on lane `row` holds a key's ink now."""
@@ -818,11 +795,9 @@ class Lanes(unittest.TestCase):
         self.assertFalse(self.ink_at(10))
         self.assertTrue(self.ink_at(30))
 
-    def test_after_the_release_the_key_aimed_at_the_press_is_not_lit_there(self):
+    def test_after_the_release_the_key_hovered_at_the_press_is_not_drawn_there(self):
         # 2026-10-20: «в момент отпускания мышки в том месте где мы его взяли на пару кадров
-        # появится изображение ключа»: the key under the mouse when the drag began stayed
-        # aimed, and its lifted picture came back at the old frame once the drag ended -
-        # until the next mouse move aimed again
+        # появится изображение ключа»
         Qt = QT.QtCore.Qt
         link = self.link
 
@@ -830,8 +805,7 @@ class Lanes(unittest.TestCase):
             link.keys_by_layer = lambda names: dict((n, [0.0, 30.0] if n == "A1" else [0.0, 10.0]) for n in names)
             return True, ""
         link.lane_live_end = live_end
-        self.send("MouseMove", 105, self.y[1], Qt.NoButton, Qt.NoButton)        # hover: aims the key at 10
-        self.assertIsNotNone(self.panel.lane_aimed)
+        self.send("MouseMove", 105, self.y[1], Qt.NoButton, Qt.NoButton)        # hover over the key at 10
         self.send("MouseButtonPress", 105, self.y[1], Qt.LeftButton, Qt.LeftButton)
         self.send("MouseMove", 305, self.y[1], Qt.NoButton, Qt.LeftButton)
         QT.QtWidgets.QApplication.processEvents()
@@ -923,7 +897,7 @@ class Scaled(Panel):
         from maya_timebar import layerpanel
         self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
         self.link = FakeLink()
-        self.panel = layerpanel.Panel(FakeStrip(), self.link, 1.5, maya_hubstyle.TOKENS, False)
+        self.panel = layerpanel.Panel(FakeStrip(), self.link, 1.5, maya_hubstyle.TOKENS)
         self.addCleanup(self.panel.destroy)
 
     def test_the_default_height_is_logical(self):
@@ -952,19 +926,20 @@ class Scaled(Panel):
         self.assertEqual(col.geometry().bottom(), g0.bottom())
 
 
-class Motion(Panel):
+class NoMotion(Panel):
+    """2026-11-19, «удаляем все подсветки и анимации из плагина»: the column opens whole."""
 
-    motion = True
-
-    def test_mid_open_the_shape_is_small_and_far_pixels_empty(self):
-        self.panel.open((1300, 815))
+    def test_open_is_whole_at_once(self):
+        self.panel.open()
+        self.assertEqual(self.panel.phase, "open")
         col = self.panel.column
-        self.panel.age_override = 60.0               # ms into the burst
         img = QT.QtGui.QImage(col.size(), QT.QtGui.QImage.Format_ARGB32)
         img.fill(0)
         col.render(img)
-        self.assertEqual(img.pixelColor(4, 12).alpha(), 0)      # the far top-left corner: not yet
-        self.panel.age_override = None
+        self.assertGreater(img.pixelColor(4, 12).alpha(), 0)    # the far corner drawn at once
+        for name in ("burst", "lanes_burst", "wave", "ghosts", "pops", "flashes", "driver",
+                     "age_override", "lane_aimed", "clock"):
+            self.assertFalse(hasattr(self.panel, name), name)
 
 
 if __name__ == "__main__":

@@ -572,10 +572,10 @@ class Mount(StateCase):
         QtWidgets = self.QtWidgets
 
         class Box(QtWidgets.QWidget):
-            def refresh(self, effects=True):
+            def refresh(self):
                 raise RuntimeError("first read")
         self.holder.widget = lambda name: self.form
-        self.box_module.make = lambda link, ui, tokens, parent=None, motion=None: Box(parent)
+        self.box_module.make = lambda link, ui, tokens, parent=None: Box(parent)
         printed = []
         with mock.patch.object(cb, "print", lambda *a, **k: printed.append(a), create=True):
             built = cb.mount(self.panel, [{"form": "F"}])

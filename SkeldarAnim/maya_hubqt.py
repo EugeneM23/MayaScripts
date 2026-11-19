@@ -31,28 +31,13 @@ Spec: docs/superpowers/specs/2026-09-28-hub-skin-design.md
 
 import functools
 import math
-import time
 import types
-import zlib
 
 import maya_hubcopy as hubcopy
 import maya_hubicons as hubicons
-import maya_hubmotion as hubmotion
 import maya_hubstyle as hubstyle
 
 _QT = []
-
-#  Qt's largest widget size: a body's height cap taken off after a slide
-_NO_CAP = 16777215
-
-#  How long the mouse may be off every card before the light goes to the
-#  resting card (see Skin.resting): long enough to cross the gap between two
-#  cards without a flash, short enough to read as immediate.
-FALLBACK_MS = 150
-
-#  How long a jump's glide waits at most for the other cards to finish
-#  sliding (every slide is over within maya_hubmotion.MAX_MS)
-GLIDE_WAIT_S = 0.6
 
 #  ⋮ -> Edge panel ▸ its rows (label, the choice maya_hub.set_edge_side
 #  takes), 2026-10-09
@@ -447,53 +432,6 @@ def set_card_height(skin, logical, scale):
     return True
 
 
-def burst_parts(frame, head, root, clip, scale):
-    """The parts a burst pops in and folds out (maya_hubburst), in `frame`'s
-    coordinates (2026-10-18; shared by a section's window and the edge rail's
-    card): `head`'s rect, then `root`'s rows cut to widget `clip` (a scroll's
-    viewport) and banded to MAX_PARTS - 1. `root` None: the head alone."""
-    import maya_hubburst as hubburst
-    q = qt()
-    QtWidgets = q.QtWidgets
-    zero = q.QtCore.QPoint(0, 0)
-
-    def rect_of(widget):
-        #  through global coordinates (2026-10-19): the edge rail's clip, the
-        #  hub's scroll viewport, is the card frame's ANCESTOR, and mapTo of a
-        #  non-ancestor answers nonsense - every row was cut 46 px to the
-        #  right and 311 down, the card's top an empty rectangle
-        at = frame.mapFromGlobal(widget.mapToGlobal(zero))
-        return (at.x(), at.y(), widget.width(), widget.height())
-
-    def kids(widget):
-        #  a list (any scroll area) is a leaf, cut into bands with its frame
-        #  (2026-10-19): split, its frame showed at once around its viewport
-        #  waiting as an empty rectangle of the card's face
-        if isinstance(widget, QtWidgets.QAbstractScrollArea):
-            return []
-        return [c for c in widget.children()
-                if isinstance(c, QtWidgets.QWidget) and not c.isWindow()
-                and c.isVisible() and c.width() > 0 and c.height() > 0]
-
-    parts = [rect_of(head)]
-    if root is not None:
-        cut = rect_of(clip) if clip is not None else None
-        found = hubburst.rows(root, kids, rect_of,
-                              hubstyle.px(hubburst.ROW_MAX, scale), cut)
-        parts.extend(hubburst.bands(found, hubburst.MAX_PARTS - 1))
-    return parts
-
-
-def card_parts(skin, card):
-    """The edge rail card's burst parts (2026-10-18): its title row and its
-    body's rows, cut to the skin's scroll viewport, in the card frame's
-    coordinates."""
-    scroll = getattr(skin, "scroll", None)
-    clip = scroll.viewport() if scroll is not None and _valid(scroll) else None
-    body = card.body if card.body.isVisible() else None
-    return burst_parts(card.frame, card.header, body, clip, card.scale)
-
-
 def destroy_roots_in(host):
     """Delete every skin root standing in widget `host`, NOW: the
     workspaceControl's (`destroy_roots`), or the edge panel's slot
@@ -538,29 +476,11 @@ def pixmap(name, colour, size):
 
 
 def _valid(obj):
-    """`obj`'s C++ object still stands (a hub rebuilt mid-glide deletes it)."""
+    """`obj`'s C++ object still stands (a hub rebuilt meanwhile deletes it)."""
     try:
         return bool(qt().shiboken.isValid(obj))
     except Exception:                                        # noqa: BLE001
         return False
-
-
-def rotated(image, angle):
-    """`image` turned `angle` degrees clockwise about its centre, the same
-    size (a card's chevron while the body slides)."""
-    q = qt()
-    out = q.QtGui.QPixmap(image.size())
-    out.fill(q.QtCore.Qt.transparent)
-    painter = q.QtGui.QPainter(out)
-    painter.setRenderHint(q.QtGui.QPainter.Antialiasing)
-    painter.setRenderHint(q.QtGui.QPainter.SmoothPixmapTransform)
-    half_w, half_h = image.width() / 2.0, image.height() / 2.0
-    painter.translate(half_w, half_h)
-    painter.rotate(angle)
-    painter.translate(-half_w, -half_h)
-    painter.drawPixmap(0, 0, image)
-    painter.end()
-    return out
 
 
 def icon_file(name, colour, folder=None):
@@ -600,11 +520,6 @@ def icon_with_dot(name, colour, size, dot):
     try:
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         painter.setPen(QtCore.Qt.NoPen)
-        ring = QtGui.QColor(hubstyle.TOKENS["accent"])
-        ring.setAlphaF(0.35)
-        painter.setBrush(ring)
-        painter.drawEllipse(QtCore.QRectF(size - dot - 1.5, -0.5,
-                                          dot + 2.0, dot + 2.0))
         painter.setBrush(QtGui.QColor(hubstyle.TOKENS["accent"]))
         painter.drawEllipse(QtCore.QRectF(size - dot - 0.5, 0.5, dot, dot))
     finally:
@@ -612,23 +527,13 @@ def icon_with_dot(name, colour, size, dot):
     return QtGui.QIcon(pix)
 
 
-BADGE_POP_MS = 200
-
-
-def badge_pop(age_ms):
-    """A count's pop: 1 -> 1.3 -> 1 over BADGE_POP_MS."""
-    if age_ms < 0 or age_ms >= BADGE_POP_MS:
-        return 1.0
-    return 1.0 + 0.3 * math.sin(math.pi * age_ms / float(BADGE_POP_MS))
-
-
 def badge_text(count):
     return "99+" if count > 99 else str(int(count))
 
 
-def icon_with_badge(name, colour, size, count, grow=1.0, dot=False):
+def icon_with_badge(name, colour, size, count, dot=False):
     """The icon `name` with an accent pill at its top right reading `count` (the chat's
-    unread on its rail icon, 2026-10-20); `grow` scales the pill (its pop)."""
+    unread on its rail icon, 2026-10-20)."""
     q = qt()
     QtCore, QtGui = q.QtCore, q.QtGui
     pix = QtGui.QPixmap(pixmap(name, colour, size))
@@ -641,8 +546,8 @@ def icon_with_badge(name, colour, size, count, grow=1.0, dot=False):
         font.setPixelSize(max(6, int(size * 0.42)))
         painter.setFont(font)
         fm = QtGui.QFontMetrics(font)
-        h = size * 0.55 * grow
-        w = max(h, (fm.horizontalAdvance(text) + size * 0.2) * grow)
+        h = size * 0.55
+        w = max(h, fm.horizontalAdvance(text) + size * 0.2)
         rect = QtCore.QRectF(size - w, 0.0, w, h)
         painter.setPen(QtCore.Qt.NoPen)
         painter.setBrush(QtGui.QColor(hubstyle.TOKENS["accent"]))
@@ -664,6 +569,103 @@ def repolish(widget):
     style.unpolish(widget)
     style.polish(widget)
     widget.update()
+
+
+#  What may hold the keyboard after a click: where one types, and a list one
+#  walks with the arrows. Read off the meta-object (`QObject.inherits`): a
+#  wrapper of one of Maya's own widgets is a plain QWidget (trap 309).
+TYPED = ("QLineEdit", "QAbstractSpinBox", "QTextEdit", "QPlainTextEdit",
+         "QAbstractItemView")
+
+
+def quiet_focus(root):
+    """No widget under `root` takes the keyboard until it is clicked, and no
+    button ever does (2026-11-19, the animator: «в некоторых участках
+    интерфейса активна опция печатания по умолчанию и когда я хочу
+    использовать горячую клавишу опция перехватывает управление. Пока я не
+    кликнул в поле опция не должна быть активна»).
+
+    Qt hands a window's keyboard, when it becomes active, to the first widget
+    that takes TAB focus - the AT bar's frames field took Maya's hotkeys that
+    way - and a focused button presses itself on Space. So a field or a list
+    is ClickFocus (it takes the keys only when clicked), anything else that
+    wanted Tab is NoFocus, and Enter in a one-line field gives the keys back
+    (`_give_back`). Answers how many widgets changed."""
+    q = qt()
+    if q is None or root is None:
+        return 0
+    Qt = q.QtCore.Qt
+    changed = 0
+    try:
+        widgets = [root] + list(root.findChildren(q.QtWidgets.QWidget))
+    except RuntimeError:
+        return 0
+    tab = _bits(Qt.TabFocus)
+    for widget in widgets:
+        try:
+            typed = any(widget.inherits(name) for name in TYPED)
+            if typed and (widget.inherits("QLineEdit")
+                          or widget.inherits("QAbstractSpinBox")):
+                _give_back(widget)
+            if not _bits(widget.focusPolicy()) & tab:
+                continue
+            widget.setFocusPolicy(Qt.ClickFocus if typed else Qt.NoFocus)
+            changed += 1
+        except (RuntimeError, AttributeError, TypeError):
+            continue
+    return changed
+
+
+def _bits(policy):
+    """A focus policy as its int: PySide6's FocusPolicy is an Enum, which
+    takes no `&`."""
+    return int(getattr(policy, "value", policy))
+
+
+def _give_back(widget):
+    """Enter in a one-line field lets the keyboard go, so the next hotkey is
+    Maya's again. A key filter, not a signal: Maya's own fields are wrapped
+    as plain QWidgets, which carry no `returnPressed` (trap 309)."""
+    if widget.property("skQuietFocus"):
+        return
+    widget.setProperty("skQuietFocus", True)
+    widget.installEventFilter(_enter_filter())
+
+
+def _enter_filter():
+    state = _QUIET_STATE
+    if state.get("filter") is not None:
+        return state["filter"]
+    q = qt()
+    QtCore = q.QtCore
+
+    class EnterGivesBack(QtCore.QObject):
+        def eventFilter(self, obj, event):
+            try:
+                if (event.type() == QtCore.QEvent.KeyPress and event.key() in (
+                        QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter,
+                        QtCore.Qt.Key_Escape)):
+                    #  the field takes its own Enter first (Maya commits the
+                    #  value, a spin box steps it), then lets the keys go
+                    QtCore.QTimer.singleShot(0, functools.partial(_unfocus, obj))
+            except RuntimeError:
+                pass
+            return False
+
+    app = q.QtWidgets.QApplication.instance()
+    state["filter"] = EnterGivesBack(app)
+    return state["filter"]
+
+
+_QUIET_STATE = {}
+
+
+def _unfocus(widget):
+    try:
+        if widget.hasFocus():
+            widget.clearFocus()
+    except RuntimeError:
+        pass
 
 
 def _leaf(name):
@@ -962,31 +964,11 @@ def _inner_scroll_class():
     return _CLASSES["inner"]
 
 
-def sounding(widget, root):
-    """Whether the mouse entering `widget` plays the hover sound (2026-10-01,
-    «звук наводки на кнопочку»): a button (QAbstractButton -- Maya's
-    buttons, checkboxes and segments, measured on the live hub, and our
-    strip and header), a dropdown or a card's header, enabled, under
-    `root`. The type is asked first: every Enter in Maya comes through
-    here."""
-    q = qt()
-    w = q.QtWidgets
-    if not isinstance(widget, (w.QAbstractButton, w.QComboBox,
-                               _head_class())):
-        return False
-    if not widget.isEnabled():
-        return False
-    return widget is root or root.isAncestorOf(widget)
-
-
 def _frame_class():
-    """A card's QFrame (still `QFrame[skCard]` to the stylesheet, which draws
-    its plain face) painting its own LIGHT over that face: `level` 0..1 and
-    `flash` 0..1, animated by its Card (2026-10-01, «красивый глоу и анимацию
-    подсветки»). A full repaint of a card costs 1.5 ms (UE Bridge, measured),
-    so the whole light - the face's tint too - can fade. Since 2026-10-18 no
-    group stripe (the animator: «мусорная полоска ... это баг»); the group
-    shows on the card's jump icon only."""
+    """A card's QFrame, still `QFrame[skCard]` to the stylesheet, which draws
+    its plain face; `scale` kept for what draws on it (maya_hubwindow's
+    frame). The card light it painted went on 2026-11-19 (the animator:
+    «удаляем все подсветки и анимации из плагина»)."""
     if "frame" not in _CLASSES:
         q = qt()
 
@@ -995,435 +977,18 @@ def _frame_class():
             def __init__(self, scale=1.0, parent=None):
                 super(CardFrame, self).__init__(parent)
                 self.scale = scale
-                self.level = 0.0
-                self.flash = 0.0
-
-            def paintEvent(self, event):                   # noqa: N802
-                super(CardFrame, self).paintEvent(event)
-                if self.level > 0.002 or self.flash > 0.002:
-                    paint_light(self, self.level, self.flash, self.scale)
 
         _CLASSES["frame"] = CardFrame
     return _CLASSES["frame"]
 
 
-def paint_light(widget, level, flash, scale, radius=8, face=True):
-    """The card light on `widget`: the face card_active at `level` (unless
-    `face` is False: a floating window keeps its own face, 2026-10-22), the
-    inner glow (`maya_hubstyle.glow_rings`), the 2 px ring card_edge at
-    `level` - brighter toward accent_text, and fully drawn, while it
-    `flash`es. `radius` is the widget's corner, logical px."""
-    q = qt()
-    QtCore, QtGui = q.QtCore, q.QtGui
-    tokens = hubstyle.TOKENS
-    edge = float(hubstyle.px(2, scale))
-    radius = float(hubstyle.px(radius, scale))
-    outer = QtCore.QRectF(widget.rect())
-    painter = QtGui.QPainter(widget)
-    try:
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        painter.setPen(QtCore.Qt.NoPen)
-        if face:
-            fill = QtGui.QColor(tokens["card_active"])
-            fill.setAlphaF(min(1.0, level))
-            painter.setBrush(fill)
-            inner = outer.adjusted(edge, edge, -edge, -edge)
-            painter.drawRoundedRect(inner, max(0.0, radius - edge),
-                                    max(0.0, radius - edge))
-        painter.setBrush(QtCore.Qt.NoBrush)
-        glow = QtGui.QColor(tokens["accent"])
-        for inset, width, alpha in hubstyle.glow_rings(level, flash, scale):
-            if alpha <= 0.0:
-                continue
-            d = edge + (inset + width / 2.0) * scale
-            w = width * scale
-            glow.setAlphaF(alpha)
-            painter.setPen(QtGui.QPen(glow, w))
-            painter.drawRoundedRect(outer.adjusted(d, d, -d, -d),
-                                    max(0.0, radius - d),
-                                    max(0.0, radius - d))
-        ring = QtGui.QColor(hubstyle.mix(tokens["card_edge"],
-                                         tokens["accent_text"], flash))
-        ring.setAlphaF(min(1.0, max(level, flash)))
-        painter.setPen(QtGui.QPen(ring, edge))
-        half = edge / 2.0
-        painter.drawRoundedRect(outer.adjusted(half, half, -half, -half),
-                                radius - half, radius - half)
-    finally:
-        painter.end()
-
-
-def _watcher_class():
-    """An application-wide event filter: a press or a focus change anywhere
-    is handed to `on_press(widget)`, the mouse entering a widget to
-    `on_enter(widget)`; it never swallows the event."""
-    if "watch" not in _CLASSES:
-        q = qt()
-        pressed = (q.QtCore.QEvent.MouseButtonPress, q.QtCore.QEvent.FocusIn)
-        entered = q.QtCore.QEvent.Enter
-        left = q.QtCore.QEvent.Leave
-
-        class Watcher(q.QtCore.QObject):
-
-            def __init__(self, on_press, on_enter, on_leave, parent=None):
-                super(Watcher, self).__init__(parent)
-                self._on_press = on_press
-                self._on_enter = on_enter
-                self._on_leave = on_leave
-
-            def eventFilter(self, obj, event):             # noqa: N802
-                kind = event.type()
-                try:
-                    if kind in pressed:
-                        self._on_press(obj)
-                    elif kind == entered:
-                        self._on_enter(obj)
-                    elif kind == left:
-                        self._on_leave(obj)
-                except Exception:                            # noqa: BLE001
-                    pass
-                return False
-
-        _CLASSES["watch"] = Watcher
-    return _CLASSES["watch"]
-
-
-# ------------------------------------------------------------- hover glow
-
-#  The glow of a control under the mouse (2026-10-02, «все надпись немного
-#  подсвечивались легким свечением когда мы наводим на них мышкой»; the
-#  animator chose the glow in the text's own colour, on everything
-#  clickable). maya_hubglow is the arithmetic; here, the effect that draws it
-#  and the Glower that the skin's watcher drives.
-
-GLOW_TICK_MS = 16
-
-
-def glowing(widget, root):
-    """Whether `widget` glows under the mouse: a control that ticks on hover
-    (`sounding`), not a card header (its card lights up already - the
-    animator, minutes after the first build: «уберем свечение из надписей
-    заголовков разделов мы и так разделы подсвечивали раньше»), not a colour
-    swatch (a dot has no ink), carrying no graphics effect of somebody
-    else's."""
-    if widget is None or not sounding(widget, root):
-        return False
-    if isinstance(widget, _head_class()):
-        return False
-    if widget.property("skRole") == "swatch":
-        return False
-    #  a painted pill lifts and glows by itself (maya_hubwindow, 2026-10-18)
-    if widget.property("skOwnLight"):
-        return False
-    effect = widget.graphicsEffect()
-    return effect is None or (isinstance(effect, _glow_class())
-                              and _valid(effect))
-
-
-def _glow_class():
-    """A QGraphicsEffect drawing a control's glow at `level` (0..1): its ink
-    bloomed in the ink's own colour (`mode` "ink"), or a warm rim inside the
-    edge ("rim", the orange primary button). The glow image is computed once
-    per picture of the control (`computed` counts the numpy runs) and drawn at
-    `level` opacity, so a fade only changes a number. Level 0 draws the
-    control as it is; a glow that fails marks the effect `broken`, which then
-    draws the control as it is for good."""
-    if "glow" not in _CLASSES:
-        q = qt()
-        QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
-
-        class HoverGlow(QtWidgets.QGraphicsEffect):
-
-            def __init__(self, mode="ink", scale=1.0, parent=None):
-                super(HoverGlow, self).__init__(parent)
-                self.mode = mode
-                self.scale = scale
-                self.level = 0.0
-                self.broken = False
-                self.error = None
-                self.computed = 0
-                #  coming up or lit (the Glower says): drawn from the source
-                #  pixmap; going dark: drawn directly (see draw)
-                self.rising = True
-                self.from_pixmap = 0
-                self._key = None
-                self._image = None
-                self._delta = QtCore.QPoint()
-
-            def boundingRectFor(self, rect):               # noqa: N802
-                if self.mode != "ink":
-                    return rect
-                import maya_hubglow as hubglow
-                reach = hubglow.pad(self.scale)
-                return rect.adjusted(-reach, -reach, reach, reach)
-
-            def draw(self, painter):
-                if self.level <= 0.002 or self.broken:
-                    self.drawSource(painter)
-                    return
-                if not self.rising and self._image is not None:
-                    self._draw_fading(painter)
-                    return
-                #  Coming up or lit: the control drawn from its source
-                #  pixmap, which feeds the glow (crc-cached). Its text is
-                #  then grayscale-antialiased, not ClearType (a pixmap with
-                #  alpha; measured 2026-10-02: 434 edge pixels of "Camera
-                #  Setup" up to 52 levels apart) - the switch lands with the
-                #  hover style's own repaint. Qt offers no way round it:
-                #  drawSource after sourcePixmap draws that very pixmap,
-                #  and sourcePixmap after drawSource broke the drawing.
-                offset = QtCore.QPoint()
-                padding = (QtWidgets.QGraphicsEffect.PadToEffectiveBoundingRect
-                           if self.mode == "ink"
-                           else QtWidgets.QGraphicsEffect.NoPad)
-                source = self.sourcePixmap(QtCore.Qt.DeviceCoordinates,
-                                           offset, padding)
-                if source.isNull():
-                    self.drawSource(painter)
-                    return
-                self.from_pixmap += 1
-                inner = self.sourceBoundingRect(QtCore.Qt.DeviceCoordinates)
-                self._delta = offset - QtCore.QPoint(int(round(inner.left())),
-                                                     int(round(inner.top())))
-                painter.save()
-                try:
-                    painter.setWorldTransform(QtGui.QTransform())
-                    painter.drawPixmap(offset, source)
-                    image = self._glow(source, inner, offset)
-                    if image is not None:
-                        self._plus(painter, offset, image)
-                finally:
-                    painter.restore()
-
-            def _draw_fading(self, painter):
-                """Going dark: the control drawn as Qt draws it - DIRECTLY
-                once it has repainted itself (the hover style coming off
-                as the mouse leaves), so its ClearType text is back at that
-                very moment and not when the glow ends - the glow of the
-                lit picture over it (the ink did not move), where the
-                control stands now."""
-                self.drawSource(painter)
-                inner = self.sourceBoundingRect(QtCore.Qt.DeviceCoordinates)
-                offset = QtCore.QPoint(int(round(inner.left())),
-                                       int(round(inner.top()))) + self._delta
-                painter.save()
-                try:
-                    painter.setWorldTransform(QtGui.QTransform())
-                    self._plus(painter, offset, self._image)
-                finally:
-                    painter.restore()
-
-            def _plus(self, painter, offset, image):
-                painter.setOpacity(min(1.0, self.level))
-                painter.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-                painter.drawImage(offset, image)
-
-            def _glow(self, source, inner, offset):
-                try:
-                    image = source.toImage().convertToFormat(
-                        QtGui.QImage.Format_ARGB32_Premultiplied)
-                    w, h = image.width(), image.height()
-                    bpl = image.bytesPerLine()
-                    data = bytes(image.constBits())[:bpl * h]
-                    key = (w, h, self.mode, zlib.crc32(data))
-                    if key == self._key:
-                        return self._image
-                    import numpy as np
-                    import maya_hubglow as hubglow
-                    bgra = np.frombuffer(data, np.uint8).reshape(
-                        h, bpl // 4, 4)[:, :w]
-                    if self.mode == "rim":
-                        out = hubglow.rim(bgra, self.scale)
-                    else:
-                        #  the control's own rect inside the padded picture
-                        #  (sourceBoundingRect is a QRectF)
-                        top = max(0, int(round(inner.top())) - offset.y())
-                        left = max(0, int(round(inner.left())) - offset.x())
-                        box = (top, left,
-                               min(h, top + max(1, int(inner.height()))),
-                               min(w, left + max(1, int(inner.width()))))
-                        out = hubglow.bloom(bgra, self.scale, box)
-                    self.computed += 1
-                    glow = None
-                    if out is not None:
-                        glow = QtGui.QImage(
-                            out.tobytes(), w, h, w * 4,
-                            QtGui.QImage.Format_ARGB32_Premultiplied).copy()
-                    self._key, self._image = key, glow
-                    return glow
-                except Exception as exc:                     # noqa: BLE001
-                    #  kept for a verify to read: the glow goes quiet
-                    self.broken = True
-                    self.error = repr(exc)
-                    return None
-
-        _CLASSES["glow"] = HoverGlow
-    return _CLASSES["glow"]
-
-
-class Glower(object):
-    """The one control glowing under the mouse, fading in and out.
-
-    The skin's application-wide watcher hands it every Enter and Leave. It
-    never keeps a WIDGET: a wrapper of a Maya-owned widget that Maya deletes
-    reads freed memory (CLAUDE.md trap 135). It holds its EFFECTS instead -
-    ours, Python-made, so one whose control died answers `isValid` False and
-    raises on a call rather than crashing - found again through
-    `widget.graphicsEffect()` while the widget is in its own event. Every
-    effect is held: PySide deletes one whose wrapper is collected (measured
-    2026-10-02). An effect stays on its control once made; dark it is
-    disabled, and Qt paints the control as if it had none."""
-
-    def __init__(self, root, scale=1.0, motion=None):
-        q = qt()
-        self.root = root
-        self.scale = scale
-        self._motion = motion
-        self._clock = time.monotonic
-        self.effects = []
-        self.lit = None
-        self._fades = {}          # id(effect) -> [effect, start, end, t0, ms]
-        self._timer = q.QtCore.QTimer(root)
-        self._timer.setObjectName("skeldarHubGlowTimer")
-        self._timer.setInterval(GLOW_TICK_MS)
-        self._timer.timeout.connect(self.tick)
-
-    def _animated(self):
-        return bool(self._motion is None or self._motion())
-
-    def _target(self, widget):
-        """`widget` or its nearest ancestor that glows, inside the root."""
-        q = qt()
-        root = self.root
-        if not isinstance(widget, q.QtWidgets.QWidget):
-            return None
-        if widget is not root and not root.isAncestorOf(widget):
-            return None
-        node = widget
-        while node is not None and node is not root:
-            if glowing(node, root):
-                return node
-            node = node.parentWidget()
-        return None
-
-    def _effect_of(self, widget, create=False):
-        effect = widget.graphicsEffect()
-        cls = _glow_class()
-        if isinstance(effect, cls):
-            return effect if _valid(effect) else None
-        if effect is not None or not create:
-            return None
-        mode = "rim" if widget.property("skRole") == "primary" else "ink"
-        effect = cls(mode, self.scale)
-        effect.setEnabled(False)                  # dark until it fades up
-        widget.setGraphicsEffect(effect)
-        self.effects = [e for e in self.effects if _valid(e)]
-        self.effects.append(effect)
-        return effect
-
-    def enter(self, widget):
-        """The mouse entered `widget`: its glowing control fades up, any
-        other down; nothing glowing there, everything down."""
-        target = self._target(widget)
-        if target is None and self.lit is None:
-            return
-        effect = (self._effect_of(target, create=True)
-                  if target is not None else None)
-        if effect is self.lit:
-            return
-        if self.lit is not None:
-            self._fade(self.lit, 0.0)
-        self.lit = effect
-        if effect is not None:
-            self._fade(effect, 1.0)
-
-    def leave(self, widget):
-        """The mouse left `widget`: if it is the one glowing, it fades."""
-        q = qt()
-        if self.lit is None or not isinstance(widget, q.QtWidgets.QWidget):
-            return
-        if self._effect_of(widget) is self.lit:
-            self._fade(self.lit, 0.0)
-            self.lit = None
-
-    def _drop(self, effect):
-        self._fades.pop(id(effect), None)
-        if self.lit is effect:
-            self.lit = None
-        self.effects = [e for e in self.effects if e is not effect]
-
-    def _set(self, effect, level):
-        """`effect` at `level`; dark, it is DISABLED - Qt then paints its
-        control directly and never calls our Python `draw` (every control
-        hovered once keeps its effect, and a card sliding repaints them
-        all)."""
-        if not _valid(effect):
-            self._drop(effect)
-            return False
-        effect.level = level
-        lit = level > 0.002
-        if effect.isEnabled() != lit:
-            effect.setEnabled(lit)
-        effect.update()
-        return True
-
-    def _fade(self, effect, end):
-        if not _valid(effect):
-            self._drop(effect)
-            return
-        start = effect.level
-        effect.rising = end > 0.0
-        if not self._animated() or start == end:
-            self._fades.pop(id(effect), None)
-            self._set(effect, end)
-            return
-        ms = hubmotion.glow_ms(end > start, start, end)
-        self._fades[id(effect)] = [effect, start, end, self._clock(), ms]
-        if not self._timer.isActive():
-            self._timer.start()
-
-    def tick(self):
-        """One step of every fade under way; the timer stops when none is."""
-        now = self._clock()
-        for key, (effect, start, end, t0, ms) in list(self._fades.items()):
-            t = (now - t0) * 1000.0 / float(ms)
-            t = 1.0 if t >= 1.0 - 1e-6 else t
-            shape = hubmotion.ease if end > start else hubmotion.smooth
-            level = end if t >= 1.0 else hubmotion.lerp(start, end, shape(t))
-            if self._set(effect, level) and t >= 1.0:
-                self._fades.pop(key, None)
-        if not self._fades:
-            self._timer.stop()
-
-    def finish(self):
-        """Every fade at its end now (Interface animations switched off)."""
-        for effect, _start, end, _t0, _ms in list(self._fades.values()):
-            self._set(effect, end)
-        self._fades.clear()
-        self._timer.stop()
-
-    def stop(self):
-        """Nothing glows or moves, no effect is held (the skin is going)."""
-        if _valid(self._timer):
-            self._timer.stop()
-        self._fades.clear()
-        self.lit = None
-        self.effects = []
-
-
 class Card(object):
     """One section: header over body. `body_layout` is where a builder runs.
-
-    Since 2026-10-01 the body SLIDES open and shut on the animator's moves
-    («открывать закрывать с какими-то анимациями»): `set_collapsed(c,
-    animate=True)` caps the body's height tick by tick with the body's own
-    layout DISABLED for the length of it and laid out once at the full
-    height, so a short body clips its children instead of squeezing them to
-    their minimums. `motion` is the skin's switch (a callable); without it,
-    off screen, or with `animate` False the old instant show / hide."""
+    The body is shown or hidden at once (it slid from 2026-10-01 until the
+    animations went, 2026-11-19)."""
 
     def __init__(self, key, label, icon_name, colour, chip, scale,
-                 collapsed=False, on_toggle=None, motion=None, on_popout=None,
+                 collapsed=False, on_toggle=None, on_popout=None,
                  collapsible=True, windowed=False, on_close=None):
         q = qt()
         w = q.QtWidgets
@@ -1453,18 +1018,8 @@ class Card(object):
         self.status_controls = set()
         self._hints = []
         self._on_toggle = on_toggle
-        self._motion = motion
-        self._anim = None
-        self._angle = 0.0
-        self._chevron_base = None
-        self._laid = None
-        self._opening = False
-        self._from_height = self._shown = 0
-        self._from_angle = 0.0
         s = lambda n: hubstyle.px(n, scale)             # noqa: E731
 
-        self._light_anim = None
-        self._flash_anim = None
         if self.windowed:
             #  the same name, so the skin, card_shape and the hub find it;
             #  no skCard (the sheet's face would paint over look B's)
@@ -1482,18 +1037,13 @@ class Card(object):
         else:
             #  compact (2026-10-08, variant B): 5 / 4 / 5 / 5, was 8 / 7 / 8 / 8
             column.setContentsMargins(s(5), s(4), s(5), s(5))
-        #  The gap under the header is the BODY's top margin (it was this
-        #  column's spacing): it opens and shuts with the body instead of
-        #  appearing on the first frame of a slide and vanishing on the last.
+        #  The gap under the header is the BODY's top margin: it opens and
+        #  shuts with the body.
         column.setSpacing(0)
 
         self.header = _named(_head_class()(self.toggle),
                              "skeldarHubCardHead_" + key, "cardhead")
-        #  Exactly its own height, never more or less: while a body slides
-        #  the card's column was laid out a moment before the card got its
-        #  new height, the difference went to the header, and the title and
-        #  chevron, centred in it, shook (the animator saw it, 2026-10-01;
-        #  measured: the header 33 -> 34, 36 ... 350 px shutting, 17 opening).
+        #  exactly its own height, never more or less
         self.header.setSizePolicy(w.QSizePolicy.Preferred,
                                   w.QSizePolicy.Fixed)
         row = w.QHBoxLayout(self.header)
@@ -1528,7 +1078,7 @@ class Card(object):
         sub.setObjectName("skeldarHubCardSubLayout_" + key)
         sub.setContentsMargins(0, 0, 0, 0)
         if self.windowed:
-            #  ⧉ and ✕ as painted pills (they lift and glow by themselves)
+            #  ⧉ and ✕ as painted pills
             pill = hubwindow.pill_class()
             self.chevron = None
             self.popout = _named(pill("float", scale),
@@ -1645,227 +1195,32 @@ class Card(object):
         repolish(self.popout)
         return bool(on)
 
-    def sliding(self):
-        """A slide is under way."""
-        return self._anim is not None
-
-    def set_collapsed(self, collapsed, animate=False):
-        """Show or hide the body -- sliding when `animate` (the animator's
-        move), the skin's switch and the screen allow it. `collapsed()`
-        answers the new state at once. No callback: code opening a card
-        remembers through the hub; only the animator's click calls back
-        (`toggle`)."""
+    def set_collapsed(self, collapsed):
+        """Show or hide the body, at once. `collapsed()` answers the new
+        state. No callback: code opening a card remembers through the hub;
+        only the animator's click calls back (`toggle`)."""
         collapsed = bool(collapsed) and self.collapsible
         if collapsed == self._collapsed:
             return
-        first = self._collapsed is None
         self._collapsed = collapsed
-        if (animate and not first and self._motion is not None
-                and self._motion() and self.frame.isVisible()):
-            self._slide(not collapsed)
-            return
-        self._stop()
-        self._settle()
+        self.body.setVisible(not collapsed)
+        self._paint_chevron()
 
     def toggle(self):
         if not self.collapsible:
             return
-        self.set_collapsed(not self._collapsed, animate=True)
+        self.set_collapsed(not self._collapsed)
         if self._on_toggle:
             self._on_toggle(self.key, self._collapsed)
 
-    # -------------------------------------------------------------- motion
-
-    def natural_height(self, width=None):
-        """The body's own height at the card's width (the header's: the two
-        share the card's column), laid out or not."""
-        layout = self.body_layout
-        width = self.header.width() if width is None else width
-        height = (layout.heightForWidth(width) if layout.hasHeightForWidth()
-                  else -1)
-        if height < 0:
-            height = layout.sizeHint().height()
-        return max(height, layout.minimumSize().height())
-
-    def _lay_out_full(self):
-        """The body's children laid out at its full height, whatever the
-        body's own (capped) height is: they slide into view, never squeezed.
-        Re-read every tick -- a grid inside settles a frame later (measured
-        2026-10-01: Characters 422 shown, 420 settled) -- so a slide ends on
-        the settled height."""
-        q = qt()
-        width = self.header.width()
-        full = self.natural_height(width)
-        if (width, full) != self._laid:
-            self.body_layout.setGeometry(q.QtCore.QRect(0, 0, width, full))
-            self._laid = (width, full)
-        return full
-
-    def _slide(self, opening):
-        q = qt()
-        if self.sliding():
-            start = self._shown                     # turned back mid-way
-        else:
-            start = self.body.height() if self.body.isVisible() else 0
-        self._stop()
-        if opening and not self.body.isVisible():
-            self.body.setMaximumHeight(0)
-            self.body.setVisible(True)
-            start = 0
-        self.body_layout.setEnabled(False)
-        self._laid = None
-        self._opening = opening
-        self._from_height = start
-        self._from_angle = self._angle
-        self._shown = start
-        target = self._lay_out_full() if opening else 0
-        anim = q.QtCore.QVariantAnimation(self.frame)
-        anim.setObjectName("skeldarHubCardSlide_" + self.key)
-        anim.setStartValue(0.0)
-        anim.setEndValue(1.0)
-        anim.setDuration(hubmotion.duration(target - start, self.scale,
-                                            opening=opening))
-        anim.valueChanged.connect(self._tick)
-        anim.finished.connect(self._finished)
-        self._anim = anim
-        anim.start()
-
-    def _tick(self, value):
-        k = hubmotion.ease(value)
-        target = self._lay_out_full() if self._opening else 0
-        self._shown = int(round(hubmotion.lerp(self._from_height, target, k)))
-        self.body.setMaximumHeight(self._shown)
-        self._lay_out_now()
-        end = hubmotion.CHEVRON_OPEN if self._opening else 0.0
-        self._angle = hubmotion.lerp(self._from_angle, end, k)
-        self._paint_chevron(self._angle)
-
-    def _lay_out_now(self):
-        """The card and the column holding it laid out NOW, before anything
-        is painted: left to Qt's posted LayoutRequests, the card's own column
-        ran first, on the card's old height, and the card's edge lagged the
-        body a frame behind."""
-        layout = self.frame.layout()
-        if layout is not None:
-            layout.activate()
-        parent = self.frame.parentWidget()
-        if parent is not None and parent.layout() is not None:
-            parent.layout().activate()
-
-    def _finished(self):
-        self._stop()
-        self._settle()
-
-    def _stop(self):
-        anim, self._anim = self._anim, None
-        if anim is not None:
-            try:
-                anim.valueChanged.disconnect(self._tick)
-                anim.finished.disconnect(self._finished)
-            except (RuntimeError, TypeError):
-                pass
-            anim.stop()
-            anim.deleteLater()
-
-    def _settle(self):
-        """The idle card: the body shown or hidden, no height cap, its own
-        layout managing it again -- exactly what it was before the slides."""
-        self.body.setVisible(not self._collapsed)
-        self.body.setMaximumHeight(_NO_CAP)
-        if not self.body_layout.isEnabled():
-            self.body_layout.setEnabled(True)
-            self.body_layout.invalidate()
-            self.body_layout.activate()
-        self._angle = 0.0 if self._collapsed else hubmotion.CHEVRON_OPEN
-        self._paint_chevron(None)
-
-    def _paint_chevron(self, angle):
-        """The chevron at rest (None: the right / down icons themselves) or
-        turned `angle` degrees from right. None on a windowed card."""
+    def _paint_chevron(self):
+        """The chevron: right while shut, down while open. None on a
+        windowed card."""
         if self.chevron is None:
             return
-        size = hubstyle.px(14, self.scale)
-        colour = hubstyle.TOKENS["muted"]
-        if angle is None:
-            name = "chevron-right" if self._collapsed else "chevron-down"
-            self.chevron.setPixmap(pixmap(name, colour, size))
-            return
-        if self._chevron_base is None:
-            self._chevron_base = pixmap("chevron-right", colour, size)
-        self.chevron.setPixmap(rotated(self._chevron_base, angle))
-
-    # --------------------------------------------------------------- light
-
-    def set_lit(self, on, animate=False):
-        """The card's light up (`on`) or down: fading from wherever it stands
-        when `animate` and the card is on screen, else at once."""
-        target = 1.0 if on else 0.0
-        self._stop_anim("_light_anim")
-        frame = self.frame
-        start = frame.level
-        if not animate or not frame.isVisible() or start == target:
-            frame.level = target
-            frame.update()
-            return
-        q = qt()
-        shape = hubmotion.ease if on else hubmotion.smooth
-        anim = q.QtCore.QVariantAnimation(frame)
-        anim.setObjectName("skeldarHubCardLight_" + self.key)
-        anim.setStartValue(0.0)
-        anim.setEndValue(1.0)
-        anim.setDuration(hubmotion.light_ms(on, start, target))
-
-        def tick(value):
-            frame.level = hubmotion.lerp(start, target, shape(value))
-            frame.update()
-        anim.valueChanged.connect(tick)
-        anim.finished.connect(lambda: self._done_anim("_light_anim", "level",
-                                                      target))
-        self._light_anim = anim
-        anim.start()
-
-    def pulse(self, animate=False):
-        """A flash: the ring brightens and the glow widens for FLASH_MS (the
-        card just chosen). Nothing when not `animate` or off screen."""
-        self._stop_anim("_flash_anim")
-        frame = self.frame
-        if not animate or not frame.isVisible():
-            frame.flash = 0.0
-            frame.update()
-            return
-        q = qt()
-        anim = q.QtCore.QVariantAnimation(frame)
-        anim.setObjectName("skeldarHubCardFlash_" + self.key)
-        anim.setStartValue(0.0)
-        anim.setEndValue(1.0)
-        anim.setDuration(hubmotion.FLASH_MS)
-
-        def tick(value):
-            frame.flash = hubmotion.flash_at(value)
-            frame.update()
-        anim.valueChanged.connect(tick)
-        anim.finished.connect(lambda: self._done_anim("_flash_anim", "flash",
-                                                      0.0))
-        self._flash_anim = anim
-        anim.start()
-
-    def _done_anim(self, slot, attr, value):
-        self._stop_anim(slot)
-        if _valid(self.frame):
-            setattr(self.frame, attr, value)
-            self.frame.update()
-
-    def _stop_anim(self, slot):
-        anim = getattr(self, slot)
-        setattr(self, slot, None)
-        if anim is not None:
-            try:
-                anim.valueChanged.disconnect()
-                anim.finished.disconnect()
-            except (RuntimeError, TypeError):
-                pass
-            anim.stop()
-            anim.deleteLater()
+        name = "chevron-right" if self._collapsed else "chevron-down"
+        self.chevron.setPixmap(pixmap(name, hubstyle.TOKENS["muted"],
+                                      hubstyle.px(14, self.scale)))
 
     def add_subtitle(self, widget):
         """Move a builder's line into the header, one line, never widening."""
@@ -1905,8 +1260,6 @@ class Skin(object):
         self.layout = "rail" if layout == "rail" else "accordion"
         self.rail = None
         self.shown = None
-        self._switch = None
-        self._switch_card = None
         self._jump_group = {}
         self._last_group = None
         self.layout_actions = {}
@@ -1924,14 +1277,8 @@ class Skin(object):
         self._jump_colour = {}
         self._jump_icon = {}
         self.floating = set()
-        #  an unread count on a jump (the chat, 2026-10-20) and its pop
+        #  an unread count on a jump (the chat, 2026-10-20)
         self.badges = {}
-        self._badge_pop = {}
-        self._badge_timer = None
-        #  ⋮ -> Interface animations (2026-10-01): the cards slide, a jump
-        #  glides (maya_hub sets it from maya_hubmotion's optionVar)
-        self.animations = True
-        self._glide = None
         s = self.px
 
         self.root = _named(w.QWidget(), hubstyle.ROOT)
@@ -1981,47 +1328,11 @@ class Skin(object):
         self.scroll.setWidget(self.content)
         self.scroll.viewport().setObjectName(hubstyle.VIEWPORT)
         top.addWidget(self.scroll, 1)
-        #  the animator's own scroll wins over a glide: the wheel and the
-        #  bar's arrows/page clicks trigger an action, a drag presses the
-        #  slider (our own setValue does neither)
-        bar = self.scroll.verticalScrollBar()
-        bar.actionTriggered.connect(self._stop_glide)
-        bar.sliderPressed.connect(self._stop_glide)
-        #  a jump waits for the OTHER cards to finish sliding before it glides
-        self._glide_card = None
-        self._glide_deadline = 0.0
-        self._glide_wait = q.QtCore.QTimer(self.root)
-        self._glide_wait.setObjectName("skeldarHubGlideWait")
-        self._glide_wait.setSingleShot(True)
-        self._glide_wait.setInterval(16)
-        self._glide_wait.timeout.connect(self._glide_when_settled)
 
-        #  The lit card (2026-09-28, «активное окно подсвечивалось немного
-        #  другим цветом»; then «когда я наводил мышкой на какой-то раздел у
-        #  него включалась подсветка»): the card under the mouse. With the
-        #  mouse off every card, the one last pressed or focused in, or
-        #  jumped to (`pinned`) -- only while it is OPEN, and only after
-        #  FALLBACK_MS («подсветка перепрыгивает на последний активный
-        #  раздел ... картинка как бы мигает»): crossing the gap between two
-        #  cards lit the pinned one for a moment. The watcher is the root's
-        #  child, so it leaves the application's filters when the root is
-        #  deleted; the timer likewise.
-        self.active = None
+        #  The card last jumped to (`set_active`): the message line stands
+        #  under it when its own card is shut. Nothing is lit for it (the
+        #  card light went with the animations, 2026-11-19).
         self.pinned = None
-        self._fallback = q.QtCore.QTimer(self.root)
-        self._fallback.setObjectName("skeldarHubFallback")
-        self._fallback.setSingleShot(True)
-        self._fallback.setInterval(FALLBACK_MS)
-        self._fallback.timeout.connect(self._fall_back)
-        #  the control under the mouse glows (2026-10-02); fading with the
-        #  menu's Interface animations
-        self.glow = Glower(self.root, scale, motion=lambda: self.animations)
-        self._watcher = _watcher_class()(self._activate_from,
-                                         self._hover_from, self._left_from,
-                                         self.root)
-        app = q.QtWidgets.QApplication.instance()
-        if app is not None:
-            app.installEventFilter(self._watcher)
         #  One message line for the whole hub (2026-10-08): every section's
         #  status writer tells it (maya_hubstyle.tell); the card marked that
         #  control (apply_marks -> Card.status_controls).
@@ -2150,14 +1461,11 @@ class Skin(object):
         for text, key in (("Check update", "check_update"),
                           ("Hotkey Editor...", "hotkey_editor"),
                           ("Interface sounds", "sounds"),
-                          ("Interface animations", "animations"),
                           ("Maya theme", "mayatheme"),
                           ("Maya icons", "mayaicons"),
                           ("Viewport bar", "viewportbar"),
                           ("Main bar", "mainbar"),
                           ("1P in its camera", "camview"),
-                          ("Window light", "windowlight"),
-                          ("Light Maya's windows", "windowlight_maya"),
                           ("Time bar", "timebar"),
                           ("Side panel", "sidepanel"),
                           ("Layout", "layout"),
@@ -2182,12 +1490,10 @@ class Skin(object):
                 self._build_sidepanel_menu(text)
                 continue
             action = self.menu.addAction(text)
-            if key in ("sounds", "animations", "mayatheme", "mayaicons",
-                       "viewportbar", "mainbar", "camview", "windowlight",
-                       "windowlight_maya"):
-                #  a switch (2026-10-01, the hover sound, the card motion):
-                #  `triggered` carries the new state and is not emitted by
-                #  paint_sounds / paint_animations
+            if key in ("sounds", "mayatheme", "mayaicons",
+                       "viewportbar", "mainbar", "camview"):
+                #  a switch: `triggered` carries the new state and is not
+                #  emitted by the paint_* methods
                 action.setCheckable(True)
                 action.triggered.connect(
                     lambda checked=False, k=key: self._call(k, bool(checked)))
@@ -2293,7 +1599,6 @@ class Skin(object):
         card = Card(key, label, icon_name, colour, chip, self.scale,
                     collapsed=collapsed, collapsible=collapsible,
                     on_toggle=lambda k, c: self._call("toggled", k, c),
-                    motion=lambda: self.animations,
                     on_popout=lambda k: self._call("popout", k),
                     windowed=self.windowed,
                     on_close=lambda k: self._call("close", k))
@@ -2376,16 +1681,13 @@ class Skin(object):
         return [("Show here", lambda: self._call("jump", key)),
                 ("Open in a window", lambda: self._call("popup", key))]
 
-    def show_card(self, key, animate=False):
+    def show_card(self, key):
         """The rail layout: card `key` the one shown (every other frame
-        hidden), its rail icon marked current, the scroll at its top. Fading
-        in from RAIL_SLIDE px to the side when `animate`, the switch and the
-        screen allow it. Answers the card, or None for a key with none."""
+        hidden), its rail icon marked current, the scroll at its top.
+        Answers the card, or None for a key with none."""
         card = self.cards.get(key)
         if card is None:
             return None
-        previous = self.shown
-        self._stop_switch()
         for other, each in self.cards.items():
             if other != key:
                 each.frame.setVisible(False)
@@ -2398,11 +1700,6 @@ class Skin(object):
             button.setStyleSheet(self._current_sheet(other) if current
                                  else "")
         self.scroll.verticalScrollBar().setValue(0)
-        #  not on the edge rail's (windowed) skin: its card bursts out of the
-        #  icon (2026-10-18), and the fade's effect would take the burst's place
-        if (animate and self.animations and previous != key
-                and not self.windowed and self.root.isVisible()):
-            self._fade_in(card)
         return card
 
     def _current_sheet(self, key):
@@ -2426,16 +1723,12 @@ class Skin(object):
 
     def set_badge(self, key, count):
         """Jump `key`'s icon with a count (the chat's unread, 2026-10-20); 0 takes it
-        off. A count that changes pops (BADGE_POP_MS) while animations are on."""
+        off."""
         count = max(0, int(count or 0))
-        before = self.badges.get(key, 0)
         if count:
             self.badges[key] = count
         else:
             self.badges.pop(key, None)
-        if count and count != before and self.animations:
-            self._badge_pop[key] = time.monotonic()
-            self._badge_tick_soon()
         self._paint_jump(key)
         return count
 
@@ -2443,30 +1736,6 @@ class Skin(object):
         button = self.jumps.get(key) if isinstance(self.jumps, dict) else None
         if button is not None and _valid(button):
             button.setIcon(self._jump_face(key))
-
-    def _badge_tick_soon(self):
-        q = qt()
-        if self._badge_timer is None:
-            self._badge_timer = q.QtCore.QTimer(self.root)
-            self._badge_timer.setInterval(16)
-            self._badge_timer.timeout.connect(self._badge_tick)
-        if not self._badge_timer.isActive():
-            self._badge_timer.start()
-
-    def _badge_tick(self):
-        now = time.monotonic()
-        for key, start in list(self._badge_pop.items()):
-            if (now - start) * 1000.0 >= BADGE_POP_MS:
-                del self._badge_pop[key]
-            self._paint_jump(key)
-        if not self._badge_pop and self._badge_timer is not None:
-            self._badge_timer.stop()
-
-    def badge_grow(self, key):
-        start = self._badge_pop.get(key)
-        if start is None:
-            return 1.0
-        return badge_pop((time.monotonic() - start) * 1000.0)
 
     def _jump_face(self, key, colour=None, fallback=""):
         """Jump `key`'s icon in `colour` (its group's by default), with the
@@ -2478,55 +1747,10 @@ class Skin(object):
         name = self._jump_icon.get(key, fallback)
         if self.badges.get(key):
             return icon_with_badge(name, colour, size, self.badges[key],
-                                   self.badge_grow(key), key in self.floating)
+                                   key in self.floating)
         if key in self.floating:
             return icon_with_dot(name, colour, size, self.px(5))
         return icon(name, colour, size)
-
-    def _fade_in(self, card):
-        q = qt()
-        effect = q.QtWidgets.QGraphicsOpacityEffect(card.frame)
-        effect.setOpacity(0.0)
-        card.frame.setGraphicsEffect(effect)
-        #  held: PySide deletes an effect whose wrapper is collected (trap 201)
-        card._switch_effect = effect
-        slide = self.px(hubmotion.RAIL_SLIDE)
-        anim = q.QtCore.QVariantAnimation(self.root)
-        anim.setObjectName("skeldarHubRailSwitch")
-        anim.setStartValue(0.0)
-        anim.setEndValue(1.0)
-        anim.setDuration(hubmotion.RAIL_SWITCH_MS)
-
-        def tick(value):
-            k = hubmotion.ease(value)
-            if _valid(effect):
-                effect.setOpacity(k)
-            self.column.setContentsMargins(int(round(slide * (1.0 - k))), 0,
-                                           self.px(2), 0)
-        anim.valueChanged.connect(tick)
-        anim.finished.connect(self._stop_switch)
-        self._switch = anim
-        self._switch_card = card
-        anim.start()
-
-    def _stop_switch(self, *_args):
-        """The switch's fade over (or cut short): no effect left on the card,
-        the column back at its margins."""
-        anim, self._switch = self._switch, None
-        card, self._switch_card = self._switch_card, None
-        if anim is not None:
-            try:
-                anim.valueChanged.disconnect()
-                anim.finished.disconnect()
-            except (RuntimeError, TypeError):
-                pass
-            anim.stop()
-            anim.deleteLater()
-        if card is not None and _valid(card.frame):
-            card.frame.setGraphicsEffect(None)
-            card._switch_effect = None
-        if anim is not None and _valid(self.content):
-            self.column.setContentsMargins(0, 0, self.px(2), 0)
 
     def finish(self, sheet):
         if self.windowed and self.layout == "rail":
@@ -2693,17 +1917,6 @@ class Skin(object):
             action.setChecked(bool(on))
             action.blockSignals(False)
 
-    def paint_windowlight(self, on, maya_on):
-        """The menu's Window light rows show the two switches (no callback;
-        2026-10-23, maya_windowlight)."""
-        for name, value in (("windowlight_action", on),
-                            ("windowlight_maya_action", maya_on)):
-            action = getattr(self, name, None)
-            if action is not None:
-                action.blockSignals(True)
-                action.setChecked(bool(value))
-                action.blockSignals(False)
-
     def paint_camview(self, on):
         """The menu's 1P in its camera row shows `on` (no callback; 2026-10-22)."""
         action = getattr(self, "camview_action", None)
@@ -2839,197 +2052,20 @@ class Skin(object):
         if action is not None:
             action.setChecked(True)
 
-    def paint_animations(self, on):
-        """The cards slide and a jump glides (`on`) or everything is
-        instant; the menu's row shows it (no callback)."""
-        self.animations = bool(on)
-        self.animations_action.setChecked(self.animations)
-        if not self.animations:
-            self._stop_glide()
-            self.glow.finish()
-
     def set_active(self, key):
-        """Card `key` is the one worked in (None: none): pinned and lit -
-        and, when that is a CHANGE, flashed (2026-10-01); a press inside the
-        card already chosen does not flash again."""
-        self._fallback.stop()
-        key = key if key in self.cards else None
-        changed = key is not None and key != self.pinned
-        self.pinned = key
-        self._light(self.pinned)
-        if changed:
-            self.cards[key].pulse(animate=self.animations)
+        """Card `key` is the one last jumped to (None: none): the message line
+        stands under it when the card that spoke is shut (`_message_card`)."""
+        self.pinned = key if key in self.cards else None
 
-    def resting(self):
-        """What is lit with the mouse off every card: the pinned card if it
-        is open, else none. A windowed skin's card is a window (the edge rail): it is
-        lit only while the mouse is on it (2026-10-23, «только то на котором указатель
-        мыши»)."""
-        if self.windowed:
-            return None
-        card = self.cards.get(self.pinned) if self.pinned else None
-        if card is not None and not card.collapsed():
-            return self.pinned
-        return None
-
-    def _fall_back(self):
-        self._light(self.resting())
-
-    def _light(self, key):
-        """Light card `key` (None: none), the previous one back to plain:
-        cross-fading when the switch allows it (the card paints its light,
-        CardFrame; `skActive` says at once which card is lit)."""
-        key = key if key in self.cards else None
-        if key == self.active:
-            return
-        for other in (self.active, key):
-            card = self.cards.get(other) if other else None
-            if card is not None:
-                card.frame.setProperty("skActive", other == key)
-                card.set_lit(other == key, animate=self.animations)
-        self.active = key
-
-    def card_of(self, widget):
-        """The key of the card holding `widget`, or None."""
-        q = qt()
-        if not isinstance(widget, q.QtWidgets.QWidget):
-            return None
-        if widget is not self.root and not self.root.isAncestorOf(widget):
-            return None                     # most of Maya: one walk, out
-        for key, card in self.cards.items():
-            if card.frame is widget or card.frame.isAncestorOf(widget):
-                return key
-        return None
-
-    def _activate_from(self, widget):
-        key = self.card_of(widget)
-        if key is not None:
-            self.set_active(key)
-
-    def _hover_from(self, widget):
-        """The mouse entered `widget`: its card lit at once; off every card,
-        the resting light after FALLBACK_MS -- entering another card first
-        cancels it, so a gap between cards lights nothing in between. A
-        clickable control of ours calls back "hover" (the sound) and glows
-        (`glow`)."""
-        key = self.card_of(widget)
-        if key is not None:
-            self._fallback.stop()
-            self._light(key)
-        elif self.active != self.resting():
-            self._fallback.start()
-        if sounding(widget, self.root):
-            self._call("hover")
-        self.glow.enter(widget)
-
-    def _left_from(self, widget):
-        """The mouse left the hub (to another window, where no Enter of
-        ours arrives): the resting light, after the same pause. The control
-        it left stops glowing."""
-        self.glow.leave(widget)
-        if widget is self.root and self.active != self.resting():
-            self._fallback.start()
-
-    def scroll_to(self, key, animate=False):
-        """Card `key` to the top of the scroll (as far as the bar goes): at
-        once, or GLIDING when `animate` (the animator's move), the switch
-        and the screen allow it (2026-10-01). A glide waits for the OTHER
-        cards to finish sliding (`_glide_when_settled`), then eases toward
-        the card's place as far as the bar reaches -- both read live, the
-        chosen card's own opening growing the reach. Answers the card's
-        offset now."""
+    def scroll_to(self, key):
+        """Card `key` to the top of the scroll (as far as the bar goes), at
+        once. Answers the card's offset."""
         card = self.cards.get(key)
         if card is None:
             return None
-        self._stop_glide()
         offset = card.frame.y()
-        bar = self.scroll.verticalScrollBar()
-        if not (animate and self.animations and self.root.isVisible()):
-            bar.setValue(offset)
-            return offset
-        self._glide_card = card
-        self._glide_deadline = time.monotonic() + GLIDE_WAIT_S
-        self._glide_when_settled()
+        self.scroll.verticalScrollBar().setValue(offset)
         return offset
-
-    def _glide_when_settled(self):
-        """Start the glide once no other card is sliding. Aimed while cards
-        shut above the chosen one, it climbed toward the card's place while
-        the scroll's range shrank under it and was pulled back by the clamp
-        (measured live 2026-10-01: a jump to Studio with three cards open
-        above ended on the range's 207 after passing it)."""
-        card = self._glide_card
-        if card is None or not _valid(card.frame):
-            self._glide_card = None
-            return
-        moving = [c for c in self.cards.values()
-                  if c is not card and c.sliding()]
-        if moving and time.monotonic() < self._glide_deadline:
-            self._glide_wait.start()
-            return
-        self._glide_card = None
-        q = qt()
-        start = self.scroll.verticalScrollBar().value()
-        glide = q.QtCore.QVariantAnimation(self.root)
-        glide.setObjectName("skeldarHubGlide")
-        glide.setStartValue(0.0)
-        glide.setEndValue(1.0)
-        #  never over before the chosen card has finished opening: its own
-        #  opening (1.5 times slower than a shutting since the same evening)
-        #  lengthens the range, and a glide that ended first stopped short
-        #  of a card near the bottom
-        remaining = 0
-        if card.sliding():
-            remaining = card._anim.duration() - card._anim.currentTime()
-        glide.setDuration(max(hubmotion.SCROLL_MS, remaining))
-        glide.valueChanged.connect(
-            lambda value: self._glide_tick(card, start, value))
-        glide.finished.connect(lambda: self._glide_done(card))
-        self._glide = glide
-        glide.start()
-
-    def _glide_tick(self, card, start, value):
-        if not _valid(card.frame):
-            self._stop_glide()
-            return
-        bar = self.scroll.verticalScrollBar()
-        target = min(card.frame.y(), bar.maximum())
-        bar.setValue(int(round(
-            hubmotion.lerp(start, target, hubmotion.ease(value)))))
-
-    def _glide_done(self, card):
-        self._stop_glide()
-        if not _valid(card.frame):
-            return
-        self._land(card)
-        #  The scroll area widens its range on a LayoutRequest of its own,
-        #  after this: a glide ending as its card finished opening was
-        #  clamped by the old maximum (663 against the card's 969 offscreen)
-        #  and stayed there. Land again once the range has caught up.
-        qt().QtCore.QTimer.singleShot(0, self.root, lambda: self._land(card))
-
-    def _land(self, card):
-        """The bar on the card, unless the card is gone or a new glide (or
-        the animator's own scroll, which stops one) took over."""
-        if self._glide is None and self._glide_card is None \
-                and _valid(card.frame):
-            self.scroll.verticalScrollBar().setValue(card.frame.y())
-
-    def _stop_glide(self, *_args):
-        """No glide any more: the animator's own scroll (the wheel, the
-        bar), another jump, the switch off, the end."""
-        self._glide_card = None
-        if _valid(self._glide_wait):
-            self._glide_wait.stop()
-        glide, self._glide = self._glide, None
-        if glide is not None:
-            try:
-                glide.valueChanged.disconnect()
-                glide.finished.disconnect()
-            except (RuntimeError, TypeError):
-                pass
-            glide.stop()
-            glide.deleteLater()
 
     def alive(self):
         q = qt()
@@ -3042,7 +2078,6 @@ class Skin(object):
         """Delete the root NOW (not deferred): a classic build right after
         must not meet the controls' names still standing."""
         hubstyle.unlisten(self._told)
-        self.glow.stop()
         if not self.alive():
             return
         q = qt()

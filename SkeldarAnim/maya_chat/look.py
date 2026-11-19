@@ -2,7 +2,6 @@
 
 Stdlib only. Times are milliseconds since the epoch (the server's `at`), read in local time.
 """
-import math
 import time
 import zlib
 
@@ -474,36 +473,7 @@ TOAST_H = 56
 TOAST_GAP = 6
 TOAST_MARGIN = 10
 TOAST_MAX = 3            # the oldest goes when a fourth comes
-TOAST_IN_MS = 280        # unrolls out of its left edge
-TOAST_FLASH_MS = 520     # the accent ring's flash, a key set's
-TOAST_STAY_MS = 6000     # held while the mouse is over it
-TOAST_OUT_MS = 220
-TOAST_MOVE_MS = 180      # a card moving up when a newer one comes under it
-# 2026-10-22, «красиво прилетало в левый угол через весь экран с правой стороны»: a new card
-# flies in from the area's right edge, on a low swoop, slowing into its place, a streak of the
-# accent trailing behind it while it is fast; the ring flashes as it lands.
-TOAST_FLY_MS = 760
-TOAST_FLY_LIFT = 46      # logical px: how high the swoop rises half way
-TOAST_TRAIL_MAX = 220    # logical px: the streak's longest
-TOAST_TRAIL_MS = 34      # the streak is the way covered in the last this many ms
-TOAST_LAND = 0.82        # the share of the flight at which the ring flashes
-
-
-def toast_fly(age_ms, distance, lift):
-    """The flight at an age: (dx px still to go, rightward; dy px, up negative; opacity;
-    speed px a ms). Ease-out quint along, a sine swoop up and down."""
-    u = max(0.0, min(1.0, age_ms / float(TOAST_FLY_MS)))
-    k = ease_out(u, 5)
-    dx = distance * (1.0 - k)
-    dy = -lift * math.sin(math.pi * k)
-    opacity = min(1.0, u / 0.12)
-    speed = 5.0 * (1.0 - u) ** 4 * distance / float(TOAST_FLY_MS)
-    return dx, dy, opacity, speed
-
-
-def toast_trail(speed, scale):
-    """The streak's length in px for a speed in px a ms."""
-    return min(TOAST_TRAIL_MAX * scale, max(0.0, speed * TOAST_TRAIL_MS))
+TOAST_STAY_MS = 6000     # held while the mouse is over it; a card comes and goes at once
 
 
 def toast_left(area, obstacles, margin):
@@ -523,24 +493,6 @@ def toast_rect(area, left, size, index, margin, gap):
     tw, th = size
     bottom = y + h - margin
     return (int(left), int(bottom - (index + 1) * th - index * gap), int(tw), int(th))
-
-
-def ease_out(u, power=5):
-    u = max(0.0, min(1.0, u))
-    return 1.0 - (1.0 - u) ** power
-
-
-def toast_look(age_ms, leaving_ms=None):
-    """(reveal 0..1 of the width, opacity, flash 0..1, slide px left) at an age."""
-    reveal = ease_out(age_ms / float(TOAST_IN_MS))
-    opacity = min(1.0, max(0.0, age_ms / (TOAST_IN_MS * 0.6)))
-    flash = max(0.0, 1.0 - age_ms / float(TOAST_FLASH_MS)) ** 1.5 if age_ms >= 0 else 0.0
-    slide = 0.0
-    if leaving_ms is not None:
-        u = max(0.0, min(1.0, leaving_ms / float(TOAST_OUT_MS)))
-        opacity *= 1.0 - u
-        slide = 14.0 * u * u
-    return reveal, opacity, flash, slide
 
 
 def toast_text(text, limit=90):

@@ -1,15 +1,14 @@
 """The skill library (2026-10-19): a drawer standing over the Time Bar's strip, as wide as it -
 a search field, the categories, every skill a chip. A chip clicked goes to the cell the drawer was
 opened for (else the page shown's first free cell); a chip dragged goes where it is let go (a cell,
-a page tab). It opens out of the point it was asked from, its chips popping in nearest first, and
-folds back into it.
+a page tab). It opens and closes at once, nothing in it moves or glows (2026-11-19, «удаляем все
+подсветки и анимации»): a chip under the mouse changes its face.
 
 `show(target, point)` is the road (the strip's empty cells and menus call it through the skills
 adapter); `make(strip, ...)` builds one for the tests with the entries handed in.
 """
 
 import sys
-import time
 import traceback
 
 from . import look
@@ -20,7 +19,6 @@ HEAD_H = 30
 CHIP_W, CHIP_H = 76, 58
 CHIP_GAP = 4
 PAD = 8
-FOLD_MS = 168
 DRAG_PX = 6
 
 _CLASSES = {}
@@ -58,13 +56,14 @@ def content_height(width, count, ui=1.0):
 
 
 def show(target=None, point=None):
-    """The drawer over the live strip, for `target` (("cell", n, r, c) or None)."""
+    """The drawer over the live strip, for `target` (("cell", n, r, c) or None). `point`
+    (where it was asked from) is taken and not used: it opens at once over the strip."""
     from maya_timebar import bar
     strip = bar.current()
     if strip is None:
         return "The skill library lives on the Time Bar - ⋮ -> Time bar"
-    close(instant=True)
-    window = make(strip, target, point)
+    close()
+    window = make(strip, target)
     window.open()
     return ""
 
@@ -72,25 +71,25 @@ def show(target=None, point=None):
 def is_open():
     window = _state().get("window")
     try:
-        return window is not None and window.isVisible() and window.folding is None
+        return window is not None and window.isVisible()
     except RuntimeError:
         return False
 
 
-def close(instant=False):
+def close():
     window = _state().get("window")
     _state()["window"] = None
     if window is None:
         return
     try:
-        window.fold(instant=instant)
+        window.fold()
     except RuntimeError:
         pass
 
 
-def make(strip, target=None, point=None, entries=None, motion=None):
+def make(strip, target=None, entries=None):
     Drawer = classes()
-    window = Drawer(strip, target, point, entries, motion)
+    window = Drawer(strip, target, entries)
     _state()["window"] = window
     return window
 
@@ -99,8 +98,8 @@ def classes():
     if "drawer" in _CLASSES:
         return _CLASSES["drawer"]
     import maya_hubqt
-    from maya_timebar import bar as timebar, look as tlook
-    from . import grid as skillgrid, sources
+    from maya_timebar import bar as timebar
+    from . import sources
     q = maya_hubqt.qt()
     QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
     Qt = QtCore.Qt
@@ -113,7 +112,7 @@ def classes():
 
     class Drawer(QtWidgets.QWidget):
 
-        def __init__(self, strip, target, point, entries, motion):
+        def __init__(self, strip, target, entries):
             parent = strip.window() if strip.window() is not strip else None
             super(Drawer, self).__init__(parent, Qt.Tool | Qt.FramelessWindowHint)
             self.setObjectName(NAME)
@@ -123,18 +122,13 @@ def classes():
             self.strip, self.target = strip, target
             self.ui = strip.ui
             self.tokens = strip.tokens
-            self.motion = strip.motion if motion is None else bool(motion)
             self._entries = entries or sources.entries
             self.category = "All"
             self.found = []
             self.hover = None
-            self.lift = {}
             self.scroll = 0.0
             self.press = None
             self.drag = None
-            self.t0 = self._clock()
-            self.folding = None
-            self.origin = point
             ui = self.ui
             self.search = QtWidgets.QLineEdit(self)
             self.search.setObjectName("skeldarSkillSearch")
@@ -147,16 +141,10 @@ def classes():
                 "QLineEdit#skeldarSkillSearch:focus { border: 1px solid %s; }"
                 % (self.tokens["field"], self.tokens["text"], self.tokens["track_edge"], int(5 * ui),
                    int(6 * ui), self.tokens["accent"]))
-            self.timer = QtCore.QTimer(self)
-            self.timer.setInterval(16)
-            self.timer.timeout.connect(self._tick)
             self.place()
             self.reload()
 
         # geometry -----------------------------------------------------------------
-        def _clock(self):
-            return time.time() * 1000.0
-
         def place(self):
             ui = self.ui
             g = self.strip.mapToGlobal(QtCore.QPoint(0, 0))
@@ -198,8 +186,6 @@ def classes():
             if name != self.category:
                 self.category = name
                 self.reload()
-                self.t0 = self._clock()     # the chips pop in again
-                self._kick()
 
         def item_of(self, i):
             return self.found[i][1] if 0 <= i < len(self.found) else None
@@ -209,66 +195,15 @@ def classes():
             self.place()
             self.show()
             self.raise_()
-            self.t0 = self._clock()
-            self._kick()
             self.search.setFocus()
 
-        def fold(self, instant=False):
-            if instant or not self.motion or not self.isVisible():
-                self._gone()
-                return
-            self.folding = self._clock()
-            self._kick()
-
-        def _gone(self):
-            self.timer.stop()
+        def fold(self):
+            """Closed, at once."""
             try:
                 self.hide()
                 self.deleteLater()
             except RuntimeError:
                 pass
-
-        def _origin_local(self):
-            if not self.origin:
-                return QtCore.QPointF(self.width() / 2.0, self.height())
-            p = self.mapFromGlobal(QtCore.QPoint(int(self.origin[0]), int(self.origin[1])))
-            return QtCore.QPointF(p)
-
-        def _entrance(self, x, y):
-            if not self.motion:
-                return 1.0, 1.0
-            o = self._origin_local()
-            now = self._clock()
-            if self.folding is not None:
-                return tlook.folding(now - self.folding, tlook.fold_delay(x - o.x(), self.ui) * 0.5, FOLD_MS)
-            return tlook.popping(now - self.t0, tlook.burst_delay(x - o.x(), y - o.y(), self.ui))
-
-        def _kick(self):
-            if not self.timer.isActive():
-                self.timer.start()
-
-        def _tick(self):
-            try:
-                now = self._clock()
-                busy = False
-                for i in list(self.lift):
-                    goal = 1.0 if i == self.hover else 0.0
-                    self.lift[i] = tlook.approach(self.lift[i], goal, 16, skillgrid.HOVER_MS) \
-                        if self.motion else goal
-                    busy = busy or abs(self.lift[i] - goal) > 0.005
-                if self.motion and now - self.t0 < 900:
-                    busy = True
-                if self.folding is not None:
-                    if now - self.folding > FOLD_MS + 300:
-                        self._gone()
-                        return
-                    busy = True
-                self.update()
-                if not busy:
-                    self.timer.stop()
-            except Exception:                                # noqa: BLE001
-                self.timer.stop()
-                print(traceback.format_exc())
 
         # the mouse ----------------------------------------------------------------
         def _xy(self, event):
@@ -292,14 +227,13 @@ def classes():
             if hover != self.hover:
                 self.hover = hover
                 if hover is not None:
-                    self.lift.setdefault(hover, 0.0)
                     self.setToolTip(self.found[hover][2] + "\n" + self.found[hover][0])
-                self._kick()
+                self.update()
 
         def leaveEvent(self, event):
-            if self.drag is None:
+            if self.drag is None and self.hover is not None:
                 self.hover = None
-                self._kick()
+                self.update()
             super(Drawer, self).leaveEvent(event)
 
         def mousePressEvent(self, event):
@@ -377,8 +311,7 @@ def classes():
                 pix.fill(Qt.transparent)
                 painter = QtGui.QPainter(pix)
                 painter.setRenderHint(QtGui.QPainter.Antialiasing)
-                self.strip.skill_grid._paint_cell(painter, QtCore.QRectF(0, 0, side, side), self.item_of(i),
-                                                  0.0, 0.0, 0.0, 1.0, False, False)
+                self.strip.skill_grid._paint_cell(painter, QtCore.QRectF(0, 0, side, side), self.item_of(i))
                 painter.end()
                 ghost = Ghost(pix, side, side, self.ui, anchor=(0.5, 0.5), name="skeldarSkillGhost")
                 ghost.show()
@@ -435,12 +368,6 @@ def classes():
             p = QtGui.QPainter(self)
             p.setRenderHint(QtGui.QPainter.Antialiasing)
             whole = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-            fade = 1.0
-            if self.motion and self.folding is not None:
-                fade = max(0.0, 1.0 - (self._clock() - self.folding - FOLD_MS * 0.6) / 200.0)
-            elif self.motion:
-                fade = min(1.0, (self._clock() - self.t0) / 90.0)
-            p.setOpacity(fade)
             p.setPen(QtGui.QPen(k.colour("#303237"), 1))
             p.setBrush(k.colour(tk["panel"]))
             p.drawRoundedRect(whole, 8 * ui, 8 * ui)
@@ -474,32 +401,19 @@ def classes():
                 if cy + ch < clip.top() or cy > clip.bottom():
                     continue
                 category, item, label = self.found[i]
-                scale, opacity = self._entrance(cx + cw / 2.0, cy + ch / 2.0)
-                if opacity <= 0.01:
-                    continue
-                lift = self.lift.get(i, 0.0)
                 rect = QtCore.QRectF(cx, cy, cw, ch)
                 c = rect.center()
-                p.save()
-                p.setOpacity(fade * opacity)
-                p.translate(c)
-                z = scale * (1.0 + 0.08 * lift)
-                p.scale(z, z)
-                p.translate(-c)
                 p.setPen(Qt.NoPen)
-                p.setBrush(k.blend(tk["card"], tk["hover"], lift))
+                p.setBrush(k.colour(tk["hover"] if i == self.hover else tk["card"]))
                 p.drawRoundedRect(rect, 6 * ui, 6 * ui)
-                if lift > 0.01:
-                    k.glow(p, rect, 6 * ui, tk["accent"], lift, ui)
                 side = 34 * ui
                 cell = QtCore.QRectF(c.x() - side / 2.0, cy + 4 * ui, side, side)
-                grid._paint_cell(p, cell, item, 0.0, 0.0, 0.0, 1.0, False, False)
+                grid._paint_cell(p, cell, item)
                 p.setFont(font(9 * ui))
                 p.setPen(k.colour(tk["text2"]))
                 text_rect = QtCore.QRectF(cx + 3 * ui, cy + 4 * ui + side + 1 * ui, cw - 6 * ui, 14 * ui)
                 p.drawText(text_rect, Qt.AlignCenter,
                            QtGui.QFontMetrics(font(9 * ui)).elidedText(label, Qt.ElideMiddle, int(text_rect.width())))
-                p.restore()
             p.end()
 
     _CLASSES["drawer"] = Drawer

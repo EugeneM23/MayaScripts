@@ -305,9 +305,12 @@ class Window(unittest.TestCase):
         feed.playing = (box.item.key(), feed.playing[1] - 0)      # cell 0 now
         playing = self.render().pixelColor(box.thumb.center().toPoint())
         self.assertNotEqual(rest.red() // 10, playing.red() // 10)
-        self.assertTrue(feed.tick(16))                              # the timer keeps running
+        from maya_chat import window as W
+        self.assertTrue(feed.play_timer.isActive())                 # its frames keep coming
+        self.assertEqual(feed.play_timer.interval(), W.PLAY_MS)
         feed._hover_preview(None)
         self.assertIsNone(feed.playing)
+        self.assertFalse(feed.play_timer.isActive(), "off it the timer stops")
 
     def test_a_picture_opens_and_is_not_dragged(self):
         got = []

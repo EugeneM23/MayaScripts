@@ -3,11 +3,10 @@
 `ScopedScene`), the registry (`attach`, `live`, `_prune`) and the Keeper that
 holds the placeholder as tall as the grid, the real `Scene` forwarding to the
 card's functions, the skill bar's road, the drag's captions, and the paint's
-rarer faces (a portrait under the mouse, a pick the switch lacks, a fire with
-no picture). Offscreen Qt and fakes only - no Maya scene is touched.
+rarer faces (a portrait under the mouse, a pick the switch lacks, a missing
+picture). Offscreen Qt and fakes only - no Maya scene is touched.
 
-Spec: docs/superpowers/specs/2026-09-30-character-portrait-grid-design.md,
-      docs/superpowers/specs/2026-10-02-character-card-fire-design.md
+Spec: docs/superpowers/specs/2026-09-30-character-portrait-grid-design.md
 """
 import contextlib
 import io
@@ -221,12 +220,6 @@ def app():
     return QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
 
 
-def flush_deletes():
-    for _ in range(3):
-        QT.QtWidgets.QApplication.processEvents()
-        QT.QtCore.QCoreApplication.sendPostedEvents(None, QT.QtCore.QEvent.DeferredDelete)
-
-
 def render(widget):
     image = QT.QtGui.QImage(widget.size(), QT.QtGui.QImage.Format_ARGB32)
     image.fill(0)
@@ -322,17 +315,6 @@ class Seams(unittest.TestCase):
                                        "RuntimeError: no floor\n\n"), "RuntimeError: no floor")
         self.assertEqual(cg._last_line(""), "failed")
         self.assertEqual(cg._last_line(None), "failed")
-
-    @unittest.skipUnless(MAYA, "no maya_hubmotion")
-    def test_the_fire_follows_the_menus_animations_and_burns_when_it_cannot_ask(self):
-        import maya_hubmotion
-        rebind(self, maya_hubmotion, "enabled", lambda: False)
-        self.assertFalse(cg._animations())
-
-        def broken():
-            raise RuntimeError("no optionVar")
-        maya_hubmotion.enabled = broken
-        self.assertTrue(cg._animations())
 
     @unittest.skipUnless(SKILLBAR, "no maya_skillbar")
     def test_without_a_skill_bar_there_is_no_skill_road(self):
@@ -647,7 +629,6 @@ class Attach(unittest.TestCase):
         self.assertNotIn("mayaSceneSetupPortraits", cg._GRIDS)
         self.assertIsNone(cg.live("mayaSceneSetupPortraits"))     # the hub's: none
         self.assertEqual(grid.objectName(), cg.OBJECT_NAME + "_" + scope.tag)
-        self.assertEqual(grid._fire_name, cg.FIRE_NAME + "_" + scope.tag)
         # a click from Qt, outside any scope: the scene is asked inside the copy
         self.assertTrue(grid.select("Creep"))
         self.assertIn(("select", "Creep", scope.tag), self.scene.log)
@@ -708,10 +689,6 @@ class GridMore(unittest.TestCase):
         self.grid.set_kind("skeleton")
         self.assertEqual(self.grid._row("Creep"),
                          catalog.character_for("Creep", "skeleton").label)
-
-    def test_an_unknown_model_has_no_place(self):
-        self.assertIsNone(self.grid._index("NoSuchModel"))
-        self.assertEqual(self.grid._index("Creep"), self.keys().index("Creep"))
 
     # ------------------------------------------------------------- drops
     def test_a_drop_with_nothing_dragged_does_nothing(self):
@@ -839,41 +816,18 @@ class GridMore(unittest.TestCase):
         self.assertIsNotNone(self.grid._drag)
         self.assertEqual(self.acts("say"), [])
 
-    def test_leaving_the_grid_puts_the_hover_and_its_fire_out(self):
-        rebind(self, cg, "_animations", lambda: True)
+    def test_leaving_the_grid_puts_the_hover_out(self):
         E, N = QT.QtCore.QEvent, QT.QtCore.Qt.NoButton
         self.mouse(E.MouseMove, self.centre("Creep"), N, N)
         self.assertEqual(self.grid._hover, "Creep")
-        self.assertTrue(self.grid.fx["Creep"].hover)
         QT.QtWidgets.QApplication.sendEvent(self.grid, QT.QtCore.QEvent(E.Leave))
         self.assertIsNone(self.grid._hover)
-        self.assertFalse(self.grid.fx["Creep"].hover)
 
     def test_leaving_during_a_drag_leaves_the_hover_alone(self):
-        rebind(self, cg, "_animations", lambda: False)
         self.grid._set_hover("Creep")
         self.start()
         QT.QtWidgets.QApplication.sendEvent(self.grid, QT.QtCore.QEvent(QT.QtCore.QEvent.Leave))
         self.assertEqual(self.grid._hover, "Creep")
-
-    # --------------------------------------------------------------- fire
-    def test_the_fire_dies_on_the_next_frame_once_animations_go_off(self):
-        rebind(self, cg, "_animations", lambda: True)
-        self.grid.hover_model("Creep")
-        self.assertTrue(self.grid.fire_timer.isActive())
-        cg._animations = lambda: False
-        self.assertFalse(self.grid.advance(1.0 / 60))
-        self.assertEqual(self.grid.fx, {})
-        self.assertFalse(self.grid.fire_timer.isActive())
-
-    def test_the_timer_steps_the_fire_on(self):
-        rebind(self, cg, "_animations", lambda: True)
-        self.grid.hover_model("Creep")
-        before = self.grid.fx["Creep"].power
-        self.grid._fire_clock.restart()
-        self.grid._tick()                                    # a dt of ~0 is still a step
-        self.grid.advance(0.05)
-        self.assertGreater(self.grid.fx["Creep"].power, before)
 
     # -------------------------------------------------------------- paint
     def ring_share(self, image, model, hexname):
@@ -895,12 +849,10 @@ class GridMore(unittest.TestCase):
         self.assertLess(dashed, 0.85)
 
     def test_the_portrait_under_the_mouse_takes_the_hover_face_and_ring(self):
-        rebind(self, cg, "_animations", lambda: False)       # no fire: the cold face
         self.grid.pixmaps = {}
         x, y, _w, _h = self.box("Creep")
         plain = render(self.grid)
         self.grid._set_hover("Creep")
-        self.assertEqual(self.grid.fx, {})
         lit = render(self.grid)
         self.assertEqual(plain.pixelColor(x + 6, y + 6).name(), maya_hubstyle.TOKENS["field"])
         self.assertEqual(lit.pixelColor(x + 6, y + 6).name(), maya_hubstyle.TOKENS["hover"])
@@ -922,144 +874,6 @@ class GridMore(unittest.TestCase):
             raise RuntimeError("no icon")
         rebind(self, maya_hubqt, "pixmap", broken)
         self.assertEqual(inked(render(self.grid)), 0)
-
-    def burn(self, model, frames=30):
-        rebind(self, cg, "_animations", lambda: True)
-        self.grid.hover_model(model)
-        for _ in range(frames):
-            self.grid.advance(1.0 / 60)
-
-    def test_a_portrait_without_a_picture_still_burns(self):
-        """No picture: no silhouette to hide the fire behind, nothing to
-        backlight - the glyph stands in the flames. (A cell size no other test
-        burns at: the silhouettes are kept per model and size.)"""
-        self.grid.resize(277, self.grid.height_for(277))
-        self.assertEqual(self.grid.rects()[0][2], 67)
-        self.grid.pixmaps = {}
-        x, y, w, h = self.box("Creep")
-        cold = render(self.grid)
-        self.burn("Creep")
-        hot = render(self.grid)
-        changed = sum(1 for px in range(x, x + w, 2) for py in range(y, y + h, 2)
-                      if hot.pixel(px, py) != cold.pixel(px, py))
-        self.assertGreater(changed, 50)
-
-    def test_the_picked_portrait_burns_on_its_own_face(self):
-        self.burn("Manny")
-        picked = render(self.grid)
-        self.grid.set_selected("Creep")
-        other = render(self.grid)
-        x, y, w, h = self.box("Manny")
-        changed = sum(1 for px in range(x, x + w, 2) for py in range(y, y + h, 2)
-                      if picked.pixel(px, py) != other.pixel(px, py))
-        self.assertGreater(changed, 20)
-
-    def test_a_fire_with_no_sparks_draws_no_sparks(self):
-        import maya_charfire
-        classes = cg._classes()
-        fx = maya_charfire.CardFx(7)
-        self.assertFalse(fx.sparks.alive())
-        image = QT.QtGui.QImage(64, 64, QT.QtGui.QImage.Format_ARGB32)
-        image.fill(0)
-        p = QT.QtGui.QPainter(image)
-        try:
-            self.grid._paint_sparks(p, QT.QtCore.QRectF(0, 0, 64, 64), fx,
-                                    classes["fire_look"]("ember"), True)
-        finally:
-            p.end()
-        self.assertTrue(all(image.pixel(px, py) == 0 for px in range(64) for py in range(64)))
-
-
-# ------------------------------------------------- the overlay, the hub
-
-@unittest.skipIf(QT is None, "no Qt")
-class Overlay(unittest.TestCase):
-
-    def setUp(self):
-        self.app = app()
-        self.scene = FakeScene()
-        rebind(self, cg, "_animations", lambda: True)
-
-    def in_a_hub(self):
-        area = QT.QtWidgets.QScrollArea()
-        self.addCleanup(area.deleteLater)
-        area.resize(420, 400)
-        content = QT.QtWidgets.QWidget()
-        content.resize(400, 600)
-        area.setWidget(content)
-        host = QT.QtWidgets.QWidget(content)
-        host.setGeometry(30, 150, 330, 10)
-        grid = cg.make_grid(self.scene, parent=host, kind="rig", selected="Manny")
-        grid.fit(host)
-        area.show()
-        self.app.processEvents()
-        return content, grid
-
-    def test_nothing_holds_no_scrolled_content(self):
-        self.assertIsNone(cg._classes()["scrolled_content"](None))
-
-    def test_a_grid_never_stands_whole_inside_a_stranger(self):
-        grid = cg.make_grid(self.scene)
-        self.addCleanup(grid.deleteLater)
-        self.assertFalse(grid._whole_in(object()))
-
-    def test_an_overlay_it_cannot_ask_about_is_forgotten(self):
-        grid = cg.make_grid(self.scene)
-        self.addCleanup(grid.deleteLater)
-        grid.overlay = object()
-        rebind(self, QT, "shiboken", BrokenShiboken(QT.shiboken))
-        self.assertIsNone(grid._live_overlay())
-        self.assertIsNone(grid.overlay)
-
-    def test_the_overlay_draws_nothing_for_a_closed_grid(self):
-        content, grid = self.in_a_hub()
-        FireOverlay = cg._classes()["FireOverlay"]
-        gone = cg.make_grid(self.scene)
-        overlay = FireOverlay(content, gone)
-        overlay.resize(100, 100)
-        QT.shiboken.delete(gone)
-        image = render(overlay)
-        self.assertEqual(overlay.paint_ms, 0.0)
-        self.assertTrue(all(image.pixel(px, py) == 0 for px in range(0, 100, 5)
-                            for py in range(0, 100, 5)))
-
-    def test_the_overlay_draws_nothing_when_it_cannot_ask_about_its_grid(self):
-        content, grid = self.in_a_hub()
-        overlay = cg._classes()["FireOverlay"](content, grid)
-        overlay.resize(100, 100)
-        rebind(self, QT, "shiboken", BrokenShiboken(QT.shiboken))
-        render(overlay)
-        self.assertEqual(overlay.paint_ms, 0.0)
-
-    def test_the_overlay_draws_a_standing_grid(self):
-        content, grid = self.in_a_hub()
-        overlay = cg._classes()["FireOverlay"](content, grid)
-        overlay.resize(100, 100)
-        render(overlay)
-        self.assertGreater(overlay.paint_ms, 0.0)
-
-    def test_burnt_out_the_overlay_hides(self):
-        content, grid = self.in_a_hub()
-        grid.hover_model("Creep")
-        grid.advance(1.0 / 60)
-        overlay = grid.overlay
-        self.assertTrue(overlay.isVisible())
-        grid.fx.clear()
-        grid._sync_overlay()
-        self.assertFalse(overlay.isVisible())
-        self.assertEqual(grid.overlaid, set())
-
-    def test_an_overlay_left_in_another_widget_is_replaced(self):
-        content, grid = self.in_a_hub()
-        other = QT.QtWidgets.QWidget()
-        self.addCleanup(other.deleteLater)
-        stray = cg._classes()["FireOverlay"](other, grid)
-        grid.overlay = stray
-        grid.hover_model("Creep")
-        self.assertIsNot(grid.overlay, stray)
-        self.assertIs(grid.overlay.parentWidget(), content)
-        flush_deletes()
-        self.assertFalse(QT.shiboken.isValid(stray))
 
 
 if __name__ == "__main__":

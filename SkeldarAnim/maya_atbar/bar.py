@@ -1,7 +1,6 @@
-"""The AT bar's strip (layout B of the AT Rail Mockups): painted 24 px controls with the Time Bar's hover,
-press and toggle motion, our glyphs in group colours, a caption over each group, Time Bar-style blend tracks."""
-import math
-import time
+"""The AT bar's strip (layout B of the AT Rail Mockups): painted 24 px controls, our glyphs in group colours,
+a caption over each group, Time Bar-style blend tracks. No motion and no glow (2026-11-19, «удаляем все
+подсветки и анимации»): a hover changes the face, a toggle that is on wears the accent tint."""
 import traceback
 
 import maya.cmds as cmds
@@ -20,14 +19,13 @@ NUDGE_OPT = "skeldarATBarFrames"
 RECOVERY_OPT = "skeldarATBarRecoveryMinutes"
 RECOVERY_ON_OPT = "skeldarATBarRecoveryOn"
 
-#  maya_hubstyle.TOKENS and the Time Bar's numbers (SkeldarAnim docs/interface-motion.md)
+#  maya_hubstyle.TOKENS
 PANEL, CARD, FIELD, LINE, HOVER = "#1f2023", "#2a2c30", "#1b1c1f", "#45474d", "#34363b"
 TRACK, TRACK_EDGE, DOT = "#17181a", "#26282c", "#6a6c72"
 TEXT, TEXT2, MUTED, FAINT = "#e4e4e6", "#c9cacf", "#9a9ca3", "#77797f"
-ACCENT, ACCENT_TEXT, ON_ACCENT, ACCENT_TINT = "#e07a36", "#f0a26b", "#2a1405", "#3a2a1f"
+ACCENT, ACCENT_TEXT, ACCENT_TINT = "#e07a36", "#f0a26b", "#3a2a1f"
 DANGER, DANGER_TINT = "#e39a93", "#3a2626"
 KEYS, BLEND, POSE, SPACE, TIME, TOOLS = "#7fa9e6", "#6fb7c9", "#c89be8", "#f0a26b", "#e39a93", "#c9cacf"
-HOVER_MS, FLASH_MS, POP_MS, LIFT, FRAME_MS = 110.0, 120.0, 200.0, 0.10, 16
 
 FACE, MARGIN, CAPTION_H = 24, 3, 14
 SLIDER_PRESETS = (5, 15, 50, 100, 105, 120, 150)
@@ -43,10 +41,6 @@ def _ui():
         return 1.0
 
 
-def _now():
-    return time.perf_counter() * 1000.0
-
-
 def _mix(a, b, t):
     a, b = QtGui.QColor(a), QtGui.QColor(b)
     t = max(0.0, min(1.0, t))
@@ -58,12 +52,6 @@ def _alpha(colour, a):
     c = QtGui.QColor(colour)
     c.setAlphaF(max(0.0, min(1.0, a)))
     return c
-
-
-def _back_out(u):
-    c = 1.70158
-    u -= 1.0
-    return 1.0 + (c + 1.0) * u ** 3 + c * u ** 2
 
 
 _PIXMAPS = {}
@@ -105,6 +93,16 @@ def _safe(fn, *args, **kwargs):
     return run
 
 
+def _quiet_focus(root):
+    """The frames field takes the keyboard only when clicked, no button ever (2026-11-19: the field held
+    the caret by default and took the animator's hotkeys) - maya_hubqt.quiet_focus."""
+    try:
+        import maya_hubqt
+        maya_hubqt.quiet_focus(root)
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+
+
 def _shift():
     return bool(QtWidgets.QApplication.keyboardModifiers() & QtCore.Qt.ShiftModifier)
 
@@ -113,44 +111,16 @@ def _pos(e):
     return e.position().x() if hasattr(e, "position") else e.x()
 
 
-class Driver(QtCore.QObject):
-    """One 16 ms timer for the whole bar, running only while a control is moving."""
-
-    def __init__(self, parent=None):
-        super(Driver, self).__init__(parent)
-        self._timer = QtCore.QTimer(self)
-        self._timer.setInterval(FRAME_MS)
-        self._timer.timeout.connect(self._tick)
-        self._busy = set()
-
-    def kick(self, widget):
-        self._busy.add(widget)
-        if not self._timer.isActive():
-            self._timer.start()
-
-    def _tick(self):
-        now = _now()
-        for w in list(self._busy):
-            try:
-                busy = w.step(now)
-                w.update()
-            except RuntimeError:                             # the widget is gone
-                busy = False
-            if not busy:
-                self._busy.discard(w)
-        if not self._busy:
-            self._timer.stop()
-
-
 class ATButton(QtWidgets.QAbstractButton):
-    """A painted 24 px control: the glyph in its group colour; hover lifts and lights it, a press flashes
-    the accent, a toggle pops. Left click runs `click` ("menu": opens the menu), right click shows `menu()`.
-    `face` / `pad`: the compact bar's smaller face; `text` in place of the glyph makes a chip as wide as it."""
+    """A painted 24 px control: the glyph in its group colour; under the mouse its face is the hover grey,
+    checked it wears the accent tint. Left click runs `click` ("menu": opens the menu), right click shows
+    `menu()`. `face` / `pad`: the compact bar's smaller face; `text` in place of the glyph makes a chip as
+    wide as it."""
 
-    def __init__(self, glyph, colour, tip, click=None, menu=None, checkable=False, driver=None, ui=1.0,
+    def __init__(self, glyph, colour, tip, click=None, menu=None, checkable=False, ui=1.0,
                  face=FACE, pad=MARGIN, text=None):
         super(ATButton, self).__init__()
-        self.glyph, self.colour, self._ui, self.driver = glyph, colour, ui, driver
+        self.glyph, self.colour, self._ui = glyph, colour, ui
         self.face, self.pad, self.text = face, pad, text
         side = int(round((face + 2 * pad) * ui))
         width = side
@@ -160,9 +130,9 @@ class ATButton(QtWidgets.QAbstractButton):
         self.setToolTip(tip)
         self.setCheckable(checkable)
         self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setFocusPolicy(QtCore.Qt.NoFocus)           # Space is Maya's, never this button's
         self.setAccessibleName(tip.split(":")[0].split("\n")[0])
-        self._hover = self._goal = 0.0
-        self._last = self._flash_t = self._pop_t = None
+        self._hover = False
         self._menu = menu
         if click == "menu":
             self.clicked.connect(lambda: self._show_menu(QtCore.QPoint(0, self.height())))
@@ -171,87 +141,38 @@ class ATButton(QtWidgets.QAbstractButton):
         if menu:
             self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
             self.customContextMenuRequested.connect(self._show_menu)
-        self.toggled.connect(self._popped)
-
-    def _kick(self):
-        if self.driver is not None:
-            self.driver.kick(self)
-        else:
-            self.update()
 
     def enterEvent(self, e):
-        self._goal = 1.0
-        self._kick()
+        self._hover = True
+        self.update()
         super(ATButton, self).enterEvent(e)
 
     def leaveEvent(self, e):
-        self._goal = 0.0
-        self._kick()
+        self._hover = False
+        self.update()
         super(ATButton, self).leaveEvent(e)
 
-    def mousePressEvent(self, e):
-        if e.button() == QtCore.Qt.LeftButton:
-            self._flash_t = _now()
-            self._kick()
-        super(ATButton, self).mousePressEvent(e)
-
-    def _popped(self, _on):
-        self._pop_t = _now()
-        self._kick()
-
-    def step(self, now):
-        dt = now - (self._last if self._last is not None else now)
-        self._last = now
-        if self._hover != self._goal:
-            self._hover += (self._goal - self._hover) * (1.0 - math.exp(-3.0 * dt / HOVER_MS))
-            if abs(self._goal - self._hover) < 0.005:
-                self._hover = self._goal
-        busy = (self._hover != self._goal
-                or (self._flash_t is not None and now - self._flash_t < FLASH_MS)
-                or (self._pop_t is not None and now - self._pop_t < POP_MS))
-        if not busy:
-            self._last = None
-        return busy
-
     def paintEvent(self, _):
-        ui, now = self._ui, _now()
-        flash = 0.0
-        if self._flash_t is not None:
-            flash = max(0.0, 1.0 - (now - self._flash_t) / FLASH_MS)
-        pop = 1.0
-        if self._pop_t is not None and now - self._pop_t < POP_MS:
-            pop = 0.7 + 0.3 * _back_out((now - self._pop_t) / POP_MS)
-        scale = (1.0 + LIFT * self._hover) * (1.0 - 0.06 * flash) * pop
+        ui = self._ui
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         c = QtCore.QPointF(self.width() / 2.0, self.height() / 2.0)
         p.translate(c)
-        p.scale(scale, scale)
         half = self.face * ui / 2.0
         half_w = self.width() / 2.0 - self.pad * ui if self.text else half
         face = QtCore.QRectF(-half_w, -half, 2 * half_w, 2 * half)
         radius = 5 * ui
         checked = self.isChecked()
-        if self._hover > 0.01:                               # the glow: rings of added accent light
-            p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-            for i in range(2):
-                p.setPen(QtGui.QPen(_alpha(ACCENT, 46 / 255.0 * self._hover * (2 - i) / 2.0), 1.2 * ui))
-                p.setBrush(QtCore.Qt.NoBrush)
-                grow = (i + 1) * 1.2 * ui
-                p.drawRoundedRect(face.adjusted(-grow, -grow, grow, grow), radius + grow, radius + grow)
-            p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
-        base = QtGui.QColor(ACCENT_TINT) if checked else _alpha(HOVER, 0.0)
-        fill = _mix(base, HOVER, self._hover) if checked else _alpha(HOVER, self._hover)
-        if flash > 0:
-            fill = _mix(fill if fill.alpha() else QtGui.QColor(HOVER), ACCENT, flash)
-        edge = QtGui.QColor(ACCENT) if checked else _alpha(ACCENT, self._hover)
-        p.setPen(QtGui.QPen(edge, 1.0) if edge.alpha() else QtCore.Qt.NoPen)
+        if self._hover:
+            fill = QtGui.QColor(HOVER)
+        elif checked:
+            fill = QtGui.QColor(ACCENT_TINT)
+        else:
+            fill = _alpha(HOVER, 0.0)
+        p.setPen(QtGui.QPen(QtGui.QColor(ACCENT), 1.0) if checked else QtCore.Qt.NoPen)
         p.setBrush(fill)
         p.drawRoundedRect(face.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
-        if flash > 0.5:
-            ink = QtGui.QColor(ON_ACCENT)
-        else:
-            ink = _mix(self.colour, TEXT, round(self._hover * 10) / 10.0) if not checked else QtGui.QColor(self.colour)
+        ink = QtGui.QColor(TEXT) if self._hover and not checked else QtGui.QColor(self.colour)
         if self.text:
             p.setFont(_chip_font(ui))
             p.setPen(ink)
@@ -354,11 +275,11 @@ class BlendSlider(QtWidgets.QWidget):
             lit = value is not None and (v > 0) == (value > 0) and abs(v) <= abs(value)
             hot = self._hover == v
             if abs(v) == 100:
-                s = (7 if hot else 6) * ui
+                s = 6 * ui
                 p.setBrush(self.colour)
                 p.drawRoundedRect(QtCore.QRectF(px - s / 2.0, cy - s / 2.0, s, s), 1.5 * ui, 1.5 * ui)
             else:
-                s = (5 if hot else 3) * ui
+                s = 3 * ui
                 p.setBrush(self.colour if (hot or lit) else QtGui.QColor(DOT))
                 p.drawEllipse(QtCore.QPointF(px, cy), s / 2.0, s / 2.0)
         chip = QtCore.QRectF(self.width() / 2.0 - self._chip() / 2.0, cy - FACE * ui / 2.0, self._chip(), FACE * ui)
@@ -428,13 +349,11 @@ class BlendSlider(QtWidgets.QWidget):
 
 SET_COLOURS = (("Purple", POSE), ("Blue", KEYS), ("Cyan", BLEND), ("Orange", SPACE), ("Pink", TIME),
                ("Grey", TOOLS))
-POP_OPEN_MS, START_SCALE = 240.0, 0.3                        # the Time Bar's burst: a part popping in
 
 
 class SetCell(QtWidgets.QAbstractButton):
     """A select set's cell: its colour bar, its name, how many it holds - or, `new`, the cell that makes a
-    set of the selection. Hover lifts and lights it, a press flashes the accent, it pops in when the panel
-    opens (nearest the Select Sets button first)."""
+    set of the selection. Under the mouse its face is the hover grey and its delete × shows."""
 
     def __init__(self, label, node, colour, size, popup, new=False):
         super(SetCell, self).__init__(popup)
@@ -447,27 +366,22 @@ class SetCell(QtWidgets.QAbstractButton):
                         "%s: %d objects\nClick: select, Shift: add, Ctrl: remove, x: delete the set\n"
                         "Right click: update, rename, colour, delete" % (label, size or 0))
         self.setMouseTracking(True)
-        self._hover = self._goal = 0.0
-        self._last = self._flash_t = self._born = None
-        self._delay = 0.0
+        self._hover = False
         self._on_x = self._x_down = False
         if not new:
             self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
             self.customContextMenuRequested.connect(lambda pos: popup.cell_menu(self, self.mapToGlobal(pos)))
         self.clicked.connect(lambda *_a: popup.picked(self))
 
-    def pop_in(self, now, delay):
-        self._born, self._delay = now, delay
-
     def enterEvent(self, e):
-        self._goal = 1.0
-        self.popup.driver.kick(self)
+        self._hover = True
+        self.update()
         super(SetCell, self).enterEvent(e)
 
     def leaveEvent(self, e):
-        self._goal = 0.0
+        self._hover = False
         self._on_x = False
-        self.popup.driver.kick(self)
+        self.update()
         super(SetCell, self).leaveEvent(e)
 
     def x_rect(self):
@@ -491,12 +405,9 @@ class SetCell(QtWidgets.QAbstractButton):
 
     def mousePressEvent(self, e):
         if e.button() == QtCore.Qt.LeftButton and self._over_x(e):
-            self._x_down = True                               # the ×: no click, no flash
+            self._x_down = True                               # the ×: no click
             self.update()
             return
-        if e.button() == QtCore.Qt.LeftButton:
-            self._flash_t = _now()
-            self.popup.driver.kick(self)
         super(SetCell, self).mousePressEvent(e)
 
     def mouseReleaseEvent(self, e):
@@ -507,55 +418,26 @@ class SetCell(QtWidgets.QAbstractButton):
             return
         super(SetCell, self).mouseReleaseEvent(e)
 
-    def step(self, now):
-        dt = now - (self._last if self._last is not None else now)
-        self._last = now
-        if self._hover != self._goal:
-            self._hover += (self._goal - self._hover) * (1.0 - math.exp(-3.0 * dt / HOVER_MS))
-            if abs(self._goal - self._hover) < 0.005:
-                self._hover = self._goal
-        busy = (self._hover != self._goal
-                or (self._flash_t is not None and now - self._flash_t < FLASH_MS)
-                or (self._born is not None and now - self._born - self._delay < POP_OPEN_MS))
-        if not busy:
-            self._last = None
-        return busy
-
     def paintEvent(self, _):
-        ui, now = self.popup.ui, _now()
-        appear = 1.0
-        if self._born is not None:
-            u = (now - self._born - self._delay) / POP_OPEN_MS
-            if u <= 0:
-                return
-            appear = min(1.0, u)
-        scale = START_SCALE + (1.0 - START_SCALE) * _back_out(appear) if appear < 1.0 else 1.0
-        flash = max(0.0, 1.0 - (now - self._flash_t) / FLASH_MS) if self._flash_t is not None else 0.0
-        scale *= (1.0 + 0.04 * self._hover) * (1.0 - 0.04 * flash)
+        ui = self.popup.ui
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
-        p.setOpacity(min(1.0, appear * 1.6))
         c = QtCore.QPointF(self.width() / 2.0, self.height() / 2.0)
         p.translate(c)
-        p.scale(scale, scale)
         m = 3 * ui
         face = QtCore.QRectF(-self.width() / 2.0 + m, -self.height() / 2.0 + m, self.width() - 2 * m,
                              self.height() - 2 * m)
         radius = 6 * ui
-        fill = _mix(FIELD, HOVER, self._hover)
-        if flash > 0:
-            fill = _mix(fill, ACCENT, flash)
-        edge = QtGui.QPen(_mix(LINE, ACCENT, self._hover), 1)
-        if self.new and self._hover < 0.5:
+        edge = QtGui.QPen(QtGui.QColor(LINE), 1)
+        if self.new and not self._hover:
             edge.setStyle(QtCore.Qt.DashLine)
         p.setPen(edge)
-        p.setBrush(fill)
+        p.setBrush(QtGui.QColor(HOVER if self._hover else FIELD))
         p.drawRoundedRect(face.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
-        ink = QtGui.QColor(ON_ACCENT) if flash > 0.5 else None
         f = QtGui.QFont(self.font())
         f.setPixelSize(int(round(12 * ui)))
         if self.new:
-            p.setPen(ink or _mix(MUTED, TEXT, self._hover))
+            p.setPen(QtGui.QColor(TEXT if self._hover else MUTED))
             p.setFont(f)
             p.drawText(face, QtCore.Qt.AlignCenter, "+   New from selection")
             p.end()
@@ -565,27 +447,26 @@ class SetCell(QtWidgets.QAbstractButton):
         p.drawRoundedRect(QtCore.QRectF(face.left() + 5 * ui, face.top() + 6 * ui, 3 * ui, face.height() - 12 * ui),
                           1.5 * ui, 1.5 * ui)
         text = face.adjusted(14 * ui, 0, -8 * ui, 0)
-        if self._hover > 0.01:                               # the delete ×, out on hover; soft red under the cursor
+        if self._hover:                                      # the delete ×, out on hover; soft red under the cursor
             x = self.x_rect()
             hot = self._on_x or self._x_down
             if hot:
                 p.setPen(QtCore.Qt.NoPen)
                 p.setBrush(QtGui.QColor(DANGER_TINT))
                 p.drawEllipse(x.adjusted(-2 * ui, -2 * ui, 2 * ui, 2 * ui))
-            pen = QtGui.QPen(_alpha(DANGER if hot else _mix(FAINT, TEXT2, self._hover).name(), self._hover),
-                             1.5 * ui, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap)
+            pen = QtGui.QPen(QtGui.QColor(DANGER if hot else TEXT2), 1.5 * ui, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap)
             p.setPen(pen)
             inset = 3.5 * ui
             p.drawLine(QtCore.QPointF(x.left() + inset, x.top() + inset), QtCore.QPointF(x.right() - inset, x.bottom() - inset))
             p.drawLine(QtCore.QPointF(x.right() - inset, x.top() + inset), QtCore.QPointF(x.left() + inset, x.bottom() - inset))
-            text = text.adjusted(0, 0, -(x.width() + 6 * ui) * self._hover, 0)
+            text = text.adjusted(0, 0, -(x.width() + 6 * ui), 0)
         count = QtGui.QFont("Consolas")
         count.setPixelSize(int(round(11 * ui)))
         p.setFont(count)
-        p.setPen(ink or QtGui.QColor(FAINT))
+        p.setPen(QtGui.QColor(FAINT))
         p.drawText(text, QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter, str(self.count or 0))
         p.setFont(f)
-        p.setPen(ink or _mix(TEXT2, TEXT, self._hover))
+        p.setPen(QtGui.QColor(TEXT if self._hover else TEXT2))
         name = QtGui.QFontMetrics(f).elidedText(self.label, QtCore.Qt.ElideRight, int(text.width() - 26 * ui))
         p.drawText(text, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, name)
         p.end()
@@ -606,7 +487,6 @@ class SetsPopup(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
         self.anchor, self.ui = anchor, ui
         self.setStyleSheet(_style(ui))
-        self.driver = Driver(self)
         self.pad = int(round(10 * ui))
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(self.pad, self.pad, self.pad, self.pad)
@@ -671,7 +551,7 @@ class SetsPopup(QtWidgets.QWidget):
         p.end()
 
     def open_at(self):
-        """Shown above the Select Sets button (below it when there is no room), the cells popping in."""
+        """Shown above the Select Sets button (below it when there is no room)."""
         self.adjustSize()
         a, ui = self.anchor, self.ui
         corner = a.mapToGlobal(QtCore.QPoint(0, 0))
@@ -683,13 +563,6 @@ class SetsPopup(QtWidgets.QWidget):
             y = corner.y() + a.height() + int(round(4 * ui))
         self.move(x, y)
         self.show()
-        origin = a.mapToGlobal(a.rect().center())
-        now = _now()
-        for cell in self.cells:
-            centre = cell.mapToGlobal(cell.rect().center())
-            far = math.hypot(centre.x() - origin.x(), 1.5 * (centre.y() - origin.y())) / ui
-            cell.pop_in(now, 48.0 + 21.6 * far / 60.0)
-            self.driver.kick(cell)
         return self
 
     def keyPressEvent(self, e):
@@ -749,7 +622,7 @@ def open_sets(anchor, ui):
 
 class BlendPopup(QtWidgets.QWidget):
     """The compact bar's four blend tracks (2026-10-26, «викатуватися з 1 загальної кнопки Blend»): a card
-    above the Blend chip, fading in from a little lower; a click outside or Esc closes it."""
+    above the Blend chip; a click outside or Esc closes it."""
 
     def __init__(self, anchor, ui, tracks):
         super(BlendPopup, self).__init__(anchor, QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint
@@ -763,7 +636,6 @@ class BlendPopup(QtWidgets.QWidget):
         lay.setContentsMargins(pad, int(round(4 * ui)), pad, pad)
         lay.setSpacing(0)
         lay.addWidget(_group("BLEND", BLEND, tracks, ui, spacing=10))
-        self._fade = None
 
     def paintEvent(self, _):
         p = QtGui.QPainter(self)
@@ -784,22 +656,8 @@ class BlendPopup(QtWidgets.QWidget):
         y = corner.y() - self.height() - int(round(4 * ui))
         if y < screen.top():
             y = corner.y() + a.height() + int(round(4 * ui))
-        rise = int(round(4 * ui))
-        self.move(x, y + rise)
-        self.setWindowOpacity(0.0)
+        self.move(x, y)
         self.show()
-        fade = QtCore.QVariantAnimation(self)
-        fade.setDuration(int(POP_MS))
-        fade.setStartValue(0.0)
-        fade.setEndValue(1.0)
-        fade.setEasingCurve(QtCore.QEasingCurve.OutCubic)
-
-        def step(u):
-            self.setWindowOpacity(u)
-            self.move(x, y + int(round(rise * (1.0 - u))))
-        fade.valueChanged.connect(step)
-        fade.start()
-        self._fade = fade
         return self
 
     def keyPressEvent(self, e):
@@ -932,7 +790,6 @@ class ATBar(QtWidgets.QWidget):
         self.ui = _ui()
         self.face, self.pad = (COMPACT_FACE, COMPACT_PAD) if compact else (FACE, MARGIN)
         self.setStyleSheet(_style(self.ui, embedded, self.objectName()))
-        self.driver = Driver(self)
         self._recovery_timer = QtCore.QTimer(self)
         self._recovery_timer.timeout.connect(_safe(core.save_recovery))
         self._toggles = []
@@ -963,6 +820,7 @@ class ATBar(QtWidgets.QWidget):
         self.recovery_btn.setChecked(bool(on))
         self._toggle_recovery(quiet=True)
         _safe(core.install_recovery_check)()
+        _quiet_focus(self)
 
     def needed_height(self, width=None):
         if not width:
@@ -1054,7 +912,7 @@ class ATBar(QtWidgets.QWidget):
             splitter.setSizes(sizes)
 
     def _button(self, glyph, colour, tip, click=None, menu=None, checkable=False, text=None):
-        return ATButton(glyph, colour, tip, click, menu=menu, checkable=checkable, driver=self.driver, ui=self.ui,
+        return ATButton(glyph, colour, tip, click, menu=menu, checkable=checkable, ui=self.ui,
                         face=self.face, pad=self.pad, text=text)
 
     def _row(self, title, colour, widgets, _ui=None, spacing=0):

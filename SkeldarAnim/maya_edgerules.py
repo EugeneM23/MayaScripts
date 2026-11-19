@@ -21,14 +21,8 @@ WIDTH, MIN_WIDTH, MAX_WIDTH = 360, 280, 700     # logical px (the dock's 360)
 DWELL_MS = 100
 HIDE_MS = 350           # after the cursor left
 RETRY_MS = 150          # a postponed hide asks again this often
-#  Out: the panel's frame slides out (FRAME_MS) and the hub follows inside it
-#  HUB_DELAY_MS after the frame began (IN_MS); back: the two together
-#  (OUT_MS). 2026-10-09 («фоновая рамка ... появляется сильно резко ...
-#  Скорость выезда панели можно замедлить на 50%»): the frame had popped up
-#  whole; the hub is 1.5 x the first 180. The same day («уменьшим задержку
-#  между выездами частей и увеличим скорость выезда фоновой подложки»): the
-#  frame 150 instead of 270, the hub no longer waiting for it to finish.
-FRAME_MS, HUB_DELAY_MS, IN_MS, OUT_MS = 150, 80, 270, 150
+#  Out and back are at once since 2026-11-19 (the animator: «удаляем все
+#  подсветки и анимации из плагина»; the frame and the hub slid before).
 SENSOR_PX = 2           # physical px: the strip at the screen's edge
 GRIP_PX = 5             # logical px: the width grip on the panel's inner side
 #  2026-10-09 («Можем добавить опцию выбора стороны монитора откуда
@@ -196,33 +190,6 @@ class Hold(object):
             self.held = self.entered = False
             return True
         return False
-
-
-def slide_x(t, width, showing):
-    """The panel's x inside its host at progress `t` (0..1): from -width to
-    0 easing out while showing, from 0 to -width easing in while hiding."""
-    t = max(0.0, min(1.0, float(t)))
-    if showing:
-        k = 1.0 - (1.0 - t) ** 3
-        return int(round(-width * (1.0 - k)))
-    k = t ** 3
-    return int(round(-width * k))
-
-
-def reveal_ms():
-    """How long a reveal from rest takes: the hub's delay and its slide (the
-    frame, quicker, is out before)."""
-    return max(FRAME_MS, HUB_DELAY_MS + IN_MS)
-
-
-def reveal_at(ms, width):
-    """(frame, slot x) `ms` into a reveal from rest: the frame eases out over
-    FRAME_MS; the hub eases in from -width over IN_MS, starting HUB_DELAY_MS
-    after the frame. The frame, quicker and earlier, always leads."""
-    ms = float(ms)
-    frame = width + slide_x(ms / FRAME_MS, width, True)
-    x = slide_x((ms - HUB_DELAY_MS) / IN_MS, width, True)
-    return int(frame), int(x)
 
 
 def contains(rect, point, margin=0):

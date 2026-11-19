@@ -76,15 +76,10 @@ def _cmds():
 
 
 def enabled():
-    """The cards and the scroll move (the default), or everything is
-    instant."""
-    try:
-        cmds = _cmds()
-        if not cmds.optionVar(exists=OPTIONVAR):
-            return True
-        return bool(cmds.optionVar(query=OPTIONVAR))
-    except Exception:                                        # noqa: BLE001
-        return True
+    """Never, since 2026-11-19 (the animator: «удаляем все подсветки и
+    анимации из плагина больше они не нужны. интерфейс должен быть
+    максимально легким»): everything that still asks is instant."""
+    return False
 
 
 def set_enabled(on):

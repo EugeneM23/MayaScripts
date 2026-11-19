@@ -229,28 +229,12 @@ class Toast(unittest.TestCase):
         self.assertEqual(r0, (10, 634, 300, 56))
         self.assertEqual(r1[1], 634 - 62)
 
-    def test_the_look_over_time(self):
-        reveal, opacity, flash, slide = look.toast_look(0)
-        self.assertEqual((reveal, opacity, slide), (0.0, 0.0, 0.0))
-        self.assertEqual(flash, 1.0)
-        reveal, opacity, flash, slide = look.toast_look(10000)
-        self.assertEqual((reveal, opacity, flash), (1.0, 1.0, 0.0))
-        _r, opacity, _f, slide = look.toast_look(10000, look.TOAST_OUT_MS)
-        self.assertEqual(opacity, 0.0)
-        self.assertGreater(slide, 0)
-
-    def test_the_flight_comes_from_the_right_and_slows_into_place(self):
-        dx0, dy0, a0, v0 = look.toast_fly(0, 2000, 46)
-        self.assertEqual((dx0, dy0, a0), (2000.0, 0.0, 0.0))
-        dx1, dy1, a1, v1 = look.toast_fly(look.TOAST_FLY_MS / 2.0, 2000, 46)
-        self.assertLess(dx1, 200)
-        self.assertLess(dy1, 0)
-        self.assertLess(v1, v0)
-        dx2, dy2, a2, v2 = look.toast_fly(look.TOAST_FLY_MS, 2000, 46)
-        self.assertAlmostEqual(dx2, 0.0)
-        self.assertAlmostEqual(dy2, 0.0, places=6)
-        self.assertEqual((a2, v2), (1.0, 0.0))
-        self.assertEqual(look.toast_trail(v0, 1.0), look.TOAST_TRAIL_MAX)
+    def test_no_motion_is_left_in_the_rules(self):
+        for gone in ("TOAST_IN_MS", "TOAST_OUT_MS", "TOAST_FLASH_MS", "TOAST_MOVE_MS",
+                     "TOAST_FLY_MS", "TOAST_FLY_LIFT", "TOAST_TRAIL_MAX", "TOAST_TRAIL_MS",
+                     "TOAST_LAND", "toast_fly", "toast_trail", "toast_look", "ease_out"):
+            self.assertFalse(hasattr(look, gone), gone)
+        self.assertGreater(look.TOAST_STAY_MS, 0)
 
     def test_long_text_is_cut(self):
         self.assertTrue(look.toast_text("a " * 200).endswith("…"))

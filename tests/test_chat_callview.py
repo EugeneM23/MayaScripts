@@ -10,7 +10,6 @@ import tests  # noqa: F401
 
 from PySide6 import QtWidgets
 
-import maya_hubmotion as hubmotion
 from maya_chat import callview as V
 from maya_chat import session as S
 
@@ -159,23 +158,20 @@ class Starting(Base):
         w = V.start(self.ses, "dm", "audio", view_factory=fake_factory(self.store))
         self.store["bridge"].ready()
         self.ses.tell("call", {"kind": "call", "call": view()})
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self.ses.tell("call", {"kind": "call", "call": view("ended", ())})
+        self.ses.tell("call", {"kind": "call", "call": view("ended", ())})
         self.assertIsNone(V.current())
         self.assertIn("end", [n for n, _a in self.store["sent"]])
 
     def test_a_refused_start_closes_and_says_why(self):
         w = V.start(self.ses, "dm", "audio", view_factory=fake_factory(self.store))
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self.ses.tell("error", {"kind": "error", "cid": "c-1", "code": "call_exists", "text": "join it"})
+        self.ses.tell("error", {"kind": "error", "cid": "c-1", "code": "call_exists", "text": "join it"})
         self.assertIsNone(V.current())
         self.assertEqual(w.last_message, u"В этом чате уже идёт звонок — присоединитесь к нему")
         self.assertNotIn(("leave", "c1"), self.ses.calls)
 
     def test_an_unknown_refusal_keeps_the_server_s_text(self):
         w = V.start(self.ses, "dm", "audio", view_factory=fake_factory(self.store))
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self.ses.tell("error", {"kind": "error", "cid": "c-1", "code": "odd", "text": "why"})
+        self.ses.tell("error", {"kind": "error", "cid": "c-1", "code": "odd", "text": "why"})
         self.assertEqual(w.last_message, "why")
 
     def test_a_mic_error_in_a_call_keeps_it(self):
@@ -185,16 +181,14 @@ class Starting(Base):
         V.answer(self.ses, "c1", "audio", view_factory=fake_factory(self.store))
         self.store["bridge"].ready()
         self.ses.tell("call", {"kind": "call", "call": view("live", ("bob", "me"), by="bob")})
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self.store["bridge"].state(u'{"nomic": "NotFoundError", "peers": {}}')
-            self.store["bridge"].state(u'{"error": "Микрофон недоступен", "peers": {}}')
+        self.store["bridge"].state(u'{"nomic": "NotFoundError", "peers": {}}')
+        self.store["bridge"].state(u'{"error": "Микрофон недоступен", "peers": {}}')
         self.assertNotIn(("leave", "c1"), self.ses.calls)
         self.assertIsNotNone(V.current())
 
     def test_hanging_up_before_the_ack_leaves_when_the_view_comes(self):
         w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            w.press("hang_up")
+        w.press("hang_up")
         self.assertIsNone(V.current())
         self.assertNotIn(("leave", "c1"), self.ses.calls)
         self.ses.tell("call", {"kind": "call", "call": view()})
@@ -281,8 +275,7 @@ class Buttons(Base):
 
     def test_hang_up_leaves(self):
         w = self.live()
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            w.press("hang_up")
+        w.press("hang_up")
         self.assertIn(("leave", "c1"), self.ses.calls)
         self.assertIsNone(V.current())
 
@@ -307,8 +300,7 @@ class Buttons(Base):
         self.live()
         with mock.patch.object(V, "_ask_switch", return_value=False):
             self.assertIsNone(V.start(self.ses, "dm", "audio", view_factory=fake_factory({})))
-        with mock.patch.object(V, "_ask_switch", return_value=True), \
-                mock.patch.object(hubmotion, "enabled", return_value=False):
+        with mock.patch.object(V, "_ask_switch", return_value=True):
             w2 = V.start(self.ses, "dm", "audio", view_factory=fake_factory({}))
         self.assertIn(("leave", "c1"), self.ses.calls)
         self.assertIs(V.current(), w2)
@@ -319,16 +311,14 @@ class Here(Base):
         w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
         self.ses.tell("call", {"kind": "call", "call": view()})
         self.assertEqual(self.ses.here, {"c1"})
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            w.press("hang_up")
+        w.press("hang_up")
         self.assertEqual(self.ses.here, set())
 
     def test_signing_out_hangs_up(self):
         V.answer(self.ses, "c1", "audio", view_factory=fake_factory(self.store))
         self.store["bridge"].ready()
         self.ses.tell("call", {"kind": "call", "call": view("live", ("bob", "me"), by="bob")})
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self.ses.tell("calls_end", None)
+        self.ses.tell("calls_end", None)
         self.assertIn(("leave", "c1"), self.ses.calls)
         self.assertIsNone(V.current())
 
@@ -389,8 +379,7 @@ class Edges(Base):
     def test_a_call_ended_elsewhere_while_ringing_closes(self):
         V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
         self.ses.tell("call", {"kind": "call", "call": view()})
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self.ses.tell("call", {"kind": "call", "call": view("ended", ())})
+        self.ses.tell("call", {"kind": "call", "call": view("ended", ())})
         self.assertIsNone(V.current())
 
     def test_another_call_s_events_are_ignored(self):
@@ -410,7 +399,6 @@ class Edges(Base):
     def test_the_place_is_remembered(self):
         w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
         w.root.move(120, 80)
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            w.close_window()
+        w.close_window()
         self.assertEqual(V.get_var(V.POS_VAR), "120,80")
         self.assertTrue(V.get_var(V.SIZE_VAR))

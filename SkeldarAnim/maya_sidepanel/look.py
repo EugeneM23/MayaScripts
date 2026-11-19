@@ -1,8 +1,7 @@
-"""The side panel as plain values (stdlib only): where it stands, when it comes out,
-how it unrolls. Spec: docs/superpowers/specs/2026-10-17-side-panel-design.md
+"""The side panel as plain values (stdlib only): where it stands and when it comes
+out. It comes out and goes back at once (2026-11-19, «удаляем все подсветки и
+анимации»). Spec: docs/superpowers/specs/2026-10-17-side-panel-design.md
 """
-
-from maya_timebar import look as _bar
 
 MODES = ("maya", "edge")
 MODE_LABELS = (("Maya's", "maya"), ("Right edge", "edge"))
@@ -26,12 +25,16 @@ RADIUS = 8              # logical px: the window's corners (the hub's card radiu
 ZONE_PX = 62     # 48, then 30 % wider (2026-10-17, «зону срабатывания увеличим на 30%»)
 SENSOR_PX = 2           # physical px
 
-ZONE_DWELL_MS = _bar.ZONE_DWELL_MS
-ZONE_POLL_MS = _bar.ZONE_POLL_MS
-HIDE_MS = _bar.HIDE_MS // 2    # 600: half the Time Bar's wait (2026-10-17, «в 2 раза меньше»)
-UNROLL_MS = _bar.UNROLL_MS
-CLOSE_MS = _bar.CLOSE_MS
-zone_dwell = _bar.zone_dwell
+#  the Time Bar's own numbers (maya_timebar.look), spelled here so nothing of its look is imported
+ZONE_DWELL_MS = 150     # the cursor resting in the zone this long brings it out
+ZONE_POLL_MS = 50
+HIDE_MS = 600           # half the Time Bar's 1200 ms wait (2026-10-17, «в 2 раза меньше»)
+
+
+def zone_dwell(dwelt, inside, dt_ms):
+    """The time the cursor has rested in the zone so far: it grows while it stays,
+    and any moment outside starts it again."""
+    return dwelt + dt_ms if inside else 0.0
 
 
 def mode_from(value):
@@ -105,61 +108,6 @@ def zone_band(window, scale=1.0, share=1.0):
     x, y, w, h = window
     zw = int(round(ZONE_PX * float(scale or 1.0)))
     return int(x + w - zw), int(y), zw, panel_height(h, share, scale)
-
-
-def unroll(u, cy, height, showing):
-    """(y0, y1) of the panel `u` (0..1) into its unroll from - or close onto - `cy`."""
-    return _bar.unroll(u, cy, height, showing)
-
-
-# -- the burst (2026-10-17, «как у таймслайдера»): the Time Bar's controls pop in
-#    nearest the cursor first; here the panel's picture, in rows ------------------
-
-ROW = 44                # logical px: a row of the panel's picture that pops on its own
-POP_MS = _bar.POP_OPEN_MS
-FOLD_MS = _bar.FOLD_MS
-CLOSE_AFTER_MS = _bar.CLOSE_AFTER_MS
-popping = _bar.popping
-folding = _bar.folding
-
-
-def rows(height, ui=1.0):
-    """(y0, y1) rows covering `height` physical px, ROW logical px each."""
-    step = max(8, int(round(ROW * float(ui or 1.0))))
-    out = []
-    y = 0
-    while y < height:
-        out.append((y, min(height, y + step)))
-        y += step
-    return out
-
-
-def open_delay(dy, ui=1.0):
-    """When a row `dy` physical px from the cursor pops in: the nearest first."""
-    d = abs(dy) / float(ui or 1.0)
-    return (40.0 + d / 60.0 * 10.0) * _bar.BURST_SLOW
-
-
-def fold_delay(dy, ui=1.0, farthest=0.0):
-    """When a row folds away going back: the farthest first, toward the cursor."""
-    d = (abs(farthest) - abs(dy)) / float(ui or 1.0)
-    return max(0.0, d / 60.0 * 8.0) * _bar.BURST_SLOW
-
-
-def row_middle(row):
-    return (row[0] + row[1]) / 2.0
-
-
-def open_total(cy, height, ui=1.0):
-    """How long a reveal from the cursor's height `cy` takes, ms."""
-    far = max(abs(cy), abs(height - cy))
-    return max(UNROLL_MS, open_delay(far, ui) + POP_MS)
-
-
-def close_folded(cy, height, ui=1.0):
-    """When the last row has folded going back, ms (the mask closes after it)."""
-    far = max(abs(cy), abs(height - cy))
-    return fold_delay(0, ui, far) + FOLD_MS
 
 
 def dragged_width(width0, dx, scale=1.0):

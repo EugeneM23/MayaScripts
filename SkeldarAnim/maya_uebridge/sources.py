@@ -41,8 +41,12 @@ FORMATS = {
 }
 #  A Unity project's: what Unity imports as a model, and its own clips.
 UNITY_FORMATS = (".fbx", ".dae", ".anim")
+#  `__MACOSX`: what a Mac's zip leaves beside what it packed - a copy of the
+#  tree holding only AppleDouble files (`._Anvil.fbx`, the resource fork, 213
+#  bytes of «Mac OS X», never an FBX). 2026-11-19: 2 186 rows of the
+#  animator's Downloads listing were those, the same names over and over.
 SKIP_DIRS = ("library", "temp", "logs", "obj", "build", "builds", ".git",
-             "__pycache__", "packagecache")
+             "__pycache__", "packagecache", "__macosx")
 SEPARATOR = "|"
 
 #  Over this many clips in a folder, Refresh asks before it reads them: one
@@ -175,15 +179,39 @@ def frames_of(start, end):
 
 def walk_files(top, extensions, walk=os.walk, skip=SKIP_DIRS):
     """Every file under `top` with one of `extensions`, sorted, skipping the
-    caches and build folders (Unity's Library, git) a walk must not enter."""
+    caches and build folders (Unity's Library, git) a walk must not enter,
+    and every hidden file - a name starting with a dot, which is how a Mac's
+    AppleDouble metadata (`._walk.fbx`) is named wherever it lies."""
     out = []
     for folder, dirs, files in walk(top):
         dirs[:] = sorted(d for d in dirs if d.lower() not in skip
                          and not d.startswith("."))
         for name in files:
+            if name.startswith("."):
+                continue
             if os.path.splitext(name)[1].lower() in extensions:
                 out.append(os.path.join(folder, name).replace("\\", "/"))
     return sorted(out, key=lambda p: p.lower())
+
+
+def walked(path, top, skip=SKIP_DIRS):
+    """True when a walk of `top` would list `path` - none of its folders
+    under `top` skipped or hidden, its own name not hidden. A path outside
+    `top` is kept. Pure.
+
+    For a listing cached before a rule was added: the animator's Downloads
+    cache still held 2 186 AppleDouble rows that a Refresh now leaves out."""
+    def flat(text):
+        return os.path.normcase(os.path.normpath(text or "")).replace("\\", "/")
+
+    head = flat(top).rstrip("/")
+    if not top or not flat(path).startswith(head + "/"):
+        return True
+    full = os.path.normpath(path).replace("\\", "/")
+    parts = full[len(head) + 1:].split("/")
+    if parts[-1].startswith("."):
+        return False
+    return not any(p.lower() in skip or p.startswith(".") for p in parts[:-1])
 
 
 def scan_files(top, source, walk=os.walk):

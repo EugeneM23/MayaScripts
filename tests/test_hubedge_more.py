@@ -1,11 +1,12 @@
 """maya_hubedge - the rest of the edge panel: its seams to Maya (the main window,
 the work area, the viewport under its icon bar, the Time Bar's band), the
 grips' and the windows' own mouse events, a grip kept on top of its card, the
-follow, the slides' turns, and a controller whose windows went.
+follow, and a controller whose windows went. Since 2026-11-19 nothing slides:
+the panel is out or off the edge at once.
 
-Offscreen Qt with sent events; animations driven by setting their current time
-(no sleeping); `maya.cmds` / `maya.OpenMayaUI` stood in for one entry at a time.
-The edge's and the Time Bar's state on `sys` are swapped for each test.
+Offscreen Qt with sent events; `maya.cmds` / `maya.OpenMayaUI` stood in for one
+entry at a time. The edge's and the Time Bar's state on `sys` are swapped for
+each test.
 """
 
 import contextlib
@@ -24,7 +25,6 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import shiboken6
 
 import maya_edgerules as rules
-import maya_hubburst as hubburst
 import maya_hubedge as hubedge
 import maya_hubqt as hubqt
 import maya_hubstyle as hubstyle
@@ -118,11 +118,6 @@ class FakeBar(object):
         return self._alive
 
 
-def finish(anim):
-    """An animation run to its end now (its last value, then `finished`)."""
-    anim.setCurrentTime(anim.duration())
-
-
 def mouse(kind, button, buttons, gx, gy):
     return QtGui.QMouseEvent(kind, QtCore.QPointF(2, 2), QtCore.QPointF(gx, gy),
                              button, buttons, QtCore.Qt.NoModifier)
@@ -154,7 +149,7 @@ class Isolated(unittest.TestCase):
             setattr(sys, name, saved)
 
     def make(self, **kw):
-        args = dict(scale=1.0, width=360, motion=lambda: False,
+        args = dict(scale=1.0, width=360,
                     work_area=lambda: (0, 0, 1600, 900),
                     cursor=lambda: (900, 300), buttons=lambda: False,
                     app_active=lambda: True)
@@ -609,7 +604,6 @@ class Follow(Isolated):
         self.viewport = (100, 150, 1500, 700)
         self.card = [(60, 10, 280, 200)]
         self.broken_area = False
-        self.moving = False
 
     def rail(self, **kw):
         def area():
@@ -617,7 +611,7 @@ class Follow(Isolated):
                 raise RuntimeError("no viewport")
             return self.viewport
         args = dict(rail=True, rest=lambda: 40, work_area=area,
-                    motion=lambda: self.moving, shape=lambda: self.card)
+                    shape=lambda: self.card)
         args.update(kw)
         return self.make(**args)
 
@@ -628,19 +622,13 @@ class Follow(Isolated):
         edge._follow()
         self.assertEqual(edge.host.geometry().getRect(), (100, 150, 360, 700))
 
-    def test_no_follow_while_the_card_slides_then_it_follows(self):
-        self.moving = True
+    def test_a_card_out_follows_the_viewport_whole(self):
         edge = self.rail()
         edge.reveal()
-        self.assertTrue(edge.sliding())
         self.viewport = (0, 100, 1200, 600)
         edge._follow()
-        self.assertEqual(edge.host.geometry().getRect(), (100, 150, 360, 700))
-        finish(edge._anim)
-        self.assertFalse(edge.sliding())
-        self.assertEqual(edge.frame, edge.host.width())
-        edge._follow()
         self.assertEqual(edge.host.geometry().getRect(), (0, 100, 360, 600))
+        self.assertEqual(edge.frame, edge.host.width())
 
     def test_a_still_area_follows_the_card_growing(self):
         edge = self.rail()
@@ -690,7 +678,6 @@ class RestAndRects(Isolated):
         edge = self.make()
         edge.conceal()
         self.assertFalse(edge.shown)
-        self.assertFalse(edge.sliding())
         self.assertTrue(edge.sensor.isVisible())
 
     def test_a_least_width_that_raises_asks_nothing(self):
@@ -699,162 +686,6 @@ class RestAndRects(Isolated):
         edge = self.make(rail=True, rest=lambda: 40, least=broken)
         self.assertEqual(edge.least_width(), 0)
         self.assertEqual(edge.shown_width(), 360)
-
-
-class MotionThatRaises(Isolated):
-    """A motion seam that raises: the move happens at once."""
-
-    def broken(self):
-        raise RuntimeError("no optionVar")
-
-    def test_the_rail_card_comes_out_whole(self):
-        edge = self.make(rail=True, rest=lambda: 40, motion=self.broken)
-        edge.reveal()
-        self.assertTrue(edge.shown)
-        self.assertFalse(edge.sliding())
-        self.assertEqual(edge.frame, edge.host.width())
-
-    def test_the_hover_panel_comes_out_whole(self):
-        edge = self.make(motion=self.broken)
-        edge.reveal()
-        self.assertFalse(edge.sliding())
-        self.assertEqual((edge.frame, edge.slot.x()), (edge.host.width(), 0))
-
-    def test_a_burst_stop_that_raises_still_moves(self):
-        def stop():
-            raise RuntimeError("burst gone")
-        edge = self.make(rail=True, rest=lambda: 40, burst_stop=stop)
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            edge.reveal()
-        self.assertTrue(edge.shown)
-        self.assertIn("burst gone", err.getvalue())
-
-
-class StartBox(Isolated):
-    """The burst's start box, before the first tick names a shape."""
-
-    def setUp(self):
-        super(StartBox, self).setUp()
-        self.calls = []
-
-    def seam(self, showing, origin, done, on_shape):
-        self.calls.append((showing, origin))
-        return True
-
-    def rail(self, shape=None):
-        return self.make(rail=True, rest=lambda: 40, motion=lambda: True,
-                         work_area=lambda: (100, 150, 1500, 700),
-                         burst=self.seam, shape=shape)
-
-    def half(self):
-        return (hubstyle.px(hubburst.START_HALF[0], 1.0),
-                hubstyle.px(hubburst.START_HALF[1], 1.0))
-
-    def test_with_no_card_the_box_stands_about_the_point(self):
-        edge = self.rail()
-        edge.reveal(origin=(140, 270))                  # host-local (40, 120)
-        hx, hy = self.half()
-        self.assertEqual(edge.burst_shape, (40 - hx, 120 - hy, 2 * hx, 2 * hy))
-        self.assertEqual(self.calls, [(True, (140, 270))])
-
-    def test_a_shape_that_raises_is_no_card(self):
-        def broken():
-            raise RuntimeError("card gone")
-        edge = self.rail(shape=broken)
-        edge.reveal(origin=(140, 270))
-        hx, hy = self.half()
-        self.assertEqual(edge.burst_shape, (40 - hx, 120 - hy, 2 * hx, 2 * hy))
-
-    def test_the_burst_motion_s_box_is_kept_inside_the_card(self):
-        card = (60, 10, 280, 200)
-        edge = self.rail(shape=lambda: [card, (0, 0, 0, 0)])
-        with mock.patch.object(hubburst, "MOTION", "burst"):
-            edge.reveal(origin=(140, 270))
-        hx, hy = self.half()
-        lx, ly = hubburst.clamp_origin((40 - 60, 120 - 10), (280, 200),
-                                       hubburst.ORIGIN_PAD)
-        x0, y0 = max(0.0, lx - hx), max(0.0, ly - hy)
-        x1, y1 = min(280.0, lx + hx), min(200.0, ly + hy)
-        expected = (int(round(60 + x0)), int(round(10 + y0)),
-                    int(round(x1 - x0)), int(round(y1 - y0)))
-        self.assertEqual(edge.burst_shape, expected)
-        x, y, w, h = edge.burst_shape
-        self.assertTrue(60 <= x and x + w <= 340 and 10 <= y and y + h <= 210)
-        self.assertGreaterEqual(x, 60)                  # pulled in from the rail
-
-
-# ------------------------------------------------------------ the slide
-
-class SlideTurns(Isolated):
-    """The hover panel's slide turned back part way, driven frame by frame."""
-
-    def setUp(self):
-        super(SlideTurns, self).setUp()
-        self.moving = True
-        self.edge = self.make(work_area=lambda: (0, 0, 800, 600),
-                              motion=lambda: self.moving)
-        self.w = self.edge.host.width()
-
-    def test_a_reveal_after_a_turned_back_frame_finishes_the_frame_then_the_hub(self):
-        edge, w = self.edge, self.w
-        edge.reveal()
-        edge._anim.setCurrentTime(40)                   # the frame only, so far
-        stood = edge.frame
-        self.assertTrue(0 < stood < w)
-        self.assertEqual(edge.slot.x(), -w)
-        edge.conceal()                                  # turned back
-        edge.reveal()                                   # and out again
-        frame_phase = edge._anim
-        self.assertIsNotNone(frame_phase)
-        self.assertEqual(edge.slot.x(), -w)
-        frame_phase.setCurrentTime(frame_phase.duration() // 2)
-        self.assertGreater(edge.frame, stood)           # from where it stood, onward
-        self.assertEqual(edge.slot.x(), -w)
-        finish(frame_phase)                             # the frame whole: the hub's turn
-        hub_phase = edge._anim
-        self.assertIsNotNone(hub_phase)
-        self.assertIsNot(hub_phase, frame_phase)
-        self.assertEqual(edge.frame, w)
-        finish(hub_phase)
-        self.assertFalse(edge.sliding())
-        self.assertEqual((edge.frame, edge.slot.x()), (w, 0))
-        self.assertTrue(edge.host.isVisible())
-
-    def test_a_reveal_right_after_a_conceal_began_stays_out(self):
-        edge, w = self.edge, self.w
-        self.moving = False
-        edge.reveal()
-        self.moving = True
-        edge.conceal()                                  # a slide back, not one frame yet
-        self.assertTrue(edge.sliding())
-        edge.reveal()
-        self.assertFalse(edge.sliding())
-        self.assertTrue(edge.shown)
-        self.assertEqual((edge.frame, edge.slot.x()), (w, 0))
-        self.assertTrue(edge.host.isVisible())
-
-    def test_a_slide_whose_hub_went_does_nothing_and_ends(self):
-        edge = self.edge
-        edge.reveal()
-        anim = edge._anim
-        shiboken6.delete(edge.slot)
-        anim.setCurrentTime(200)
-        finish(anim)
-        self.assertFalse(edge.sliding())
-        self.assertTrue(edge.shown)
-
-    def test_a_slide_back_whose_hub_went_still_hides_the_panel(self):
-        edge = self.edge
-        self.moving = False
-        edge.reveal()
-        self.moving = True
-        edge.conceal()
-        anim = edge._anim
-        shiboken6.delete(edge.slot)
-        anim.setCurrentTime(anim.duration() // 2)
-        finish(anim)
-        self.assertFalse(edge.host.isVisible())
-        self.assertTrue(edge.sensor.isVisible())
 
 
 class WindowsGone(Isolated):
@@ -872,7 +703,7 @@ class WindowsGone(Isolated):
         edge.conceal()
         edge.host_entered()
         edge._place_grips()
-        edge._slide_done(False)
+        edge._move_done(False)
         self.assertEqual(edge.blockers(), [])
         self.assertEqual(edge.visible_rects(), [])
         self.assertIsNone(edge.visible_rect())

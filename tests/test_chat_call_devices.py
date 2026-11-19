@@ -20,7 +20,6 @@ import tests  # noqa: F401  (puts SkeldarAnim/ on sys.path)
 
 from PySide6 import QtWidgets  # noqa: E402
 
-import maya_hubmotion as hubmotion  # noqa: E402
 import maya_hubsound  # noqa: E402
 from maya_chat import calls  # noqa: E402
 from maya_chat import callview as V  # noqa: E402
@@ -56,8 +55,7 @@ class Start(unittest.TestCase):
         V._VARS.clear()
 
     def live(self):
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
+        w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
         self.store["bridge"].ready()
         self.ses.tell("call", {"kind": "call", "call": view("live", ("me", "bob"))})
         return w

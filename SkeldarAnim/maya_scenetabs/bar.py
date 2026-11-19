@@ -379,5 +379,7 @@ def refresh():
             _state()["bar"] = None
             return
         widget.populate(widget.actions.items())
+        #  a tab or its + never holds the keyboard (2026-11-19)
+        maya_hubqt.quiet_focus(widget)
     except RuntimeError:
         _state()["bar"] = None

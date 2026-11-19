@@ -1,11 +1,11 @@
 """Our Channel Box (Qt), variant A "Rows" (2026-10-18): a head (the lead object, +N,
 the layer keys go to) over a scrolling canvas of rows - a key cell, the attribute's
-name, its value well - painted in the Time Bar's look and moving as it does.
+name, its value well - painted in the Time Bar's look.
 
 The widget talks to Maya only through a `link` (scene.py in Maya, a fake in the
-tests). Every motion is drawn from its age; one 16 ms driver runs while something
-moves and stops at rest. Effects (a key set's flash, a deleted key's pieces, a key
-the playhead reached) live on a mouse-deaf layer over the canvas.
+tests). Nothing moves and nothing glows (2026-11-19, «удаляем все подсветки и
+анимации»): a row under the mouse takes the hover face, a selected channel the
+accent tint, every change is painted at once.
 Spec: docs/superpowers/specs/2026-10-18-channel-box-rows-design.md
 """
 
@@ -18,7 +18,6 @@ ROOT = "skeldarChannelBox"
 HEAD = "skeldarChannelBoxHead"
 CANVAS = "skeldarChannelBoxCanvas"
 SCROLL = "skeldarChannelBoxScroll"
-FX = "skeldarChannelBoxFx"
 EDIT = "skeldarChannelBoxEdit"
 
 GLYPHS = {
@@ -43,14 +42,6 @@ def _tokens():
     return maya_hubstyle.TOKENS
 
 
-def animations_on():
-    try:
-        import maya_hubmotion
-        return bool(maya_hubmotion.enabled())
-    except Exception:                                        # noqa: BLE001
-        return True
-
-
 _CLASSES = {}
 
 
@@ -70,13 +61,6 @@ def classes():
         c.setAlpha(int(max(0, min(255, alpha))))
         return c
 
-    def blend(a, b, u):
-        ca, cb = QtGui.QColor(a), QtGui.QColor(b)
-        u = max(0.0, min(1.0, u))
-        return QtGui.QColor(int(ca.red() + (cb.red() - ca.red()) * u),
-                            int(ca.green() + (cb.green() - ca.green()) * u),
-                            int(ca.blue() + (cb.blue() - ca.blue()) * u))
-
     def draw_glyph(p, name, rect, hex_):
         path = GLYPHS.get(name)
         key = (name, hex_)
@@ -88,29 +72,6 @@ def classes():
             renderers[key] = renderer
         if renderer is not None:
             renderer.render(p, rect)
-
-    def glow(p, rect, radius, hex_, level, ui):
-        """The Time Bar's lit ring: four rings fading outward, then a 2 px edge."""
-        if level <= 0.01:
-            return
-        p.setBrush(Qt.NoBrush)
-        for i in range(4, 0, -1):
-            p.setPen(QtGui.QPen(colour(hex_, 46 * level * (5 - i) / 4.0), max(1.0, ui)))
-            g = i * 1.6 * ui
-            p.drawRoundedRect(rect.adjusted(-g, -g, g, g), radius + g, radius + g)
-        p.setPen(QtGui.QPen(colour(hex_, 255 * level), 2 * ui))
-        p.drawRoundedRect(rect, radius, radius)
-
-    def soft_dot(p, cx, cy, r, hex_, alpha):
-        if r <= 0.5 or alpha <= 1:
-            return
-        g = QtGui.QRadialGradient(QtCore.QPointF(cx, cy), r)
-        g.setColorAt(0.0, colour(hex_, alpha))
-        g.setColorAt(0.45, colour(hex_, alpha * 0.45))
-        g.setColorAt(1.0, colour(hex_, 0))
-        p.setPen(Qt.NoPen)
-        p.setBrush(QtGui.QBrush(g))
-        p.drawEllipse(QtCore.QPointF(cx, cy), r, r)
 
     def rectf(r):
         return QtCore.QRectF(r[0], r[1], r[2], r[3])
@@ -134,9 +95,7 @@ def classes():
             self.setObjectName(HEAD)
             self.setMouseTracking(True)
             self.setFixedHeight(int(round(look.HEAD_H * box.ui)))
-            self.hover = 0.0
-            self.goal = 0.0
-            self.flash_at = None
+            self.hover = False              # the mouse over the layer chip
 
         def chip_rect(self):
             ui = self.box.ui
@@ -154,30 +113,21 @@ def classes():
             font.setBold(bold)
             return font
 
-        def busy(self, now):
-            return (abs(self.hover - self.goal) > 0.005
-                    or (self.flash_at is not None and now - self.flash_at < look.FLASH_MS))
-
-        def step(self, dt):
-            self.hover = look.approach(self.hover, self.goal, dt, look.HOVER_MS) if self.box.motion \
-                else self.goal
-
         def mouseMoveEvent(self, event):
             r = self.chip_rect()
-            goal = 1.0 if (r is not None and r.contains(event.position())) else 0.0
-            if goal != self.goal:
-                self.goal = goal
-                self.box.kick()
+            hover = bool(r is not None and r.contains(event.position()))
+            if hover != self.hover:
+                self.hover = hover
+                self.update()
 
         def leaveEvent(self, event):
-            self.goal = 0.0
-            self.box.kick()
+            if self.hover:
+                self.hover = False
+                self.update()
 
         def mousePressEvent(self, event):
             r = self.chip_rect()
             if r is not None and r.contains(event.position()) and event.button() == Qt.LeftButton:
-                self.flash_at = self.box.clock()
-                self.box.kick()
                 self.box.layer_menu(self.mapToGlobal(r.bottomLeft().toPoint()))
 
         def paintEvent(self, _event):
@@ -219,109 +169,13 @@ def classes():
                 p.setPen(colour(tk["muted"]))
                 p.drawText(pr, Qt.AlignCenter, more)
             if chip is not None:
-                now = box.clock()
-                fl = 0.0
-                if self.flash_at is not None and box.motion and now - self.flash_at < look.FLASH_MS:
-                    fl = 1.0 - (now - self.flash_at) / float(look.FLASH_MS)
-                z = (1.0 + look.LIFT * self.hover) * (1.0 - 0.06 * fl)
-                p.save()
-                c = chip.center()
-                p.translate(c)
-                p.scale(z, z)
-                p.translate(-c)
-                face = blend(tk["card"], tk["hover"], self.hover)
-                if fl > 0:
-                    face = blend(face.name(), tk["accent"], fl)
                 p.setPen(QtGui.QPen(colour(tk["line"]), 1))
-                p.setBrush(face)
+                p.setBrush(colour(tk["hover"] if self.hover else tk["card"]))
                 r = chip.height() / 2.0
                 p.drawRoundedRect(chip, r, r)
-                glow(p, chip, r, tk["accent"], self.hover, ui)
                 p.setFont(self._font(11.5))
-                p.setPen(blend(tk["muted"], tk["text"], self.hover) if fl < 0.5 else colour(tk["on_accent"]))
+                p.setPen(colour(tk["text"] if self.hover else tk["muted"]))
                 p.drawText(chip, Qt.AlignCenter, (box.layer_text or "") + "  ▾")
-                p.restore()
-            p.end()
-
-    # -- the effects layer -----------------------------------------------------------
-
-    class Fx(QtWidgets.QWidget):
-        """Over the canvas, deaf to the mouse: the Time Bar's flash for a key set,
-        a deleted key's pieces, a reached key's light - each drawn from its age."""
-
-        def __init__(self, canvas):
-            super(Fx, self).__init__(canvas)
-            self.box = canvas.box
-            self.setObjectName(FX)
-            self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-            self.setAttribute(Qt.WA_NoSystemBackground, True)
-            self.items = []
-            self._seed = 1
-
-        def add(self, kind, **data):
-            if not self.box.motion:
-                return
-            self._seed += 1
-            data.setdefault("delay", 0.0)
-            data.setdefault("life", look.KEY_FADE_MS if kind == "light" else look.EFFECT_MS[kind])
-            data.update(kind=kind, t0=self.box.clock(), seed=self._seed)
-            self.items.append(data)
-            self.raise_()
-            self.box.kick()
-
-        def busy(self, now):
-            self.items = [i for i in self.items if now - i["t0"] - i["delay"] < i["life"]]
-            return bool(self.items)
-
-        def paintEvent(self, _event):
-            if self.items:
-                guarded(self, self._paint)
-
-        def _paint(self):
-            ui, now = self.box.ui, self.box.clock()
-            p = QtGui.QPainter(self)
-            p.setRenderHint(QtGui.QPainter.Antialiasing)
-            pieces = []
-            for i in self.items:
-                age = now - i["t0"] - i["delay"]
-                l, t, w, h = i["rect"]
-                cx, cy = l + w / 2.0, t + h / 2.0
-                if age < 0:
-                    if i["kind"] == "delete":           # waits its turn drawn as the key
-                        p.setPen(Qt.NoPen)
-                        p.setBrush(colour(i["hex"]))
-                        p.drawRoundedRect(rectf(i["rect"]), 1.5 * ui, 1.5 * ui)
-                    continue
-                if age >= i["life"]:
-                    continue
-                u = age / float(i["life"])
-                p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-                if i["kind"] == "set":
-                    grow = 0.6 + 0.4 * look.back_out(min(1.0, u / 0.4))
-                    fade = (1.0 - u) ** 1.5
-                    soft_dot(p, cx, cy, look.SET_GLOW * 0.5 * ui * grow, i["hex"], 255 * fade)
-                    soft_dot(p, cx, cy, look.SET_GLOW * 0.28 * ui * grow, i["hex"], 255 * fade)
-                    soft_dot(p, cx, cy, 6.5 * ui, look.RIM, 255 * (1.0 - u) ** 2)
-                elif i["kind"] == "light":
-                    f = look.flash(age, i["life"])
-                    soft_dot(p, cx, cy, 13 * ui, i["hex"], 200 * f)
-                    p.setPen(Qt.NoPen)
-                    p.setBrush(colour(look.RIM, 150 * f))
-                    p.drawRoundedRect(rectf(i["rect"]), 1.5 * ui, 1.5 * ui)
-                else:
-                    pieces.append((i, age))
-                p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
-            for i, age in pieces:
-                body = QtGui.QColor(i["hex"])
-                for x, y, w, h, angle, alpha in look.shards(i["seed"], i["rect"], age, i["life"],
-                                                           look.SHARD_SPEED * ui, look.SHARD_FALL * ui):
-                    body.setAlphaF(alpha)
-                    move = QtGui.QTransform()
-                    move.translate(x, y)
-                    move.rotate(angle)
-                    p.setTransform(move)
-                    p.fillRect(QtCore.QRectF(-w / 2.0, -h / 2.0, w, h), body)
-                p.resetTransform()
             p.end()
 
     # -- the value editor --------------------------------------------------------------
@@ -376,15 +230,12 @@ def classes():
             self.setObjectName(CANVAS)
             self.setMouseTracking(True)
             self.setAttribute(Qt.WA_StyledBackground, True)
-            self.fx = Fx(self)
             self.editor = None
             self.press = None
-            self.aim = None
             self.before = set()                      # the selection the last press found
             self.setFocusPolicy(Qt.ClickFocus)       # typing onto the selected channels
 
         def resizeEvent(self, event):
-            self.fx.setGeometry(self.rect())
             self.box.relayout(self.width())
             super(Canvas, self).resizeEvent(event)
 
@@ -414,7 +265,6 @@ def classes():
             caption.setPixelSize(max(7, int(round(9.5 * ui))))
             caption.setBold(True)
             caption.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 1.0 * ui)
-            now = box.clock()
             for i, (y, h, parts) in enumerate(box.placed):
                 if y + h < clip.top() or y > clip.bottom():
                     continue
@@ -425,16 +275,16 @@ def classes():
                 elif row["kind"] == "section":
                     self._paint_section(p, row, parts, caption, name_font, i)
                 else:
-                    self._paint_channel(p, row["channel"], parts, i, name_font, value_font, now)
+                    self._paint_channel(p, row["channel"], parts, i, name_font, value_font)
             p.end()
 
         def _paint_section(self, p, row, parts, caption, name_font, i):
             box, tk, ui = self.box, self.box.tokens, self.box.ui
             rx, ry, rw, rh = parts["row"]
-            lvl = box.level(("row", i))
-            if lvl > 0.01:
+            hovered = box.hovered(i)
+            if hovered:
                 p.setPen(Qt.NoPen)
-                p.setBrush(colour(tk["hover"], 255 * lvl))
+                p.setBrush(colour(tk["hover"]))
                 p.drawRoundedRect(QtCore.QRectF(rx, ry, rw, rh), 4 * ui, 4 * ui)
             side = 10 * ui
             p.save()
@@ -451,40 +301,28 @@ def classes():
                 p.drawText(QtCore.QRectF(x, ry, 60 * ui, rh), Qt.AlignVCenter | Qt.AlignLeft, row["title"])
             x += 62 * ui
             p.setFont(name_font)
-            p.setPen(blend(tk["muted"], tk["text"], lvl))
+            p.setPen(colour(tk["text"] if hovered else tk["muted"]))
             p.drawText(QtCore.QRectF(x, ry, rx + rw - x, rh), Qt.AlignVCenter | Qt.AlignLeft, row["label"])
 
-        def _paint_channel(self, p, ch, parts, i, name_font, value_font, now):
+        def _paint_channel(self, p, ch, parts, i, name_font, value_font):
             box, tk, ui = self.box, self.box.tokens, self.box.ui
             state, muted, changed = look.state_of(ch)
             selected = ch["key"] in box.selected
+            hovered = box.hovered(i)
             rx, ry, rw, rh = parts["row"]
-            row_lvl = box.level(("row", i))
-            if selected or row_lvl > 0.01:
+            if selected or hovered:
                 p.setPen(Qt.NoPen)
-                face = colour(tk["accent_tint"]) if selected else colour(tk["hover"], 255 * row_lvl)
-                p.setBrush(face)
+                p.setBrush(colour(tk["accent_tint"] if selected else tk["hover"]))
                 p.drawRoundedRect(QtCore.QRectF(rx, ry, rw, rh), 4 * ui, 4 * ui)
             # the key cell
-            cell = QtCore.QRectF(*look.cell_rect(parts["mark"], ui))
-            lvl = box.level(("mark", i))
-            fl = box.flashing(("mark", i), now)
-            z = (1.0 + 0.35 * lvl) * (1.0 - 0.06 * fl)
-            p.save()
-            c = cell.center()
-            p.translate(c)
-            p.scale(z, z)
-            p.translate(-c)
-            self._paint_cell(p, cell, state, muted, changed, fl)
-            glow(p, cell, 2 * ui, tk["accent"], lvl, ui)
-            p.restore()
+            self._paint_cell(p, QtCore.QRectF(*look.cell_rect(parts["mark"], ui)), state, muted, changed)
             # the name
             if state == "locked":
                 ink = colour(tk["faint"])
             elif selected:
                 ink = colour(tk["accent_text"])
             else:
-                ink = blend(tk["text2"], tk["text"], row_lvl)
+                ink = colour(tk["text"] if hovered else tk["text2"])
             nx, ny, nw, nh = parts["name"]
             p.setFont(name_font)
             p.setPen(ink)
@@ -493,23 +331,13 @@ def classes():
                        fm.elidedText(ch["nice"], Qt.ElideRight, int(max(4, nw))))
             # the value well
             well = QtCore.QRectF(*parts["value"])
-            vl = box.level(("value", i))
-            vf = box.flashing(("value", i), now)
-            pop = box.popping(("value", i), now)
-            z = pop * (1.0 + look.LIFT * 0.4 * vl) * (1.0 - 0.06 * vf)
-            p.save()
-            c = well.center()
-            p.translate(c)
-            p.scale(z, z)
-            p.translate(-c)
             radius = 4 * ui
             if state != "locked":
-                p.setBrush(blend(tk["field"], tk["accent"], vf) if vf > 0 else colour(tk["field"]))
+                p.setBrush(colour(tk["field"]))
                 edge = tk["accent_dim"] if (changed and "accent_dim" in tk) else (
                     "#7a4a28" if changed else tk["track_edge"])
                 p.setPen(QtGui.QPen(colour(edge), max(1.0, ui)))
                 p.drawRoundedRect(well, radius, radius)
-                glow(p, well, radius, tk["accent"], vl, ui)
             if state == "locked":
                 vink = tk["faint"]
             elif state == "driven":
@@ -520,17 +348,14 @@ def classes():
                 vink = tk["accent_text"]
             else:
                 vink = tk["text"]
-            if vf > 0.5:
-                vink = tk["on_accent"]
             p.setFont(value_font)
             p.setPen(colour(vink))
             inner = well.adjusted(5 * ui, 0, -6 * ui, 0)
             text = look.fmt(ch["value"], ch["kind"], box.precision, ch.get("names"))
             text = QtGui.QFontMetrics(value_font).elidedText(text, Qt.ElideRight, int(max(4, inner.width())))
             p.drawText(inner, Qt.AlignVCenter | Qt.AlignRight, text)
-            p.restore()
 
-        def _paint_cell(self, p, cell, state, muted, changed, fl):
+        def _paint_cell(self, p, cell, state, muted, changed):
             tk, ui = self.box.tokens, self.box.ui
             accent = look.MUTED if muted else tk["accent"]
             p.setPen(Qt.NoPen)
@@ -545,10 +370,7 @@ def classes():
                 draw_glyph(p, "link", QtCore.QRectF(cell.center().x() - side / 2, cell.center().y() - side / 2,
                                                     side, side), look.DRIVEN)
                 return
-            if fl > 0:
-                p.setBrush(blend(tk["track"], tk["accent"], fl))
-                p.drawRoundedRect(cell, r, r)
-            elif state == "onkey":
+            if state == "onkey":
                 p.setBrush(colour(accent))
                 p.drawRoundedRect(cell, r, r)
             elif state == "onbd":
@@ -626,7 +448,6 @@ def classes():
                 return
             ch = self.box.rows[i]["channel"]
             if part == "mark":
-                self.box.flash(("mark", i))
                 self.box.toggle_key(ch)
                 return
             self.before = set(self.box.selected)
@@ -635,8 +456,6 @@ def classes():
                           "y": event.position().y(), "moved": False, "mode": None,
                           "channel": ch, "mods": mods,
                           "base": set(self.box.selected) if mods & Qt.ControlModifier else set()}
-            if part == "value":
-                self.box.flash(("value", i))
 
         def mouseReleaseEvent(self, event):
             press, self.press = self.press, None
@@ -651,7 +470,6 @@ def classes():
             ch = press["channel"]
             mods = event.modifiers()
             if press["part"] == "value" and ch["kind"] == "bool" and ch["key"] in self.box.selected | {ch["key"]}:
-                self.box.pop(("value", press["index"]))
                 self.box.toggle_bool(ch)
             elif press["part"] == "value" and ch["kind"] == "enum":
                 self.box.enum_menu(ch, self.mapToGlobal(event.position().toPoint()))
@@ -699,20 +517,17 @@ def classes():
     # -- the box -----------------------------------------------------------------------
 
     class Box(QtWidgets.QWidget):
-        def __init__(self, link, ui=1.0, tokens=None, parent=None, motion=None):
+        def __init__(self, link, ui=1.0, tokens=None, parent=None):
             super(Box, self).__init__(parent)
             self.setObjectName(ROOT)
             self.setAttribute(Qt.WA_StyledBackground, True)
             self.link, self.ui = link, float(ui or 1.0)
             self.tokens = dict(tokens or _tokens())
-            self.motion = animations_on() if motion is None else bool(motion)
             self.setStyleSheet("QWidget#%s, QWidget#%s { background: %s; }" % (ROOT, CANVAS, self.tokens["panel"]))
-            self._clock = QtCore.QElapsedTimer()
-            self._clock.start()
             self.objects, self.lead, self.frame = [], None, None
             self.sections, self.rows, self.placed = [], [], []
             self.selected, self.anchor, self.opened = set(), None, set()
-            self.levels, self.goals, self.flashes, self.pops = {}, {}, {}, {}
+            self.under = None               # (row index, part) under the mouse
             self.precision, self.speed = 3, 1.0
             self.layer_text = ""
             self.clipboard = {}
@@ -731,87 +546,18 @@ def classes():
             self.canvas = Canvas(self)
             self.scroll.setWidget(self.canvas)
             column.addWidget(self.scroll, 1)
-            self.timer = QtCore.QTimer(self)
-            self.timer.setInterval(look.FRAME_MS)
-            self.timer.timeout.connect(self._animate)
-            self._last = None
             self.setMinimumWidth(int(60 * self.ui))      # the side panel narrows to 86 (2026-10-19)
 
-        # time and motion -----------------------------------------------------------
-        def clock(self):
-            return float(self._clock.elapsed())
-
-        def kick(self):
-            if not self.timer.isActive():
-                self._last = self.clock()
-                self.timer.start()
-
-        def level(self, key):
-            return self.levels.get(key, 0.0)
-
-        def flashing(self, key, now):
-            t0 = self.flashes.get(key)
-            if t0 is None or not self.motion or now - t0 >= look.FLASH_MS:
-                return 0.0
-            return 1.0 - (now - t0) / float(look.FLASH_MS)
-
-        def popping(self, key, now):
-            t0 = self.pops.get(key)
-            if t0 is None or not self.motion or now - t0 >= look.POP_MS:
-                return 1.0
-            return 0.7 + 0.3 * look.back_out((now - t0) / float(look.POP_MS))
-
-        def flash(self, key):
-            self.flashes[key] = self.clock()
-            self.kick()
-
-        def pop(self, key):
-            self.pops[key] = self.clock()
-            self.kick()
+        # the mouse -----------------------------------------------------------------
+        def hovered(self, i):
+            """True when row `i` is under the mouse."""
+            return self.under is not None and self.under[0] == i
 
         def aim_at(self, i, part):
-            goals = {}
-            if i is not None:
-                goals[("row", i)] = 1.0
-                if part in ("mark", "value"):
-                    goals[(part, i)] = 1.0
-            if goals != {k: v for k, v in self.goals.items() if v}:
-                self.goals = goals
-                self.kick()
-
-        def busy(self, now):
-            if any(abs(self.levels.get(k, 0.0) - self.goals.get(k, 0.0)) > 0.005
-                   for k in set(self.levels) | set(self.goals)):
-                return True
-            if any(now - t < look.FLASH_MS for t in self.flashes.values()):
-                return True
-            if any(now - t < look.POP_MS for t in self.pops.values()):
-                return True
-            return self.head.busy(now) or self.canvas.fx.busy(now)
-
-        def _animate(self):
-            guarded(self, self._step)
-
-        def _step(self):
-            now = self.clock()
-            dt = now - (self._last if self._last is not None else now)
-            self._last = now
-            for k in set(self.levels) | set(self.goals):
-                goal = self.goals.get(k, 0.0)
-                v = look.approach(self.levels.get(k, 0.0), goal, dt, look.HOVER_MS) if self.motion else goal
-                if v <= 0.0 and goal <= 0.0:
-                    self.levels.pop(k, None)
-                else:
-                    self.levels[k] = v
-            self.head.step(dt)
-            self.flashes = {k: t for k, t in self.flashes.items() if now - t < look.FLASH_MS}
-            self.pops = {k: t for k, t in self.pops.items() if now - t < look.POP_MS}
-            busy = self.busy(now)
-            self.canvas.update()
-            self.canvas.fx.update()
-            self.head.update()
-            if not busy:
-                self.timer.stop()
+            under = (i, part) if i is not None else None
+            if under != self.under:
+                self.under = under
+                self.canvas.update()
 
         # data ----------------------------------------------------------------------
         def relayout(self, width=None):
@@ -826,14 +572,8 @@ def classes():
         def channels(self):
             return [r["channel"] for r in self.rows if r["kind"] == "channel"]
 
-        def _keymap(self):
-            return dict((ch["key"], (bool(ch["on_key"]), len(ch["keys"] or [])))
-                        for ch in self.channels())
-
-        def refresh(self, effects=True):
-            """Everything read again; the keys that came onto or left this frame since
-            the last read flash or break."""
-            before, frame0, lead0 = self._keymap(), self.frame, self.lead
+        def refresh(self):
+            """Everything read again."""
             snap = self.link.snapshot(tuple(self.opened))
             self.objects = snap.get("objects", [])
             self.lead = snap.get("lead")
@@ -851,10 +591,6 @@ def classes():
             keys = set(ch["key"] for s in self.sections for ch in s.get("channels", []))
             self.selected &= keys
             self.relayout()
-            if effects and lead0 == self.lead and frame0 is not None and self.frame is not None \
-                    and abs(frame0 - self.frame) < 1e-6:
-                added, removed = look.key_moves(before, self._keymap(), self.frame)
-                self.key_effects(added, removed)
             self.head.update()
             self.canvas.update()
 
@@ -868,8 +604,7 @@ def classes():
 
         def on_time(self):
             """Time moved (every frame of playback too): the values and the key cells
-            read again - no full read. Nothing lights: a key the playhead passes is not
-            an event of the Channel Box (the animator, 2026-10-19)."""
+            read again - no full read."""
             frame = self.link.now()
             self.frame = frame
             chans = self.channels()
@@ -897,30 +632,6 @@ def classes():
                         region += QtCore.QRect(0, int(math.floor(y)), width, int(math.ceil(h)) + 1)
                 if not region.isEmpty():
                     self.canvas.repaint(region)
-
-        def _key_hex(self, ch):
-            if ch.get("muted"):
-                return look.MUTED
-            return look.BREAKDOWN if ch.get("breakdown") else self.tokens["accent"]
-
-        def _place_of(self, key):
-            for i, row in enumerate(self.rows):
-                if row["kind"] == "channel" and row["channel"]["key"] == key:
-                    return look.cell_rect(self.placed[i][2]["mark"], self.ui), row["channel"]
-            return None, None
-
-        def key_effects(self, added, removed):
-            for key in added:
-                rect, ch = self._place_of(key)
-                if rect is not None:
-                    self.canvas.fx.add("set", rect=rect, hex=self._key_hex(ch))
-            if removed:
-                delays, life = look.delete_plan(len(removed))
-                for key, delay in zip(removed, delays):
-                    rect, ch = self._place_of(key)
-                    if rect is not None:
-                        self.canvas.fx.add("delete", rect=rect, hex=self.tokens["accent"],
-                                           delay=delay, life=life)
 
         # selection -------------------------------------------------------------------
         def click(self, ch, ctrl=False, shift=False):
@@ -970,7 +681,7 @@ def classes():
                 self.opened.discard(key)
             else:
                 self.opened.add(key)
-            self.refresh(effects=False)
+            self.refresh()
 
         # presses ----------------------------------------------------------------------
         def _chunk(self, name, call):
@@ -993,10 +704,8 @@ def classes():
         def key_selected(self, breakdown=False):
             chans = self.selected_channels() or self.channels()
             plugs = [p for ch in chans for p in (ch.get("targets") or [ch["plug"]])]
-            standing = [ch["key"] for ch in chans if ch.get("on_key")]
             self._chunk("skeldarChannelBoxKey", lambda: self.link.key(plugs, breakdown))
             self.refresh()
-            self.key_effects(standing, [])          # a key set again over one flashes too
 
         def unkey_selected(self):
             chans = self.selected_channels() or self.channels()
@@ -1164,5 +873,5 @@ def classes():
     return _CLASSES["all"]
 
 
-def make(link, ui=1.0, tokens=None, parent=None, motion=None):
-    return classes()[0](link, ui, tokens, parent, motion)
+def make(link, ui=1.0, tokens=None, parent=None):
+    return classes()[0](link, ui, tokens, parent)

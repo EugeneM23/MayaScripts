@@ -207,7 +207,6 @@ def swapped(obj, name, value):
 @unittest.skipIf(QT is None, "no Qt")
 class Base(unittest.TestCase):
 
-    motion = False
     ui = 1.0
 
     def setUp(self):
@@ -228,7 +227,7 @@ class Base(unittest.TestCase):
         self.addCleanup(QT.QtCore.QCoreApplication.sendPostedEvents, None, QT.QtCore.QEvent.DeferredDelete)
         self.link = FakeLink()
         self.strip = self.make_strip()
-        self.panel = layerpanel.Panel(self.strip, self.link, self.ui, maya_hubstyle.TOKENS, self.motion)
+        self.panel = layerpanel.Panel(self.strip, self.link, self.ui, maya_hubstyle.TOKENS)
         self.addCleanup(self.panel.destroy)
 
     def make_strip(self):
@@ -348,9 +347,8 @@ class LinkFailures(Base):
             self.panel.placer.timeout.emit()
         self.assertFalse(self.panel.placer.isActive())
 
-    def test_close_with_no_origin_folds_toward_the_column_s_bottom(self):
+    def test_close_with_no_origin_closes_at_once(self):
         self.panel.open((1300, 815))
-        self.panel._origin = None
         self.panel.close()
         self.assertFalse(self.panel.is_open() or self.panel.column.isVisible())
 
@@ -459,7 +457,6 @@ class Display(Base):
         self.assertIn(("delete_display", "lay1"), self.link.log)
         self.assertEqual(played, [1])
         self.assertIsNone(self.panel.picked_disp)
-        self.assertEqual(self.panel.ghosts, [], "no motion, no ghost")
 
     def test_the_right_button_rows(self):
         rows = self.panel.row_menu(0)
@@ -583,25 +580,25 @@ class Column(Base):
         self.send(self.col, "MouseMove", *self.centre(self.part(0, "name")), button=QT.QtCore.Qt.NoButton)
         self.assertEqual(self.col.toolTip(), "")
 
-    def test_hovering_the_lanes_button_lifts_it(self):
+    def test_hovering_the_lanes_button_lightens_it(self):
         self.send(self.col, "MouseMove", *self.centre(self.col.layout_().lanes), button=QT.QtCore.Qt.NoButton)
-        self.assertEqual(self.panel.hover.get(("lanes",)), 1.0)
+        self.assertTrue(self.panel.is_hovered(("lanes",)))
         self.assertEqual(self.col.cursor().shape(), QT.QtCore.Qt.PointingHandCursor)
         self.render(self.col)
         self.assertFalse(self.col._failed)
 
-    def test_hovering_the_other_tab_lifts_it(self):
+    def test_hovering_the_other_tab_lightens_it(self):
         self.send(self.col, "MouseMove", *self.centre(self.col.layout_().segments["disp"]),
                   button=QT.QtCore.Qt.NoButton)
-        self.assertEqual(self.panel.hover.get(("seg", "disp")), 1.0)
+        self.assertTrue(self.panel.is_hovered(("seg", "disp")))
         self.render(self.col)
         self.assertFalse(self.col._failed)
 
     def test_leaving_the_column_drops_the_hover(self):
         self.send(self.col, "MouseMove", *self.centre(self.part(0, "mute")), button=QT.QtCore.Qt.NoButton)
-        self.assertEqual(self.panel.goal.get(("ctl", 0, "mute")), 1.0)
+        self.assertTrue(self.panel.is_hovered(("ctl", 0, "mute")))
         self.plain(self.col, "Leave")
-        self.assertEqual(self.panel.goal.get(("ctl", 0, "mute")), 0.0)
+        self.assertFalse(self.panel.is_hovered(("ctl", 0, "mute")))
 
     def test_a_hovered_row_that_went_away_is_not_drawn(self):
         self.send(self.col, "MouseMove", *self.centre(self.part(2, "name")), button=QT.QtCore.Qt.NoButton)
@@ -778,14 +775,7 @@ class Column(Base):
 
 
 class LaneStrip(Strip):
-
-    def __init__(self):
-        super(LaneStrip, self).__init__()
-        self.quiets = 0
-        self.marks = []
-
-    def quiet_keys(self):
-        self.quiets += 1
+    pass
 
 
 class Lanes(Base):
@@ -870,9 +860,8 @@ class Lanes(Base):
         rows["Delete"]()
         self.assertEqual(self.link.log[-1], ("lane_keys", "delete", ["A2"], None, 0.0, None))
 
-    def test_a_lifted_key_whose_layer_went_away_is_not_drawn(self):
+    def test_a_hovered_lane_whose_layer_went_away_paints(self):
         self.lane("MouseMove", 104, 2, button=QT.QtCore.Qt.NoButton)
-        self.assertEqual(self.panel.lane_aimed, ("Base", 10.0))
         self.link.anim = self.link.anim[:2]
         self.panel.refresh()
         self.render(self.w)
@@ -882,20 +871,13 @@ class Lanes(Base):
         with swapped(QT.QtWidgets.QApplication, "doubleClickInterval", staticmethod(boom)):
             self.assertEqual(self.w.double_window(), look.RIGHT_DOUBLE_MS)
 
-    def test_leaving_the_lanes_drops_the_lifted_key(self):
-        self.lane("MouseMove", 104, 1, button=QT.QtCore.Qt.NoButton)
-        self.assertEqual(self.panel.lane_aimed, ("A1", 10.0))
-        self.plain(self.w, "Leave")
-        self.assertIsNone(self.panel.lane_aimed)
-        self.plain(self.w, "Leave")                        # nothing aimed: nothing to do
-
-    def test_the_lifted_key_is_drawn_lit(self):
+    def test_the_key_under_the_mouse_is_drawn_as_at_rest(self):
+        # 2026-11-19: no lift, no glow - the key the mouse is over is drawn as every other
+        rest = self.render(self.w)
         self.lane("MouseMove", 104, 1, button=QT.QtCore.Qt.NoButton)
         img = self.render(self.w)
         self.assertFalse(self.w._failed)
-        lit = QT.QtGui.QColor(maya_hubstyle.TOKENS["accent_text"])
-        c = img.pixelColor(105, int(self.y[1]))
-        self.assertLess(abs(c.red() - lit.red()) + abs(c.green() - lit.green()) + abs(c.blue() - lit.blue()), 40)
+        self.assertEqual(img.pixelColor(105, int(self.y[1])), rest.pixelColor(105, int(self.y[1])))
 
     def test_the_edge_cursor_over_a_highlight_s_end(self):
         self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2"]}
@@ -997,11 +979,10 @@ class Lanes(Base):
         self.panel._add_drawn_copies({"c": {"keys": [(10.0, {})], "stamped": {40.0}}}, (10, 10), (20, 20))
         self.assertEqual(self.panel.keys["A1"], [10.0])
 
-    def test_s_over_a_block_holding_the_active_layer_marks_the_strip(self):
-        self.strip.mark_set = lambda a, b: self.strip.marks.append((a, b))
+    def test_s_over_a_block_keys_every_frame_of_it(self):
         self.panel.lane_sel = {"a": 10, "b": 20, "names": ["A2", "A1"]}
         self.assertTrue(self.panel.lane_key_range())
-        self.assertEqual(self.strip.marks, [(10, 20)])
+        self.assertIn(("lane_key_range", ["A2", "A1"], 10, 20), self.link.log)
         self.panel.lane_sel = None
         self.assertFalse(self.panel.lane_key_range())
         self.assertFalse(self.panel.lane_stamp(), "no drag: S is not the lanes'")
@@ -1013,10 +994,8 @@ class Lanes(Base):
         self.lane("MouseMove", 255, 0, held=Qt.LeftButton, button=Qt.NoButton)
         self.panel.flush_lane_live()                       # the scene's step made
         self.assertTrue(self.panel.lane_live)
-        quiets = self.strip.quiets
         self.lane("MouseButtonPress", 605, 1)              # the release never came
         self.assertIn(("lane_live_end", (20, 30)), self.link.log)
-        self.assertEqual(self.strip.quiets, quiets + 1)
         self.assertIsNone(self.panel.lane_live)
 
     def test_a_lost_drag_leaves_no_phantom_drag_behind(self):
@@ -1067,16 +1046,6 @@ class Lanes(Base):
         self.assertIn(("set_time", 30), self.link.log)
         self.assertIn("boom", out.getvalue())
 
-    def test_a_failing_quiet_is_printed_and_the_drag_set_down(self):
-        Qt = QT.QtCore.Qt
-        self.strip.quiet_keys = boom
-        with printed() as out:
-            self.lane("MouseButtonPress", 105, 1)
-            self.lane("MouseMove", 205, 1, held=Qt.LeftButton, button=Qt.NoButton)
-            self.lane("MouseButtonRelease", 205, 1)
-        self.assertIn("boom", out.getvalue())
-        self.assertIn(("lane_move", ["A1"], (10, 10), (20, 20)), self.link.log)
-
     def test_a_timeline_that_fails_is_printed_not_followed(self):
         Qt = QT.QtCore.Qt
         self.strip.timeline = types.SimpleNamespace(own_moving=boom, live=None, repaint=boom)
@@ -1109,14 +1078,11 @@ class Lanes(Base):
                 self.lane("MouseButtonDblClick", 305, 0)
             with swapped(self.panel, "lane_aim", boom):
                 self.lane("MouseMove", 305, 0, button=Qt.NoButton)
-            self.panel.lane_aimed = ("A1", 10.0)
-            with swapped(self.w, "update", boom):
-                self.plain(self.w, "Leave")
             with swapped(self.panel, "lane_release", boom):
                 self.lane("MouseButtonRelease", 305, 0)
                 self.panel.lane_drag = ("scrub", 30)
                 self.plain(self.w, "UngrabMouse")
-        self.assertEqual(out.getvalue().count("RuntimeError: boom"), 6)
+        self.assertEqual(out.getvalue().count("RuntimeError: boom"), 5)
         self.panel.lane_drag = None
 
     def test_ungrab_ends_a_lanes_drag(self):
@@ -1194,166 +1160,53 @@ class LanePaint(Base):
         self.assertFalse(self.panel.lanes._failed)
 
 
-class Motion(Base):
-    """The burst, the tab's wave, pops, flashes, hover and ghosts on the test's clock."""
+class AtOnce(Base):
+    """2026-11-19, «удаляем все подсветки и анимации из плагина»: every change is its end
+    state at once - no burst, wave, pop, flash, eased hover or ghost."""
 
-    motion = True
-
-    def setUp(self):
-        super(Motion, self).setUp()
-        self.t = [1000.0]
-        self.panel.clock = lambda: self.t[0]
-
-    def run_until(self, cond, step=16.0, limit=500):
-        for _ in range(limit):
-            if cond():
-                return True
-            self.t[0] += step
-            self.panel._animate()
-        return cond()
-
-    def settle(self):
-        self.assertTrue(self.run_until(lambda: not self.panel.driver.isActive()))
-
-    def test_the_column_and_lanes_unroll_rest_and_the_driver_stops(self):
+    def test_open_and_close_are_whole_at_once_with_the_lanes(self):
         self.link.opts[self.mod.LANES_VAR] = 1
-        self.panel.open((1300, 815))
-        self.assertEqual(self.panel.phase, "opening")
-        self.assertIsNotNone(self.panel.lanes_burst)
-        self.assertEqual(set(self.panel.lanes_burst["delays"]), {0, 1, 2})
-        self.t[0] += 60
-        img = self.render(self.panel.column)
-        self.assertEqual(img.pixelColor(4, 12).alpha(), 0)
-        lanes = self.render(self.panel.lanes)
-        self.assertEqual(lanes.pixelColor(5, int(lanes.height() / 2)).alpha(), 0, "unrolling from the right")
-        self.assertEqual(self.panel.lane_of(0)[0] < 1.0 or self.panel.lane_of(0)[1] < 1.0, True)
-        self.settle()
+        self.panel.open()
         self.assertEqual(self.panel.phase, "open")
-        self.assertIsNone(self.panel.burst)
-        self.assertIsNone(self.panel.lanes_burst)
-        self.assertEqual(self.panel.lane_of(0), (1.0, 1.0))
+        self.assertTrue(self.panel.column.isVisible() and self.panel.lanes.isVisible())
         self.assertGreater(self.render(self.panel.column).pixelColor(4, 12).alpha(), 0)
-
-    def test_closing_folds_then_hides_both(self):
-        self.link.opts[self.mod.LANES_VAR] = 1
-        self.panel.open((1300, 815))
-        self.settle()
-        self.panel.close((1300, 815))
-        self.assertEqual(self.panel.phase, "closing")
-        self.assertFalse(self.panel.lanes_burst["open"])
-        self.panel.age_override = self.panel.burst["ends"] - 15
-        img = self.render(self.panel.column)
-        self.assertEqual(img.pixelColor(4, 12).alpha(), 0, "the shape closing onto the pill")
-        self.render(self.panel.lanes)
-        self.panel.age_override = None
-        self.assertTrue(self.run_until(lambda: self.panel.phase == "closed"))
-        self.assertFalse(self.panel.column.isVisible() or self.panel.lanes.isVisible())
-        self.settle()
-
-    def test_close_with_no_origin_folds_toward_the_column_s_bottom(self):
-        self.panel.open((1300, 815))
-        self.settle()
-        self.panel._origin = None
         self.panel.close()
-        w, h = self.panel.column.width(), self.panel.column.height()
-        self.assertEqual(self.panel.burst["origin"], (w / 2.0, float(h)))
+        self.assertEqual(self.panel.phase, "closed")
+        self.assertFalse(self.panel.column.isVisible() or self.panel.lanes.isVisible())
 
-    def test_turning_the_lanes_off_folds_them(self):
+    def test_turning_the_lanes_off_hides_them_at_once(self):
         self.link.opts[self.mod.LANES_VAR] = 1
-        self.panel.open((1300, 815))
-        self.settle()
+        self.panel.open()
         self.click(self.panel.column, *self.centre(self.panel.column.layout_().lanes))
-        self.assertFalse(self.panel.lanes_burst["open"])
-        self.assertTrue(self.panel.lanes.isVisible())
-        self.assertGreater(self.panel.flash_of(("lanes",)), 0.0)
-        self.render(self.panel.column)
-        self.assertFalse(self.panel.column._failed)
-        self.settle()
         self.assertFalse(self.panel.lanes.isVisible())
 
-    def test_a_tab_switch_pops_its_rows_in_a_wave(self):
-        self.panel.open((1300, 815))
-        self.settle()
+    def test_a_tab_switch_shows_its_rows_at_once(self):
+        self.panel.open()
         col = self.panel.column
         self.click(col, *self.centre(col.layout_().segments["disp"]))
-        self.assertEqual(set(self.panel.wave["delays"]), {0, 1})
-        lay = col.layout_()
-        self.assertEqual(self.panel.excluded(lay), frozenset([("row", 0), ("row", 1)]))
-        self.assertIn(("row", 1), self.panel.live_units(lay))
-        scale, _op = self.panel.burst_of(("row", 1))
-        self.assertLess(scale, 1.0)
+        self.assertEqual(self.panel.tab, "disp")
         self.render(col)
         self.assertFalse(col._failed)
-        self.assertTrue(self.run_until(lambda: self.panel.wave is None))
-        self.assertEqual(self.panel.burst_of(("row", 1)), (1.0, 1.0))
-        self.settle()
 
-    def test_lanes_folding_after_a_switch_to_display_fold_every_lane(self):
-        """Fixed 2026-10-27, the bug as it was - layerpanel.py:960-961 with 348-351: `_switch_tab` sets the new tab before
-        `_hide_lanes(burst=True)`, so the folding lanes' parts are read from the Display
-        tab's layout - one lane per display layer, not per animation layer. With three
-        animation layers and two display layers only two lanes fold; the third vanishes
-        at once (and `Lanes._paint` draws the folding lanes at the Display rows)."""
-        self.link.opts[self.mod.LANES_VAR] = 1
-        self.panel.open((1300, 815))
-        self.settle()
-        col = self.panel.column
-        self.click(col, *self.centre(col.layout_().segments["disp"]))
-        self.assertEqual(set(self.panel.lanes_burst["delays"]), {0, 1, 2})
-
-    def test_pops_and_flashes_fade_and_the_driver_stops(self):
-        self.panel.open((1300, 815))
-        self.settle()
-        col = self.panel.column
-        rect = L.row_parts(col.layout_().row_at(0, 0), "anim", 1.0)["mute"]
-        self.click(col, *self.centre(rect))
-        self.t[0] += 40
-        self.assertLess(self.panel.pop_of(("ctl", 0, "mute")), 1.0)
-        for name in ("add", "merge"):
-            self.click(col, *self.centre(dict(col.layout_().foot)[name]))
-        self.click(col, *self.centre(col.layout_().segments["anim"]))
-        self.assertGreater(self.panel.flash_of(("foot", "merge")), 0.5)
-        self.render(col)
-        self.assertFalse(col._failed)
-        self.settle()
-        self.assertEqual((self.panel.pops, self.panel.flashes), ({}, {}))
-        self.assertEqual(self.panel.flash_of(("foot", "merge")), 0.0)
-
-    def test_the_hover_eases_in_and_out(self):
-        self.panel.open((1300, 815))
-        self.settle()
+    def test_the_hover_is_flat_and_immediate(self):
+        self.panel.open()
         self.panel.hover_at(("row", 0, "mute"))
-        self.assertEqual(self.panel.hover.get(("ctl", 0, "mute"), 0.0), 0.0)
-        self.assertTrue(self.run_until(lambda: self.panel.hover.get(("ctl", 0, "mute"), 0) > 0.99))
+        self.assertTrue(self.panel.is_hovered(("ctl", 0, "mute")))
         self.render(self.panel.column)
+        self.assertFalse(self.panel.column._failed)
         self.panel.hover_at(None)
-        self.settle()
-        self.assertEqual((self.panel.goal, self.panel.hover), ({}, {}))
+        self.assertFalse(self.panel.is_hovered(("ctl", 0, "mute")))
 
-    def test_a_deleted_row_folds_where_it_stood(self):
+    def test_a_deleted_row_is_gone_at_once_with_its_sound(self):
         import maya_hubsound
-        self.panel.open((1300, 815))
-        self.settle()
+        self.panel.open()
         col = self.panel.column
-        with swapped(maya_hubsound, "deleted", lambda: None):
+        heard = []
+        with swapped(maya_hubsound, "deleted", lambda: heard.append(1)):
             self.click(col, *self.centre(dict(col.layout_().foot)["delete"]))
-        self.assertEqual([g["row"]["name"] for g in self.panel.ghosts], ["A2"])
-        self.t[0] += 30
+        self.assertEqual(heard, [1])
         self.render(col)
         self.assertFalse(col._failed)
-        self.click(col, *self.centre(col.layout_().segments["disp"]))
-        self.render(col)                                   # the ghost belongs to the other tab
-        self.assertFalse(col._failed)
-        self.settle()
-        self.assertEqual(self.panel.ghosts, [])
-
-    def test_the_driver_stops_when_a_step_fails(self):
-        self.panel.open((1300, 815))
-        self.panel._busy = boom
-        with printed() as out:
-            self.panel._animate()
-        self.assertFalse(self.panel.driver.isActive())
-        self.assertIn("boom", out.getvalue())
 
 
 if __name__ == "__main__":

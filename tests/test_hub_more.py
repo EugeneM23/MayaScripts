@@ -105,7 +105,7 @@ class RecordingSkin(object):
     def destroy(self):
         self._alive = False
 
-    def show_card(self, key, animate=True):
+    def show_card(self, key, animate=False):
         self.calls.append(("show_card", key, animate))
         if key not in self.cards:
             return None
@@ -210,14 +210,11 @@ def _header_modules(calls):
         maya_hubsound=module(
             "maya_hubsound", enabled=lambda: True, RECORDED=("drag", "delete"),
             preload=lambda name: calls.append(("preload", name))),
-        maya_hubmotion=module("maya_hubmotion", enabled=lambda: False),
         maya_mayatheme=module("maya_mayatheme", enabled=lambda: True),
         maya_mayaicons=module("maya_mayaicons", enabled=lambda: False),
         maya_viewportbar=module("maya_viewportbar", enabled=lambda: True),
         maya_mainbar=module("maya_mainbar", enabled=lambda: False),
         maya_camview=module("maya_camview", enabled=lambda: True),
-        maya_windowlight=module("maya_windowlight", enabled=lambda: True,
-                                maya_enabled=lambda: False),
         maya_timebar=module("maya_timebar", mode=lambda: "edge",
                             steel=lambda: True),
         maya_atbar=module("maya_atbar", layout=lambda: "compact"),
@@ -242,13 +239,13 @@ class DressHeader(HubCase):
         self.assertEqual(skin.named("paint_hotkeys"), [(True,)])
         self.assertEqual(skin.named("paint_sounds"), [(True,)])
         self.assertEqual(calls, [("preload", "drag"), ("preload", "delete")])
-        self.assertEqual(skin.named("paint_animations"), [(False,)])
+        self.assertEqual(skin.named("paint_animations"), [])
         self.assertEqual(skin.named("paint_mayatheme"), [(True,)])
         self.assertEqual(skin.named("paint_mayaicons"), [(False,)])
         self.assertEqual(skin.named("paint_viewportbar"), [(True,)])
         self.assertEqual(skin.named("paint_mainbar"), [(False,)])
         self.assertEqual(skin.named("paint_camview"), [(True,)])
-        self.assertEqual(skin.named("paint_windowlight"), [(True, False)])
+        self.assertEqual(skin.named("paint_windowlight"), [])
         self.assertEqual(skin.named("paint_timebar"), [("edge", True, "compact")])
         self.assertEqual(skin.named("paint_sidepanel"), [("right", False, True)])
         self.assertEqual(skin.named("paint_interface"), [("skeldar",)])
@@ -294,9 +291,9 @@ class DressHeader(HubCase):
             _result, out = self.printed(hub._dress_header, skin)
         painted = [c[0] for c in skin.calls]
         self.assertEqual(painted, ["set_version", "paint_edge"])
-        for name in ("maya_hotkeys", "maya_hubsound", "maya_hubmotion",
+        for name in ("maya_hotkeys", "maya_hubsound",
                      "maya_mayatheme", "maya_mayaicons", "maya_viewportbar",
-                     "maya_mainbar", "maya_camview", "maya_windowlight",
+                     "maya_mainbar", "maya_camview",
                      "maya_timebar", "maya_sidepanel", "maya_interface",
                      "maya_hubpop"):
             self.assertIn(name + " is broken", out, name)
@@ -365,7 +362,6 @@ class QueuedAtStart(HubCase):
     SOON = (
         ("_chat_soon", "maya_chat", "ensure"),
         ("_main_bar_soon", "maya_mainbar", "ensure"),
-        ("_windowlight_soon", "maya_windowlight", "ensure"),
         ("_camview_soon", "maya_camview", "ensure"),
         ("_viewport_bar_soon", "maya_viewportbar", "ensure"),
         ("_side_panel_soon", "maya_sidepanel", "ensure"),
@@ -532,30 +528,33 @@ class MenuSwitches(HubCase):
                 self.assertEqual(setter(False), "m")
             self.assertIs(fake.state["on"], False)
 
-    def test_the_window_light_switches_paint_both_rows(self):
-        skin = self.skin()
-        state = {"on": True, "maya": True}
-        fake = module(
-            "maya_windowlight",
-            set_enabled=lambda on: state.update(on=on) or "light",
-            set_maya_enabled=lambda on: state.update(maya=on) or "maya",
-            enabled=lambda: state["on"], maya_enabled=lambda: state["maya"])
-        with fake_modules(maya_windowlight=fake):
-            self.assertEqual(hub.set_windowlight(False), "light")
-            self.assertEqual(hub.set_windowlight_maya(False), "maya")
-        self.assertEqual(skin.named("paint_windowlight"),
-                         [(False, True), (False, False)])
-        self.assertEqual([s[0] for s in skin.named("say")], ["light", "maya"])
-
-    def test_sounds_and_animations_are_set_and_painted(self):
+    def test_sounds_are_set_and_painted(self):
         skin = self.skin()
         with fake_modules(
-                maya_hubsound=module("maya_hubsound", set_enabled=bool),
-                maya_hubmotion=module("maya_hubmotion", set_enabled=bool)):
+                maya_hubsound=module("maya_hubsound", set_enabled=bool)):
             self.assertTrue(hub.set_sounds(1))
-            self.assertFalse(hub.set_animations(0))
         self.assertEqual(skin.named("paint_sounds"), [(True,)])
-        self.assertEqual(skin.named("paint_animations"), [(False,)])
+
+    def test_no_animation_or_light_switch_is_left(self):
+        """2026-11-19: no animations and no highlights - their menu rows,
+        callbacks and setters are gone."""
+        callbacks = hub._callbacks()
+        for name in ("animations", "hover", "windowlight",
+                     "windowlight_maya"):
+            self.assertNotIn(name, callbacks)
+        for name in ("set_animations", "set_windowlight",
+                     "set_windowlight_maya", "_hover_sound",
+                     "_windowlight_soon", "_rail_burst", "_rail_burst_stop"):
+            self.assertFalse(hasattr(hub, name), name)
+
+    def test_a_window_light_left_by_an_older_build_is_stopped(self):
+        stopped = []
+        light = types.SimpleNamespace(stop=lambda: stopped.append(1))
+        sys._skeldar_windowlight = {"light": light}
+        hub._retire_window_light()
+        self.assertEqual(stopped, [1])
+        self.assertFalse(hasattr(sys, "_skeldar_windowlight"))
+        hub._retire_window_light()                     # nothing standing
 
     def interface_modules(self, log):
         return dict(
@@ -663,16 +662,12 @@ class MenuCallbacks(HubCase):
             self.assertTrue(callable(fn), name)
         wanted = {"hotkeys": hub._press_hotkeys, "jump": hub.focus,
                   "toggled": hub.remember, "close": hub._press_rail_close,
-                  "told": hub._told, "hover": hub._hover_sound,
+                  "told": hub._told,
                   "pin": hub._press_pin, "edge": hub.set_edge,
                   "edge_side": hub.set_edge_side,
-                  "windowlight_maya": hub.set_windowlight_maya,
                   "sidepanel_box": hub.set_sidepanel_box}
         for name, fn in wanted.items():
             self.assertIs(callbacks[name], fn, name)
-
-    def test_the_hover_is_silent(self):
-        self.assertFalse(hub._hover_sound())
 
     def test_a_layout_that_is_no_layout_is_the_rail(self):
         self.assertEqual(hub.set_layout("nonsense"), "rail")
@@ -840,155 +835,9 @@ class RailHelpers(HubCase):
         self.assertEqual(hub._rail_card(), (skin, "edgeHost", "rect"))
         self.assertEqual(hub._rail_least(), 333)
 
-    def test_every_running_burst_is_stopped(self):
-        self.assertIsNone(hub._rail_burst_stop())             # no skin
-        skin = self.skin()
-        stopped = []
-
-        class Burster(object):
-            def __init__(self, name, fails=False):
-                self.name, self.fails = name, fails
-
-            def stop(self):
-                if self.fails:
-                    raise RuntimeError("deleted")
-                stopped.append(self.name)
-        skin.cards = {"a": types.SimpleNamespace(burster=Burster("a")),
-                      "b": types.SimpleNamespace(burster=None),
-                      "c": types.SimpleNamespace(burster=Burster("c", True)),
-                      "d": types.SimpleNamespace()}
-        hub._rail_burst_stop()
-        self.assertEqual(stopped, ["a"])
-
-
-class RailBurst(HubCase):
-    """The edge rail's card bursting out of a point (2026-10-18) - the hub's
-    half: the Burster made once on the card, its two callbacks, the shape in
-    the edge host's coordinates."""
-
-    def setUp(self):
-        super(RailBurst, self).setUp()
-        self.host = QtWidgets.QWidget()
-        self.host.resize(400, 600)
-        self.frame = QtWidgets.QWidget(self.host)
-        self.frame.setGeometry(30, 50, 300, 200)
-        self.made.append(self.host)
-        self.edge = FakeEdge(shown=True)
-        self.edge.host = self.host
-        self.edge_state["edge"] = self.edge
-        self.skin_ = self.skin()
-        self.card = types.SimpleNamespace(frame=self.frame)
-        self.skin_.cards = {"tools": self.card}
-        self.skin_.shown = "tools"
-        self.qt.card_parts = lambda s, card: ("parts", card)
-        self.made_bursters = []
-        test = self
-
-        class Burster(object):
-            def __init__(self, frame, parts, face, scale):
-                self.frame, self.parts, self.face = frame, parts, face
-                self.scale = scale
-                self.effect = None
-                self.runs = []
-                self.stopped = 0
-                test.made_bursters.append(self)
-
-            def run(self, showing, origin, done, on_tick=None):
-                self.runs.append((showing, origin, done))
-                if on_tick is not None:
-                    on_tick((0, 0, 10, 20))
-                return True
-
-            def stop(self):
-                self.stopped += 1
-        self.blended = []
-        self.modules = dict(
-            maya_hubwindow=module("maya_hubwindow", Burster=Burster),
-            maya_hubburst=module(
-                "maya_hubburst",
-                blend=lambda a, b, level: self.blended.append((a, b, level))
-                or "face"))
-
-    def burst(self, showing=True, origin=(100, 200), done=None, shapes=None):
-        shapes = [] if shapes is None else shapes
-        with fake_modules(**self.modules):
-            return hub._rail_burst(showing, origin, done, shapes.append)
-
-    def test_the_card_bursts_and_its_shape_lands_in_the_host(self):
-        shapes = []
-        done = object()
-        self.assertTrue(self.burst(done=done, shapes=shapes))
-        burster = self.made_bursters[0]
-        self.assertIs(self.card.burster, burster)
-        self.assertIs(burster.frame, self.frame)
-        self.assertEqual(burster.scale, 1.5)
-        self.assertEqual(burster.runs, [(True, (100, 200), done)])
-        self.assertEqual(shapes, [(30, 50, 40, 70)])
-
-    def test_its_callbacks_read_the_card_s_parts_and_its_face(self):
-        import maya_hubstyle
-        self.burst()
-        burster = self.made_bursters[0]
-        self.assertEqual(burster.parts(), ("parts", self.card))
-        self.frame.level = 0.25
-        self.assertEqual(burster.face(), "face")
-        self.assertEqual(self.blended, [(maya_hubstyle.TOKENS["card"],
-                                         maya_hubstyle.TOKENS["card_active"],
-                                         0.25)])
-
-    def test_the_burster_is_made_once_a_card(self):
-        self.burst()
-        self.burst(showing=False)
-        self.assertEqual(len(self.made_bursters), 1)
-        self.assertEqual([r[0] for r in self.made_bursters[0].runs],
-                         [True, False])
-
-    def test_an_effect_replaced_on_the_frame_is_dropped(self):
-        self.burst()
-        burster = self.made_bursters[0]
-        burster.effect = object()             # not the frame's effect any more
-        self.burst()
-        self.assertIsNone(burster.effect)
-
-    def test_another_card_s_burst_still_running_is_stopped(self):
-        other = types.SimpleNamespace(frame=None)
-        self.skin_.cards["studio"] = other
-        self.burst()
-        first = self.made_bursters[0]
-        self.skin_.shown = "studio"
-        other.frame = QtWidgets.QWidget(self.host)
-        self.burst()
-        self.assertEqual(first.stopped, 1)
-
-    def test_a_frame_deleted_mid_burst_hears_no_shape(self):
-        import shiboken6
-        shapes = []
-
-        class Late(object):
-            def run(self_, showing, origin, done, on_tick=None):
-                shiboken6.delete(self.frame)
-                on_tick((0, 0, 1, 1))
-                return True
-        self.card.burster = Late()
-        self.card.burster.effect = None
-        self.assertTrue(self.burst(shapes=shapes))
-        self.assertEqual(shapes, [])
-
-    def test_no_burst_without_what_it_needs(self):
-        self.assertFalse(self.burst(origin=None))
-        self.skin_.shown = "studio"                 # no such card
-        self.assertFalse(self.burst())
-        self.skin_.shown = "tools"
-        self.edge_state["edge"] = None
-        self.assertFalse(self.burst())
-        hub._SKIN = None
-        self.assertFalse(self.burst())
-        self.assertEqual(self.made_bursters, [])
-
-
 class RailFocus(HubCase):
     """focus(key) on the edge rail (2026-10-17/18): a click brings that card
-    out of its icon; the card already out goes back into it."""
+    out; the card already out goes back (no motion since 2026-11-19)."""
 
     def setUp(self):
         super(RailFocus, self).setUp()
@@ -1021,7 +870,7 @@ class RailFocus(HubCase):
     def test_a_click_brings_the_card_out_of_its_icon(self):
         self.cmds.optionvars[edgerules.HEIGHT_VAR + "tools"] = 410
         self.assertEqual(hub.focus("tools"), "toolsCard")
-        self.assertEqual(self.edge.reveals, [self.centre()])
+        self.assertEqual(self.edge.reveals, [None])
         skin = hub._SKIN
         self.assertIn(("show_card", "tools", False), skin.calls)
         self.assertEqual(skin.named("set_active"), [("tools",)])
@@ -1031,22 +880,22 @@ class RailFocus(HubCase):
     def test_a_click_on_the_card_out_sends_it_back(self):
         hub.focus("tools")
         self.assertIsNone(hub.focus("tools"))
-        self.assertEqual(self.edge.conceals, [self.centre()])
+        self.assertEqual(self.edge.conceals, [None])
 
-    def test_a_card_without_an_icon_comes_out_at_the_cursor(self):
+    def test_a_card_without_an_icon_comes_out_too(self):
         with mock.patch.object(hub, "_cursor", return_value=(1, 2)):
             hub.focus("studio")
-        self.assertEqual(self.edge.reveals, [(1, 2)])
+        self.assertEqual(self.edge.reveals, [None])
 
     def test_a_key_with_no_card_is_nothing(self):
         self.assertIsNone(hub.focus("nonsense"))
         self.assertEqual(self.edge.reveals, [])
 
-    def test_the_card_s_close_and_popout_fold_into_the_cursor(self):
+    def test_the_card_s_close_and_popout_send_it_back(self):
         hub.focus("tools")
         with mock.patch.object(hub, "_cursor", return_value=(7, 8)):
             hub._press_rail_close("tools")
-        self.assertEqual(self.edge.conceals, [(7, 8)])
+        self.assertEqual(self.edge.conceals, [None])
         hub.focus("tools")
         presented = []
         with mock.patch.object(hub, "_cursor", return_value=(9, 10)), \
@@ -1056,7 +905,7 @@ class RailFocus(HubCase):
                         (key, origin)) or True)):
             self.assertTrue(hub._press_popout("tools"))
         self.assertEqual(presented, [("tools", (9, 10))])
-        self.assertEqual(self.edge.conceals[-1], (9, 10))
+        self.assertEqual(self.edge.conceals[-1], None)
 
     def test_a_popout_of_another_card_leaves_the_rail_out(self):
         hub.focus("tools")
@@ -1092,8 +941,8 @@ class FocusInTheDock(HubCase):
                 self.collapsed.append((value, animate))
         skin.cards = {"characters": Card(), "weapons": Card()}
         hub.focus("armor")
-        self.assertEqual(skin.cards["characters"].collapsed, [(True, True)])
-        self.assertEqual(skin.cards["weapons"].collapsed, [(False, True)])
+        self.assertEqual(skin.cards["characters"].collapsed, [(True, False)])
+        self.assertEqual(skin.cards["weapons"].collapsed, [(False, False)])
         self.assertEqual(self.cmds.optionvars[hub.OPTIONVAR.format(
             "characters")], 1)
         self.assertEqual(self.cmds.optionvars[hub.OPTIONVAR.format(

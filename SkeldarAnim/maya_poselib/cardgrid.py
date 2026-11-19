@@ -21,17 +21,9 @@ double-click applies, the right button runs the window's `context_actions`; a LE
 does a release that never arrives (`lost_release`: the next move without the button held - an
 Alt+Tab or a modal dialog mid-drag - ends the drag and cancels the blend, said).
 
-**The card under the mouse grows twice its size** (2026-10-03, the animator: «при наведении на
-карточку позы ... карточка увеличивалась в двое»): over its neighbours, about its own centre,
-moved inside the viewport rather than cut (`look.zoom_rect`), eased in `look.ZOOM_IN_MS` and out
-in `look.ZOOM_OUT_MS` (`look.Zoom`, one per card while it is above the grid; at once with ⋮ →
-Interface animations off). Lifted, it stands on a plate with a soft drop shadow and its picture
-is read at twice the card's side. Which card grows is read off the grid's PLACES alone
-(`index_at`, the same answer a press gets): the mouse over a neighbour's place grows the
-neighbour even where the grown card covers it, and the one growing is drawn on top, so the card
-on top is the card a press acts on; a gap between places grows nothing. A 16 ms timer
-runs only while a card grows or shrinks, each tick repainting only what the moving cards can
-cover (`_reach`). Spec: docs/superpowers/specs/2026-10-03-pose-card-hover-zoom-design.md
+The card under the mouse takes the hover face, flat, in its own place (`index_at`, the same
+answer a press gets): the twice-its-size zoom of 2026-10-03 is gone (2026-11-19, «удаляем все
+подсветки и анимации ... интерфейс должен быть максимально легким»).
 
 **An animation card plays on hover** (2026-10-03, the animator: «Карточки с сохраненной
 анимацией должны проигрывать превью этой анимации»): it wears a badge on its picture - the play
@@ -45,8 +37,8 @@ review, S9). A sheet is decoded ONCE (`sheet`: the image and the grid its header
 `sheet_info`) and the last `SHEETS` are kept, keyed by the file's time and size, so a sheet
 written again is read again; each cell is drawn straight out of it, scaled at paint time. The
 cost is the hovered card alone: a `look.PLAY_MS` timer (`play_timer`) runs only while the card
-under the mouse is an animation with a readable sheet, and repaints only what that card covers
-(`_reach`); a pose card, a leave, a drag, the canvas hiding stop it. The window's details
+under the mouse is an animation with a readable sheet, and repaints only that card (`_dirty`);
+a pose card, a leave, a drag, the canvas hiding stop it. The window's details
 picture plays through `preview_frame` (the same sheet, the cell at a time, scaled to a side).
 
 What the canvas asks of its `panel` (the window; the tests hand in the real one): `k`, `scene`
@@ -74,12 +66,6 @@ CANCELLED = "cancelled"
 # next move with the button no longer held says so, and the window losing focus does too
 LOST_DRAG = "the button was let go elsewhere - the drag cancelled"
 LOST_BLEND = "the button was let go elsewhere - the blend cancelled, every value back"
-
-ZOOM_TICK_MS = 16       # the grow / shrink frame
-SHADOW = 12             # logical px the grown card's shadow reaches (at 1x; it grows with it) ...
-SHADOW_DROP = 4         # ... how far down it falls ...
-SHADOW_ALPHA = 0.32     # ... and how dark it is at the card's edge
-SHADOW_RINGS = 8
 
 #  The animation cards: how many preview sheets stay decoded (one 60-cell sheet of 320 px cells
 #  is 2560 x 2240 px - about 23 MB decoded - so a few, never the library's); the badge's font
@@ -116,24 +102,9 @@ def sheet_info(raw):
     return info
 
 
-def _animations():
-    """The hub menu's Interface animations (maya_hubmotion): the zoom eases only with them on.
-    A seam the tests replace."""
-    try:
-        import maya_hubmotion
-        return maya_hubmotion.enabled()
-    except Exception:                                        # noqa: BLE001
-        return True
-
-
 def _last_line(error_text):
     lines = [line for line in (error_text or "").strip().splitlines() if line.strip()]
     return lines[-1] if lines else "failed"
-
-
-def zoom_side(side):
-    """The picture side a grown card reads: twice the grid's."""
-    return int(round(side * look.ZOOM))
 
 
 #  The cards of a row share the pane's width (look.grid, 2026-10-09), so their side changes by
@@ -214,16 +185,11 @@ def _classes():
             self.pixmaps = {}
             self._clock = QtCore.QElapsedTimer()
             self._clock.start()
-            #  card path -> look.Zoom while the card grows, stands grown or shrinks; `_where`
-            #  the card's index by path (a re-read keeps the hover and the zooms by path)
-            self._zooms = {}
+            #  the card's index by path (a re-read keeps the hover by path)
             self._where = {}
             self._fonts = {}
-            self._zoom_clock = QtCore.QElapsedTimer()
-            self._zoom_clock.start()
-            self.zoom_timer = QtCore.QTimer(self)
-            self.zoom_timer.setInterval(ZOOM_TICK_MS)
-            self.zoom_timer.timeout.connect(self._tick)
+            self._play_clock = QtCore.QElapsedTimer()
+            self._play_clock.start()
             #  the animation cards: card path -> (the sheet file's (time, size), (the decoded
             #  sheet, its grid) or None) for the last SHEETS read, the oldest first; the card
             #  playing under the mouse and when it began (on `_now`'s clock); the last cell
@@ -255,10 +221,6 @@ def _classes():
             paints the viewport's background below the last row)."""
             self.listing = look.is_list(self.cell)
             if self.listing:
-                #  a row grows under nobody: the zooms go with the grid
-                for path in list(self._zooms):
-                    del self._zooms[path]
-                self.zoom_timer.stop()
                 _cols, self._rects, height = look.rows(width, len(self.cards), self.k)
                 grid = set()
             else:
@@ -267,10 +229,8 @@ def _classes():
                 grid = set(rect[2] for rect in self._rects)
             #  the cache holds the sizes in use: the cards' at their CACHE_STEP (the cards
             #  follow the pane's width, so a dragged splitter would otherwise leave a size per
-            #  pixel), twice those (the card under the mouse), the details', the ghost's and a
-            #  row's picture
+            #  pixel), the details', the ghost's and a row's picture
             sides = set(cache_side(side) for side in grid)
-            sides.update(cache_side(zoom_side(side)) for side in grid)
             sides.update((self.panel.thumb_side(), int(look.GHOST * self.k),
                           self.row_side()))
             for key in [key for key in self.pixmaps if key[1] not in sides]:
@@ -291,16 +251,14 @@ def _classes():
                 self.fit(viewport.width(), viewport.height())
 
         def set_cards(self, cards, empty_text=""):
-            """The cards to show. The card under the mouse keeps the hover - and every card its
-            zoom - by path; a card no longer listed loses both. A card playing under the mouse
-            plays on, from where it was."""
+            """The cards to show. The card under the mouse keeps the hover by path; a card no
+            longer listed loses it. A card playing under the mouse plays on, from where it
+            was."""
             hovered = self._hovered_path()
             self.cards = list(cards)
             self._where = dict((one.path, index) for index, one in enumerate(self.cards))
             self.empty_text = empty_text
             self._hover = self._where.get(hovered)
-            for path in [path for path in self._zooms if path not in self._where]:
-                del self._zooms[path]
             self._refit()
             self._sync_play()
 
@@ -477,11 +435,8 @@ def _classes():
             return self.pixmaps[key]
 
         def index_at(self, x, y):
-            """The card at (x, y) - always by its PLACE in the grid, never by a grown card's
-            tile (2026-10-03, the animator: «всегда на основе границ изначальной карточки»: a
-            grown card covering most of its neighbour kept the neighbour from growing). So the
-            card under the mouse is the one that grows, drawn on top, and the one a press acts
-            on; a gap between places is no card."""
+            """The card at (x, y), by its place in the grid; a gap between places is no
+            card."""
             return look.hit(self._rects, x, y, self.k, self.listing)
 
         def card_at(self, x, y):
@@ -492,11 +447,11 @@ def _classes():
             self.picked = path
             self.update()
 
-        # ------------------------------------------------------ the zoom
+        # ------------------------------------------------------ the hover
 
         def _now(self):
-            """Milliseconds on the zoom's clock (a seam the tests replace)."""
-            return self._zoom_clock.elapsed()
+            """Milliseconds on the preview's clock (a seam the tests replace)."""
+            return self._play_clock.elapsed()
 
         def _hovered_path(self):
             hover = self._hover
@@ -504,105 +459,29 @@ def _classes():
                 return None
             return self.cards[hover].path
 
-        def view(self):
-            """(x, y, w, h): the part of the canvas the scroll area's viewport shows - the
-            whole canvas without one."""
-            scroll = self.panel.scroll
-            viewport = scroll.viewport() if scroll is not None else None
-            if viewport is None:
-                return (0, 0, self.width(), self.height())
-            return (-self.x(), -self.y(), viewport.width(), viewport.height())
-
-        def _target(self, index):
-            return look.zoom_rect(self._rects[index], self.view(), self.k)
-
-        def shown(self, index, now=None):
-            """(tile, z): where the card at `index` is drawn - its square and name strip, and
-            how many times larger than its place in the grid (1 at rest)."""
-            rect = self._rects[index]
-            zoom = self._zooms.get(self.cards[index].path)
-            level = zoom.level(self._now() if now is None else now) if zoom else 0.0
-            if level <= 0:
-                return look.tile_rect(rect, self.k), 1.0
-            return look.zoom_at(rect, self._target(index), level, self.k)
-
-        def lifted_order(self, now=None):
-            """[(path, zoom)] of the cards above the grid, in drawing order: the ones shrinking
-            first, the card under the mouse last - on top."""
-            now = self._now() if now is None else now
-            hovered = self._hovered_path()
-            order = [(path, zoom) for path, zoom in self._zooms.items()
-                     if path != hovered and path in self._where and zoom.lifted(now)]
-            zoom = self._zooms.get(hovered)
-            if zoom is not None and zoom.lifted(now):
-                order.append((hovered, zoom))
-            return order
-
-        def _reach(self, index):
-            """What the card at `index` can cover while it grows and shrinks, its shadow
-            included: its own tile and its grown one, padded."""
-            ox, oy, ow, oh = look.tile_rect(self._rects[index], self.k)
-            (gx, gy, gw, gh), _z = self._target(index)
-            x0, y0 = min(ox, gx), min(oy, gy)
-            x1, y1 = max(ox + ow, gx + gw), max(oy + oh, gy + gh)
-            pad = (SHADOW + SHADOW_DROP) * self.k * look.ZOOM + 2
-            return QtCore.QRect(int(x0 - pad), int(y0 - pad), int(x1 - x0 + 2 * pad) + 2,
-                                int(y1 - y0 + 2 * pad) + 2)
-
         def _dirty(self, path):
+            """Only the card at `path` repainted: its tile (a row in the list), padded."""
             index = self._where.get(path)
             if index is not None and index < len(self._rects):
-                if self.listing:
-                    x, y, w, h = self._rects[index]
-                    self.update(QtCore.QRect(int(x) - 2, int(y) - 2, int(w) + 4, int(h) + 4))
-                else:
-                    self.update(self._reach(index))
+                rect = self._rects[index]
+                x, y, w, h = rect if self.listing else look.tile_rect(rect, self.k)
+                self.update(QtCore.QRect(int(x) - 2, int(y) - 2, int(w) + 4, int(h) + 4))
 
         def _set_hover(self, index):
-            """The card under the mouse is `index` (None for none): the one before shrinks, this
-            one grows - eased, or at once with the animations off - and plays its preview when
-            it has one (`_sync_play`)."""
+            """The card under the mouse is `index` (None for none): the one before and this one
+            repainted (the hover face), and it plays its preview when it has one
+            (`_sync_play`)."""
             if index == self._hover:
                 return
-            now, animate = self._now(), _animations()
             old, self._hover = self._hover, index
-            for one, target in ((old, 0.0), (index, 1.0)):
-                if one is None or one >= len(self.cards):
-                    continue
-                path = self.cards[one].path
-                if self.listing:                     # a row is lit, never grown
-                    self._dirty(path)
-                    continue
-                zoom = self._zooms.get(path)
-                if zoom is None and target > 0:
-                    zoom = self._zooms[path] = look.Zoom()
-                if zoom is not None:
-                    zoom.to(target, now, animate)
-                self._dirty(path)
-            self._prune(now)
-            if any(zoom.moving(now) for zoom in self._zooms.values()):
-                if not self.zoom_timer.isActive():
-                    self.zoom_timer.start()
+            for one in (old, index):
+                if one is not None and one < len(self.cards):
+                    self._dirty(self.cards[one].path)
             self._sync_play()
 
-        def _prune(self, now):
-            for path in [path for path, zoom in self._zooms.items() if not zoom.lifted(now)]:
-                del self._zooms[path]
-                self._dirty(path)
-
-        def _tick(self):
-            """One frame of the zoom: every lifted card repainted, the settled ones dropped, the
-            timer stopped once nothing moves."""
-            now = self._now()
-            for path in list(self._zooms):
-                self._dirty(path)
-            self._prune(now)
-            if not any(zoom.moving(now) for zoom in self._zooms.values()):
-                self.zoom_timer.stop()
-
         def scrolled(self, _value=None):
-            """The scroll moved the cards under a still mouse: the card under it is read again
-            (a grown card's place in the viewport changed too)."""
+            """The scroll moved the cards under a still mouse: the card under it is read
+            again."""
             if not self._drag and self._mid is None and self.underMouse():
                 local = self.mapFromGlobal(QtGui.QCursor.pos())
                 self._set_hover(self.index_at(local.x(), local.y()))
@@ -611,7 +490,7 @@ def _classes():
         # ------------------------------------------------------ the drag
 
         def _start_drag(self, card, point):
-            self._set_hover(None)                    # the ghost takes over from the grown card
+            self._set_hover(None)                    # the ghost takes over from the card
             size = int(look.GHOST * self.k)
             picture = self.thumb(card.thumbnail, size) or QtGui.QPixmap()
             ghost = Ghost(picture, size, size, self.k, anchor=(0.5, 0.5), name=GHOST_NAME,
@@ -788,7 +667,7 @@ def _classes():
 
         def hideEvent(self, event):                          # noqa: N802
             """Hidden (the window closed, a docked tab behind another) with no Leave sent: no
-            card is under the mouse any more - none stays grown, none plays, and the play
+            card is under the mouse any more - none stays lit, none plays, and the play
             timer never ticks for a canvas nobody sees. A drag keeps its card."""
             QtWidgets.QWidget.hideEvent(self, event)
             if not self._drag:
@@ -818,33 +697,18 @@ def _classes():
                 self._fonts[key] = font(key[0], bold)
             return self._fonts[key]
 
-        def _shadow(self, p, tile, radius, z, strength):
-            """A soft drop shadow round the lifted card's `tile` (QRectF): rings of fading black
-            reaching SHADOW, fallen SHADOW_DROP, both at the card's `z`, faded in by
-            `strength` (its zoom level)."""
-            reach = SHADOW * self.k * z
-            drop = SHADOW_DROP * self.k * z
-            step = reach / SHADOW_RINGS
-            p.setBrush(Qt.NoBrush)
-            for ring in range(SHADOW_RINGS):
-                grow = (ring + 0.5) * step
-                alpha = SHADOW_ALPHA * strength * (1.0 - float(ring) / SHADOW_RINGS) ** 2
-                p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, int(round(255 * alpha))), step))
-                p.drawRoundedRect(tile.adjusted(-grow, drop - grow, grow, drop + grow),
-                                  radius + grow, radius + grow)
-
-        def _badge(self, p, card, box, z):
+        def _badge(self, p, card, box):
             """An animation card's badge - the play triangle and its frame count
             (`look.badge_text`) - in a dark pill inset into the square `box`'s bottom-right
-            corner, `z` times its size; nothing for a pose card or a clip of one frame."""
+            corner; nothing for a pose card or a clip of one frame."""
             text = look.badge_text(card.frames) if getattr(card, "type", "pose") == "anim" \
                 else ""
             if not text:
                 return
             k = self.k
-            badge_font = self._font(BADGE_FONT * k * z, True)
+            badge_font = self._font(BADGE_FONT * k, True)
             metrics = QtGui.QFontMetrics(badge_font)
-            pad = BADGE_PAD * k * z
+            pad = BADGE_PAD * k
             height = metrics.height() + pad * 0.5
             width = min(metrics.horizontalAdvance(text) + 2 * pad, box.width() - 2 * pad)
             pill = QtCore.QRectF(box.right() - pad - width, box.bottom() - pad - height,
@@ -856,58 +720,48 @@ def _classes():
             p.setPen(colour("text"))
             p.drawText(pill, Qt.AlignCenter, text)
 
-        def _paint_card(self, p, card, rect, tile, z, chosen, lit, lifted=0.0):
-            """The card whose grid square is `rect` drawn at `tile` (x, y, w, h: its square and
-            name strip), `z` times its size in the grid - every length grows with it. A
-            `lifted` card (its zoom level) stands on a plate of the canvas's own colour with a
-            shadow, over its neighbours, its picture read at twice the grid's side. The card
-            playing under the mouse shows its preview's cell in place of its still; an
-            animation card wears its badge."""
+        def _paint_card(self, p, card, rect, chosen, lit):
+            """The card whose grid square is `rect`, drawn in its tile (its square and name
+            strip, `look.tile_rect`). The card playing under the mouse shows its preview's cell
+            in place of its still; an animation card wears its badge."""
             k = self.k
-            tx, ty, tw, th = tile
+            tx, ty, tw, th = look.tile_rect(rect, k)
             box = QtCore.QRectF(tx, ty, tw, tw)
-            radius = 6 * k * z
-            if lifted > 0:
-                whole = QtCore.QRectF(tx, ty, tw, th)
-                self._shadow(p, whole, radius, z, lifted)
-                plate = QtGui.QPainterPath()
-                plate.addRoundedRect(whole, radius, radius)
-                p.fillPath(plate, colour("track"))
+            radius = 6 * k
             shape = QtGui.QPainterPath()
             shape.addRoundedRect(box, radius, radius)
             p.fillPath(shape, colour("card_active" if chosen else ("hover" if lit else "card")))
             p.save()
             p.setClipPath(shape)
             if not self._draw_playing(p, card, box):
-                picture = self.thumb(card.thumbnail, cache_side(
-                    zoom_side(rect[2]) if lifted > 0 else rect[2]))
+                picture = self.thumb(card.thumbnail, cache_side(rect[2]))
                 if picture is not None and not picture.isNull():
                     p.drawPixmap(box, picture, QtCore.QRectF(picture.rect()))
                 else:
                     self._missing(p, box)
-            self._badge(p, card, box, z)
+            self._badge(p, card, box)
             p.restore()
             if chosen:
-                self._stroke(p, box, radius, "accent", max(1.5, 2 * k) * z)
+                self._stroke(p, box, radius, "accent", max(1.5, 2 * k))
             elif lit:
-                self._stroke(p, box, radius, "text2", max(1.0, k) * z)
+                self._stroke(p, box, radius, "text2", max(1.0, k))
             else:
-                self._stroke(p, box, radius, "line", max(1.0, k) * z)
+                self._stroke(p, box, radius, "line", max(1.0, k))
 
             nx, ny, nw, nh = tx, ty + tw, tw, th - tw
             half = float(int(nh // 2))
-            name_font = self._font(11.5 * k * z, chosen)
-            chip_font = self._font(9.5 * k * z)
+            name_font = self._font(11.5 * k, chosen)
+            chip_font = self._font(9.5 * k)
             p.setFont(name_font)
             p.setPen(colour("text" if chosen else "text2"))
             text = QtGui.QFontMetrics(name_font).elidedText(card.name, Qt.ElideRight, int(nw))
             p.drawText(QtCore.QRectF(nx, ny, nw, half), Qt.AlignHCenter | Qt.AlignVCenter, text)
             chip = card.label or card.kind
             metrics = QtGui.QFontMetrics(chip_font)
-            chip = metrics.elidedText(chip, Qt.ElideRight, int(nw - 10 * k * z))
-            chip_w = min(float(nw), metrics.horizontalAdvance(chip) + int(10 * k * z))
-            pill = QtCore.QRectF(nx + (nw - chip_w) / 2.0, ny + half + k * z,
-                                 chip_w, max(1.0, nh - half - 3 * k * z))
+            chip = metrics.elidedText(chip, Qt.ElideRight, int(nw - 10 * k))
+            chip_w = min(float(nw), metrics.horizontalAdvance(chip) + int(10 * k))
+            pill = QtCore.QRectF(nx + (nw - chip_w) / 2.0, ny + half + k,
+                                 chip_w, max(1.0, nh - half - 3 * k))
             p.setPen(Qt.NoPen)
             p.setBrush(colour("strip"))
             p.drawRoundedRect(pill, pill.height() / 2.0, pill.height() / 2.0)
@@ -982,7 +836,6 @@ def _classes():
         def paintEvent(self, event):                         # noqa: N802
             k = self.k
             area = event.rect()
-            now = self._now()
             p = QtGui.QPainter(self)
             p.fillRect(area, colour("track"))
             if self.listing:
@@ -1009,26 +862,11 @@ def _classes():
                 p.setPen(colour("muted"))
                 p.drawText(self.rect().adjusted(int(16 * k), int(16 * k), -int(16 * k), 0),
                            Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap, self.empty_text)
-            lifted = [(path, zoom, zoom.level(now)) for path, zoom in self.lifted_order(now)]
-            above = set(path for path, _zoom, level in lifted if level > 0)
             for index in look.visible(self._rects, area.top(), area.bottom() + 1, k):
                 card, rect = self.cards[index], self._rects[index]
-                if card.path in above:
-                    continue                         # drawn over the grid below
                 chosen = card.path == self.picked
                 lit = index == self._hover and not chosen
-                self._paint_card(p, card, rect, look.tile_rect(rect, k), 1.0, chosen, lit)
-            for path, _zoom, level in lifted:
-                index = self._where.get(path)
-                if level <= 0 or index is None or index >= len(self._rects):
-                    continue
-                if not area.intersects(self._reach(index)):
-                    continue
-                card, rect = self.cards[index], self._rects[index]
-                tile, z = self.shown(index, now)
-                chosen = card.path == self.picked
-                lit = index == self._hover and not chosen
-                self._paint_card(p, card, rect, tile, z, chosen, lit, lifted=level)
+                self._paint_card(p, card, rect, chosen, lit)
             p.end()
 
     class CardScroll(QtWidgets.QScrollArea):

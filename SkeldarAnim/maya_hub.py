@@ -25,7 +25,7 @@ And its second home (2026-10-08, the animator: «когда я подношу м
 левому краю экрана то появляется наша полка когда убираю то полка
 скрывается»): ⋮ -> Edge panel (off by default, remembered) builds the skin
 into `maya_hubedge`'s panel at the screen's left edge instead of the dock -
-the dock's control is deleted, `show(key)` slides the panel out on that card
+the dock's control is deleted, `show(key)` brings the panel out on that card
 and holds it, `start()` is the startup plug-in's call (the panel waiting,
 hidden), and a card's status while the panel is hidden is also Maya's
 viewport message. Only the skin lives there: Classic look takes the hub back
@@ -463,14 +463,12 @@ def _callbacks():
         "layout": set_layout,
         "toggled": remember,
         #  a card's ⧉ (2026-10-09; since 2026-10-18 the section's floating
-        #  window bursts out of the press, the edge's card folding into it)
+        #  window, the edge's card going back to the rail)
         "popout": _press_popout,
         #  a windowed card's ✕ (the edge rail, 2026-10-18)
         "close": _press_rail_close,
         "told": _told,
-        "hover": _hover_sound,
         "sounds": set_sounds,
-        "animations": set_animations,
         #  Maya in the hub's colours (2026-10-17, maya_mayatheme)
         "mayatheme": set_mayatheme,
         #  Maya's icons in the hub's style (2026-10-17, maya_mayaicons)
@@ -481,9 +479,6 @@ def _callbacks():
         "mainbar": set_mainbar,
         #  a character's own camera puts it in 1P (2026-10-22, maya_camview)
         "camview": set_camview,
-        #  only the window under the mouse lit (2026-10-23, maya_windowlight)
-        "windowlight": set_windowlight,
-        "windowlight_maya": set_windowlight_maya,
         #  Use Skeldar / Use Maya interface (2026-10-19, maya_interface)
         "interface": set_interface,
         #  the Time Bar (2026-10-16): ours in place of Maya's time slider
@@ -545,13 +540,11 @@ def _dress_header(skin):
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
     _dress_sounds(skin)
-    _dress_animations(skin)
     _dress_mayatheme(skin)
     _dress_mayaicons(skin)
     _dress_viewportbar(skin)
     _dress_mainbar(skin)
     _dress_camview(skin)
-    _dress_windowlight(skin)
     _dress_timebar(skin)
     _dress_sidepanel(skin)
     _dress_interface(skin)
@@ -599,17 +592,6 @@ def _dress_sounds(skin):
         print(traceback.format_exc())
 
 
-def _dress_animations(skin):
-    """The menu's Interface animations row = the switch (2026-10-01: the
-    cards slide, a jump glides; maya_hubmotion's optionVar, on by
-    default)."""
-    try:
-        import maya_hubmotion
-        skin.paint_animations(maya_hubmotion.enabled())
-    except Exception:                                        # noqa: BLE001
-        print(traceback.format_exc())
-
-
 def _dress_mayatheme(skin):
     """The menu's Maya theme row = the switch (off by default)."""
     try:
@@ -633,16 +615,6 @@ def _dress_mainbar(skin):
     try:
         import maya_mainbar
         skin.paint_mainbar(maya_mainbar.enabled())
-    except Exception:                                        # noqa: BLE001
-        print(traceback.format_exc())
-
-
-def _dress_windowlight(skin):
-    """The menu's Window light rows = the two switches (both on by default)."""
-    try:
-        import maya_windowlight
-        skin.paint_windowlight(maya_windowlight.enabled(),
-                               maya_windowlight.maya_enabled())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -746,6 +718,10 @@ def _build_skin(host=None, kind=None, windowed=False):
             if setter is not None:
                 setter(skin, card_height(current()), scale)
         skin.finish(hubstyle.stylesheet(scale, arrow=_arrow(qt)))
+        #  no field holds the keyboard until it is clicked (2026-11-19)
+        quiet = getattr(qt, "quiet_focus", None)
+        if quiet is not None:
+            quiet(skin.root)
     except Exception:
         hubstyle.take_marks()
         skin.destroy()
@@ -775,7 +751,7 @@ def build():
     _viewport_bar_soon()
     _main_bar_soon()
     _camview_soon()
-    _windowlight_soon()
+    _retire_window_light()
     _hotkeys_soon()
     _maya_theme_soon()
     _maya_icons_soon()
@@ -976,20 +952,24 @@ def _crash_log():
         pass
 
 
-def _windowlight_soon():
-    """The window under the mouse lit (2026-10-23) while the switch is on.
-    Deferred and guarded."""
-    if cmds.about(batch=True):
+def _retire_window_light():
+    """The window light is gone (2026-11-19, «удаляем все подсветки и анимации
+    из плагина»), but a watch an older build started stands on `sys` until
+    Maya closes - an install purges modules, not the timers they started. It
+    is stopped here, so an update takes the light away at once."""
+    state = getattr(sys, "_skeldar_windowlight", None)
+    if state is None:
         return
-
-    def start():
-        try:
-            import maya_windowlight
-            maya_windowlight.ensure()
-        except Exception:                                    # noqa: BLE001
-            print("SkeldarAnim: the window light could not start")
-            print(traceback.format_exc())
-    cmds.evalDeferred(start, lowestPriority=True)
+    light = state.get("light") if isinstance(state, dict) else None
+    try:
+        if light is not None:
+            light.stop()
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+    try:
+        delattr(sys, "_skeldar_windowlight")
+    except AttributeError:
+        pass
 
 
 def _camview_soon():
@@ -1066,8 +1046,8 @@ def drop_skin():
     """The skin destroyed and forgotten, the control left standing (2026-11-02).
 
     What `rebuild` does before it builds again, on its own: `maya_shutdown` calls it
-    when Maya is closing, so the skin's cards, its graphics effects and its
-    application-wide hover watcher go while Python can still run their teardown.
+    when Maya is closing, so the skin's cards go while Python can still run
+    their teardown.
     The workspaceControl is deliberately NOT deleted - Maya saves the workspace at
     exit, and a deleted control would not come back at the next start."""
     global _SKIN
@@ -1259,7 +1239,6 @@ def _ensure_edge():
         current = he.Edge(scale=_scale(), width=_edge_width(),
                           on_width=_save_edge_width, side=edge_side(),
                           rail=True, rest=_rail_rest, shape=_rail_shape,
-                          burst=_rail_burst, burst_stop=_rail_burst_stop,
                           card=_rail_card, on_height=_rail_height,
                           least=_rail_least)
         he.state()["edge"] = current
@@ -1280,7 +1259,7 @@ def _ensure_edge():
         _viewport_bar_soon()
         _main_bar_soon()
         _camview_soon()
-        _windowlight_soon()
+        _retire_window_light()
         _hotkeys_soon()
         _maya_theme_soon()
         _maya_icons_soon()
@@ -1320,77 +1299,9 @@ def _rail_shape():
     return _hubqt().card_shape(_SKIN, current.host)
 
 
-def _rail_burst_stop():
-    """Stop every rail card's burst (the edge moves without one)."""
-    if _SKIN is None:
-        return
-    for card in list(_SKIN.cards.values()):
-        running = getattr(card, "burster", None)
-        if running is not None:
-            try:
-                running.stop()
-            except RuntimeError:
-                pass
-
-
-def _rail_burst(showing, origin, done, on_shape):
-    """The edge rail's card bursting out of global `origin`, or folding into it
-    (2026-10-18, spec 2026-10-18-floating-windows § 4, 5): the window's Burster
-    (maya_hubwindow) on the card's look-B frame, held on the card. `on_shape`
-    hears the shape in the edge host's coordinates. False when it cannot run:
-    the hub not skinned, no card shown, no origin, no edge, or the Burster
-    refusing (its own rule: animations off, no frame, a failure) - the edge
-    then slides as before. Any other card's burst still running is stopped
-    (a fold of the card before, review 2026-10-18)."""
-    if not is_skinned() or origin is None or _SKIN.shown not in _SKIN.cards:
-        return False
-    current = edge()
-    if current is None:
-        return False
-    import maya_hubburst
-    import maya_hubwindow
-    qt = _hubqt()
-    card = _SKIN.cards[_SKIN.shown]
-    for other in _SKIN.cards.values():
-        running = getattr(other, "burster", None)
-        if other is not card and running is not None:
-            try:
-                running.stop()
-            except RuntimeError:
-                pass
-    frame, host = card.frame, current.host
-    burster = getattr(card, "burster", None)
-    if burster is None:
-        burster = maya_hubwindow.Burster(
-            frame, lambda: qt.card_parts(_SKIN, card),
-            lambda: maya_hubburst.blend(hubstyle.TOKENS["card"],
-                                        hubstyle.TOKENS["card_active"],
-                                        getattr(card.frame, "level", 0.0)),
-            _SKIN.scale)
-        card.burster = burster
-    elif burster.effect is not None:
-        #  an effect something else replaced on the frame is dead: a new one
-        try:
-            if frame.graphicsEffect() is not burster.effect:
-                burster.effect = None
-        except RuntimeError:
-            burster.effect = None
-    q = qt.qt()
-
-    def to_host(shape):
-        x0, y0, x1, y1 = shape
-        try:
-            at = frame.mapTo(host, q.QtCore.QPoint(0, 0))
-        except RuntimeError:
-            return
-        on_shape((x0 + at.x(), y0 + at.y(), x1 + at.x(), y1 + at.y()))
-
-    return burster.run(showing, origin, done, on_tick=to_host)
-
-
 def _jump_point(key):
-    """The global centre of the rail icon of section `key`, or None (2026-10-18:
-    the rail's card bursts out of the icon pressed and folds back into it)."""
+    """The global centre of the rail icon of section `key`, or None: where a
+    window toggled from its icon (the chat) stands near."""
     if not is_skinned() or key is None:
         return None
     try:
@@ -1533,7 +1444,7 @@ def set_edge_side(choice):
 def _move_edge():
     """The deferred half of `set_edge_side` with the mode on. The last press
     wins (the side remembered when this runs): the panel standing moves
-    there and slides out held, so the animator sees where it went; the side
+    there and comes out held, so the animator sees where it went; the side
     it already stands on changes nothing. None standing (it failed earlier,
     or this session never built it): built on that side and shown the same
     way; failing, the dock."""
@@ -1562,7 +1473,7 @@ def _switch_edge(on):
         if not edge_on():
             return None
         #  2026-10-08 (the spec): the docked hub closes, the panel is built
-        #  and slides out once, so the animator sees where the hub went
+        #  and comes out once, so the animator sees where the hub went
         _drop_dock()
         stop()
         try:
@@ -1619,7 +1530,7 @@ def _rebuild_edge():
     the classic one after ⋮ -> Switch to the new look) gone, a new one
     built. One that was out comes out again - the animator was working in
     it (an install from the Update card) - and the pin, per session, stays;
-    the hub arriving from the dock slides out as a switch does."""
+    the hub arriving from the dock comes out as a switch does."""
     current = edge()
     shown = bool(current is not None and current.shown)
     pinned = bool(current is not None and getattr(current, "pinned", False))
@@ -1665,10 +1576,7 @@ def _show_edge(key):
         return None
     if key:
         expand(key)
-    #  the card bursts out of its rail icon (2026-10-18): the card first, so
-    #  the burst runs on the one that shows
-    current.reveal(hold=True,
-                   origin=_jump_point(key or getattr(_SKIN, "shown", None)))
+    current.reveal(hold=True)
     return current
 
 
@@ -1723,11 +1631,10 @@ def _rail_edge_out(key=None):
 
 def _press_popout(key):
     """A card's ⧉ (2026-10-18, «карточка уходит в окно»): the section's
-    floating window bursts out of the press (maya_hubpop.present: a window
-    standing is raised and flashes, no copy made); on the edge rail the card
-    folds into the same point at the same time and the rail goes back to rest.
-    The card's ⧉ is lit while the window stands (`paint_popped`, told by
-    maya_hubpop itself)."""
+    floating window by the press (maya_hubpop.present: a window standing is
+    raised, no copy made); on the edge rail the card goes and the rail is back
+    at rest. The card's ⧉ is lit while the window stands (`paint_popped`, told
+    by maya_hubpop itself)."""
     import maya_hubpop
     point = _cursor()
     current = _rail_edge_out(key)
@@ -1739,16 +1646,16 @@ def _press_popout(key):
             "details")
         return False
     if current is not None:
-        current.conceal(origin=point)
+        current.conceal()
     return opened
 
 
 def _press_rail_close(key):
-    """The edge rail card's ✕ (2026-10-18): the card folds into the point
-    pressed and the rail goes back to rest."""
+    """The edge rail card's ✕ (2026-10-18): the card goes and the rail is back
+    at rest."""
     current = _rail_edge_out(key)
     if current is not None:
-        current.conceal(origin=_cursor())
+        current.conceal()
     return None
 
 
@@ -1873,29 +1780,12 @@ def chip_state(state):
     return state
 
 
-def _hover_sound():
-    """The mouse entered a button of the skin (maya_hubqt.sounding). Silent
-    since 2026-10-22: the hover tick was taken out for the animator's own
-    drag and delete sounds."""
-    return False
-
-
 def set_sounds(on):
     """The menu's Interface sounds: switched, remembered, the row painted."""
     import maya_hubsound
     on = maya_hubsound.set_enabled(on)
     if is_skinned():
         _SKIN.paint_sounds(on)
-    return on
-
-
-def set_animations(on):
-    """The menu's Interface animations: switched, remembered, the skin
-    told (off = every card and every jump instant, as before)."""
-    import maya_hubmotion
-    on = maya_hubmotion.set_enabled(on)
-    if is_skinned():
-        _SKIN.paint_animations(on)
     return on
 
 
@@ -1938,29 +1828,6 @@ def set_mainbar(on):
     message = maya_mainbar.set_enabled(on)
     if is_skinned():
         _SKIN.paint_mainbar(maya_mainbar.enabled())
-    say(message)
-    return message
-
-
-def set_windowlight(on):
-    """⋮ -> Window light (2026-10-23): only the window under the mouse is lit."""
-    import maya_windowlight
-    message = maya_windowlight.set_enabled(on)
-    if is_skinned():
-        _SKIN.paint_windowlight(maya_windowlight.enabled(),
-                                maya_windowlight.maya_enabled())
-    say(message)
-    return message
-
-
-def set_windowlight_maya(on):
-    """⋮ -> Light Maya's windows (2026-10-23): Outliner, Graph Editor and the
-    rest light under the mouse too."""
-    import maya_windowlight
-    message = maya_windowlight.set_maya_enabled(on)
-    if is_skinned():
-        _SKIN.paint_windowlight(maya_windowlight.enabled(),
-                                maya_windowlight.maya_enabled())
     say(message)
     return message
 
@@ -2174,7 +2041,7 @@ def show(key=None):
     """Open the hub (or raise it) and, given a section key, expand that
     section. The shelf button and every tool's `show_window`.
 
-    In edge mode (2026-10-08) the edge panel slides out on that section and
+    In edge mode (2026-10-08) the edge panel comes out on that section and
     stays until visited (`_show_edge`). Docked with an edge panel still
     standing (a switch on its way), the panel goes first - deferred, the
     call may come from a control inside it - or two skins would answer to
@@ -2210,7 +2077,7 @@ def show(key=None):
 def focus(key):
     """A header jump's press: section `key` opened and every other card
     closed (2026-09-28: «при нажатии на верхнюю панель с разделами все другие
-    панели должны закрыться и открыться только нужная»), remembered so, lit,
+    панели должны закрыться и открыться только нужная»), remembered so, marked,
     scrolled to. Outside the skin it is `expand`."""
     key = ALIASES.get(key, key)
     if key in WINDOW_SECTIONS and is_skinned():
@@ -2222,20 +2089,18 @@ def focus(key):
     current = edge()
     if current is not None and getattr(current, "rail", False) and _skin_at(current):
         #  the rail at the viewport's side (2026-10-17): a click brings that
-        #  card out; the card already out, the click sends it back. Since
-        #  2026-10-18 it bursts out of the icon pressed and folds back into it
-        point = _jump_point(key) or _cursor()
+        #  card out; the card already out, the click sends it back
         if current.shown and _SKIN.shown == key:
-            current.conceal(origin=point)
+            current.conceal()
             return None
-        card = _show_on_rail(key, animate=False)       # the burst is the motion
-        current.reveal(origin=point)
+        card = _show_on_rail(key)
+        current.reveal()
         return card
     if _rail():
         return _show_on_rail(key)
     for other, card in _SKIN.cards.items():
         if other != key:
-            card.set_collapsed(True, animate=True)
+            card.set_collapsed(True)
             remember(other, True)
     return expand(key)
 
@@ -2253,11 +2118,10 @@ def expand(key):
             return None
         if _rail():
             return _show_on_rail(key)
-        card.set_collapsed(False, animate=True)
+        card.set_collapsed(False)
         _SKIN.set_active(key)
         remember(key, False)
-        cmds.evalDeferred(lambda: scroll_to(key, animate=True),
-                          lowestPriority=True)
+        cmds.evalDeferred(lambda: scroll_to(key), lowestPriority=True)
         return card
     if cmds.frameLayout(sec.frame, exists=True):
         cmds.frameLayout(sec.frame, edit=True, collapse=False)
@@ -2268,11 +2132,10 @@ def expand(key):
     return sec.frame
 
 
-def _show_on_rail(key, animate=True):
-    """The rail layout: card `key` the one shown, lit, remembered - no other
-    card closed and no collapse remembered (the rail has none). `animate`: it
-    fades in (the docked rail; the edge's card bursts instead)."""
-    card = _SKIN.show_card(key, animate=animate)
+def _show_on_rail(key):
+    """The rail layout: card `key` the one shown, marked current, remembered -
+    no other card closed and no collapse remembered (the rail has none)."""
+    card = _SKIN.show_card(key)
     if card is None:
         return None
     if edge() is not None and getattr(_SKIN, "windowed", False):
@@ -2283,15 +2146,14 @@ def _show_on_rail(key, animate=True):
     return card
 
 
-def scroll_to(key, animate=False):
-    """Scroll so section `key` starts at the top -- in the skin gliding when
-    `animate` (the animator's move; maya_hubqt.Skin.scroll_to). Best effort:
-    a control that is not there any more just skips it."""
+def scroll_to(key):
+    """Scroll so section `key` starts at the top, at once. Best effort: a
+    control that is not there any more just skips it."""
     key = ALIASES.get(key, key)
     sec = section(key)
     try:
         if is_skinned():
-            return _SKIN.scroll_to(key, animate=animate)
+            return _SKIN.scroll_to(key)
         if not cmds.scrollLayout(SCROLL, exists=True):
             return None
         frames = [s.frame for s in SECTIONS]

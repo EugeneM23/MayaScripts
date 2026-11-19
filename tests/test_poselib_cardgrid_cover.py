@@ -1,10 +1,7 @@
 """The card grid's module-level helpers, the parts `test_poselib_cardgrid` leaves out: the last line of
-an error and the Interface animations switch when the hub's menu cannot be asked. The Qt classes
-are not covered here.
+an error. The Qt classes are not covered here.
 """
 import unittest
-
-import maya_hubmotion
 
 from maya_poselib import cardgrid
 
@@ -23,24 +20,12 @@ class LastLine(unittest.TestCase):
             self.assertEqual(cardgrid._last_line(text), "failed", repr(text))
 
 
-class Animations(unittest.TestCase):
+class NoMotion(unittest.TestCase):
 
-    def setUp(self):
-        saved = maya_hubmotion.enabled
-        self.addCleanup(setattr, maya_hubmotion, "enabled", saved)
-
-    def test_the_hub_menu_decides(self):
-        maya_hubmotion.enabled = lambda: False
-        self.assertIs(cardgrid._animations(), False)
-        maya_hubmotion.enabled = lambda: True
-        self.assertIs(cardgrid._animations(), True)
-
-    def test_a_hub_that_cannot_be_asked_means_animations_on(self):
-        def broken():
-            raise RuntimeError("no hub")
-
-        maya_hubmotion.enabled = broken
-        self.assertIs(cardgrid._animations(), True)
+    def test_the_grid_asks_no_animations_switch(self):
+        """2026-11-19: nothing in the grid moves, so it never asks maya_hubmotion."""
+        with open(cardgrid.__file__, encoding="utf-8") as handle:
+            self.assertNotIn("maya_hubmotion", handle.read())
 
 
 if __name__ == "__main__":

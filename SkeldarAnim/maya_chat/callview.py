@@ -12,7 +12,6 @@ import sys
 import time
 import traceback
 
-import maya_hubmotion as hubmotion
 import maya_hubqt as hubqt
 import maya_hubstyle as hubstyle
 import maya_hubwindow as hubwindow
@@ -133,7 +132,7 @@ def destroy():
     """The window gone now (tests, a plugin update)."""
     held = getattr(sys, _ATTR, None)
     if held is not None:
-        held.close_window(at_once=True)
+        held.close_window()
     if hasattr(sys, _ATTR):
         delattr(sys, _ATTR)
 
@@ -608,18 +607,11 @@ class CallWindow(object):
                            + "\n#skeldarChatCallFrame {{ border: none; background: transparent; }}")
         hubwindow.dress(frame, s)
         self.root = root
-        self.burster = hubwindow.Burster(frame, self._burst_parts, self._burst_face, s)
         self._place()
         self.clock = QtCore.QTimer(root)
         self.clock.setInterval(1000)
         self.clock.timeout.connect(self._tick)
         self.clock.start()
-
-    def _burst_parts(self):
-        return hubqt.burst_parts(self.frame, self.title, self.body, None, self.scale)
-
-    def _burst_face(self):
-        return hubstyle.TOKENS["panel"]
 
     # -------------------------------------------------- place and size
     def _place(self):
@@ -666,22 +658,9 @@ class CallWindow(object):
             self.fold(False)
 
     def show(self, origin=None):
+        """The window up at once (`origin` is no longer used: nothing bursts out of it)."""
         self.root.show()
         self.root.raise_()
-        origin = origin or W._cursor()
-        if origin is not None and hubmotion.enabled():
-            try:
-                if self.burster.run(True, origin, self._end_burst):
-                    return
-            except Exception:                                 # noqa: BLE001
-                traceback.print_exc()
-        self._end_burst()
-
-    def _end_burst(self):
-        try:
-            self.burster.stop()
-        except Exception:                                     # noqa: BLE001
-            pass
 
     # -------------------------------------------------- the session
     def _heard(self, kind, data):
@@ -1184,7 +1163,9 @@ class CallWindow(object):
             pass
         self.close_window()
 
-    def close_window(self, at_once=False):
+    def close_window(self, at_once=True):
+        """The window down at once (`at_once` stays for the callers that pass it: every close
+        is at once since 2026-11-19)."""
         if self.closed:
             return
         self.closed = True
@@ -1201,17 +1182,9 @@ class CallWindow(object):
             self.clock.stop()
         except RuntimeError:
             pass
-        if not at_once and hubmotion.enabled() and self.root.isVisible():
-            origin = W._cursor()
-            try:
-                if origin is not None and self.burster.run(False, origin, self._gone):
-                    return
-            except Exception:                                 # noqa: BLE001
-                traceback.print_exc()
         self._gone()
 
     def _gone(self):
-        self._end_burst()
         try:
             self.root.hide()
             self.root.deleteLater()

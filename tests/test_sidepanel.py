@@ -54,20 +54,12 @@ class Look(unittest.TestCase):
         self.assertEqual(look.zone_band(WINDOW, 1.0), (1638, 50, 62, 900))
         self.assertEqual(look.zone_band(WINDOW, 1.5), (1607, 50, 93, 900))
 
-    def test_the_burst_rows_cover_the_panel_and_pop_nearest_first(self):
-        rows = look.rows(900, 1.5)
-        self.assertEqual(rows[0][0], 0)
-        self.assertEqual(rows[-1][1], 900)
-        self.assertEqual(rows[0][1] - rows[0][0], 66)
-        self.assertLess(look.open_delay(0, 1.5), look.open_delay(300, 1.5))
-        self.assertEqual(look.open_delay(-300, 1.5), look.open_delay(300, 1.5))
-        #  going back, the farthest folds first and the nearest last
-        self.assertEqual(look.fold_delay(800, 1.5, 800), 0.0)
-        self.assertGreater(look.fold_delay(0, 1.5, 800), look.fold_delay(400, 1.5, 800))
-        self.assertGreaterEqual(look.open_total(450, 900, 1.5), look.UNROLL_MS)
-        self.assertLess(look.open_total(450, 900, 1.5), look.open_total(0, 900, 1.5))
-        self.assertLess(look.open_total(0, 1500, 1.5), 700)
-        self.assertGreater(look.close_folded(450, 900, 1.5), look.FOLD_MS)
+    def test_nothing_of_the_burst_is_left(self):
+        """2026-11-19, «удаляем все подсветки и анимации»: it shows and hides at once."""
+        for name in ("UNROLL_MS", "CLOSE_MS", "unroll", "ROW", "POP_MS", "FOLD_MS",
+                     "CLOSE_AFTER_MS", "popping", "folding", "rows", "open_delay",
+                     "fold_delay", "row_middle", "open_total", "close_folded"):
+            self.assertFalse(hasattr(look, name), name)
 
     def test_the_grip_widens_to_the_left(self):
         self.assertEqual(look.dragged_width(340, -60, 1.0), 400)
@@ -88,13 +80,6 @@ class Look(unittest.TestCase):
         self.assertEqual(look.mode_from(None), "maya")
         self.assertEqual(look.mode_from("edge"), "edge")
         self.assertEqual(look.tab_from("bogus"), "channels")
-
-    def test_the_unroll_opens_from_the_cursor_height(self):
-        self.assertEqual(look.unroll(0, 300, 900, True), (300, 300))
-        y0, y1 = look.unroll(1, 300, 900, True)
-        self.assertEqual((round(y0), round(y1)), (0, 900))
-        y0, y1 = look.unroll(1, 300, 900, False)
-        self.assertEqual((round(y0), round(y1)), (300, 300))
 
     def test_the_mel_override_keeps_maya_s_answer_and_asks_us_first(self):
         for proc, tab in (("isAttributeEditorVisible", "attributes"),
@@ -226,22 +211,21 @@ class Edge(unittest.TestCase):
         self.tabs = []
         self.widths = []
         self.ticks = []
-        self.picture = None
         self.sel = [False]
         self.play = [False]
         self.bar_out = [False]
         self.bar_y = [None]
 
         def make(parent, on_tab, on_pin, on_width):
-            return panel.make(parent, 1.0, maya_hubstyle.TOKENS, motion=False,
+            return panel.make(parent, 1.0, maya_hubstyle.TOKENS,
                               on_tab=on_tab, on_pin=on_pin, on_width=on_width)
         self.edge = edge.SideEdge(make, width=340, scale=1.0,
                                   window_rect=lambda: tuple(self.window),
                                   cursor=lambda: tuple(self.cursor),
                                   buttons=lambda: self.down[0], app_active=lambda: True,
-                                  over_maya=lambda: self.over[0], motion=False,
+                                  over_maya=lambda: self.over[0],
                                   on_tab=self.tabs.append, on_width=self.widths.append,
-                                  tick=self.ticks.append, capture=lambda host: self.picture,
+                                  tick=self.ticks.append,
                                   selected=lambda: self.sel[0], playing=lambda: self.play[0],
                                   timebar=lambda: self.bar_out[0], bar_top=lambda: self.bar_y[0])
         self.addCleanup(self.edge.destroy)
@@ -341,20 +325,17 @@ class Edge(unittest.TestCase):
 
     def test_a_selection_during_playback_brings_it_out_at_once(self):
         """2026-10-17: «во время плей мода выделяю объект то панель не выезжает» -
-        playback ticks no timer, so no burst: out at once, painted now."""
-        self.edge.motion = True
-        self.picture = self.burst_picture()
+        out at once, painted now."""
         self.play[0] = True
         self.sel[0] = True
         self.assertTrue(self.edge.selection_changed())
         self.assertTrue(self.edge.shown)
-        self.assertIsNone(self.edge._slide)
         self.assertTrue(self.edge.host.isVisible())
         self.assertEqual(self.edge.host.mask().boundingRect().height(), 900)
 
     def test_the_window_has_round_corners_at_rest(self):
         """2026-10-18: «не скругленные края у нашего окна а острые (кстати это баг)»."""
-        self.edge.reveal(instant=True)
+        self.edge.reveal()
         mask = self.edge.host.mask()
         w, h = self.edge.host.width(), self.edge.host.height()
         self.assertFalse(mask.contains(QT.QtCore.QPoint(0, 0)))
@@ -517,87 +498,39 @@ class Edge(unittest.TestCase):
         self.edge.reveal(tab="attributes")
         self.assertEqual(calls, [1, 1])
 
-    def burst_picture(self):
-        pixmap = QT.QtGui.QPixmap(340, 900)
-        pixmap.fill(QT.QtGui.QColor("#ff0000"))
-        return pixmap
-
-    def draw_overlay(self):
-        image = QT.QtGui.QImage(340, 900, QT.QtGui.QImage.Format_ARGB32)
-        image.fill(0)
-        painter = QT.QtGui.QPainter(image)
-        self.edge.paint_burst(painter)
-        painter.end()
-        return image
-
-    def test_a_reveal_bursts_the_panel_s_picture_from_the_cursor(self):
-        """2026-10-17, «как у таймслайдера»: the picture moves, Maya's editors wait."""
-        self.picture = self.burst_picture()
-        self.edge.motion = True
+    def test_a_reveal_shows_the_whole_panel_at_once(self):
+        """2026-11-19, «удаляем все подсветки и анимации»: no burst, no unroll - the
+        whole panel under its rounded mask the moment it comes out, no timer running."""
         self.cursor[:] = [1690, 500]
         self.edge.reveal()
-        self.assertTrue(self.edge.overlay.isVisible())
+        self.assertTrue(self.edge.host.isVisible())
         self.assertEqual(self.edge.host.windowOpacity(), 1.0)
-        b = self.edge._slide
-        self.assertEqual(b["cy"], 450.0)
-        b["t0"] -= look.open_delay(0, 1.0) + look.POP_MS * 0.3      # the middle rows popping
-        image = self.draw_overlay()
-        face = QT.QtGui.QColor(maya_hubstyle.TOKENS["panel"])
-        self.assertGreater(image.pixelColor(170, 450).red(), face.red() + 60)  # near: coming in
-        self.assertEqual(image.pixelColor(170, 10).name(), face.name())         # far: not yet
-        b["t0"] -= look.open_total(450, 900, 1.0)
-        self.edge.slide_tick()
-        self.assertIsNone(self.edge._slide)
-        self.assertFalse(self.edge.overlay.isVisible())
         self.assertEqual(self.edge.host.mask().boundingRect().height(), 900)
+        self.assertEqual(self.edge.host.mask().boundingRect().width(), 340)
+        self.assertFalse(self.edge.host.findChild(QT.QtWidgets.QWidget, "skeldarSidePanelBurst"))
+        for name in ("anim", "overlay", "_slide", "slide_tick", "paint_burst", "_picture",
+                     "_mask_span", "motion"):
+            self.assertFalse(hasattr(self.edge, name), name)
+        self.assertFalse(hasattr(self.edge.panel, "clock"))
 
-    def test_going_back_folds_the_picture_then_closes_onto_the_cursor(self):
+    def test_going_back_hides_it_at_once_and_shows_the_sensor(self):
         self.edge.reveal()
-        self.picture = self.burst_picture()
-        self.edge.motion = True
         self.cursor[:] = [300, 500]
         self.edge.conceal()
-        b = self.edge._slide
-        self.assertTrue(self.edge.overlay.isVisible())
-        self.edge.slide_tick()
-        self.assertEqual(self.edge.host.mask().boundingRect().height(), 900)   # folding first
-        b["t0"] -= b["folded"] + look.CLOSE_MS + 1
-        self.edge.slide_tick()
-        self.assertIsNone(self.edge._slide)
+        self.assertFalse(self.edge.shown)
         self.assertFalse(self.edge.host.isVisible())
         self.assertTrue(self.edge.sensor.isVisible())
 
-    def test_no_picture_falls_back_to_the_plain_unroll(self):
-        self.edge.motion = True
-        self.edge.reveal()
-        self.assertFalse(self.edge.overlay.isVisible())
-        self.assertIsNotNone(self.edge._slide)
-
-    def test_the_end_of_the_unroll_asks_every_widget_to_paint(self):
+    def test_a_reveal_asks_every_widget_to_paint(self):
         """2026-10-17, live: Maya's editors showed their values only where the mouse
-        passed after the panel unrolled."""
+        passed after the panel came out."""
         asked = []
         real = self.edge.repaint_all
         self.edge.repaint_all = lambda: asked.append(real())
         QT.QtWidgets.QTableView(self.edge.panel)       # its update() wants an index
-        self.edge.motion = True
         self.edge.reveal()
-        self.edge._slide["t0"] -= look.UNROLL_MS + 1
-        self.edge.slide_tick()
         self.assertEqual(len(asked), 1)
         self.assertGreater(asked[0], 10)
-
-    def test_the_unroll_masks_from_the_cursor_and_ends_whole(self):
-        self.edge.motion = True
-        self.cursor[:] = [1699, 300]
-        self.edge.reveal()
-        self.assertIsNotNone(self.edge._slide)
-        self.assertEqual(self.edge._slide["cy"], 250.0)
-        self.assertLess(self.edge.host.mask().boundingRect().height(), 10)
-        self.edge._slide["t0"] -= look.UNROLL_MS + 1
-        self.edge.slide_tick()
-        self.assertIsNone(self.edge._slide)
-        self.assertEqual(self.edge.host.mask().boundingRect().height(), 900)
 
     def test_a_shorter_panel_and_its_bottom_grip(self):
         shares = []

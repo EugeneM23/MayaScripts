@@ -158,8 +158,8 @@ class FakeEdge(object):
     def set_pinned(self, on):
         self.calls.append(("set_pinned", on))
 
-    def reveal(self, instant=False):
-        self.calls.append(("reveal", instant))
+    def reveal(self):
+        self.calls.append(("reveal",))
 
 
 class State(Base):
@@ -395,7 +395,7 @@ class EnsureEdge(Base):
         self.assertIs(controller.on_pinned, tb.remember_pinned)
         self.assertEqual([c[0] for c in self.calls], ["destroy_all", "destroy_all", "start_jobs"])
         self.assertEqual(self.cmds.ws, {tb.CONTROL: False, "TimeSlider": False, "RangeSlider": False})
-        self.assertEqual(controller.calls, [("set_pinned", True), ("reveal", True)])
+        self.assertEqual(controller.calls, [("set_pinned", True), ("reveal",)])
 
     def test_the_strip_made_with_maya_s_scale(self):
         made = self.record(bar, "make", answer="strip")
@@ -416,7 +416,7 @@ class EnsureEdge(Base):
             def __init__(self, make, on_pinned=None):
                 FakeEdge.__init__(self)
 
-            def reveal(self, instant=False):
+            def reveal(self):
                 raise RuntimeError("no window")
         self.set(edge_module, "BottomEdge", Bad)
         self.assertIsNotNone(tb.ensure_edge())
@@ -641,7 +641,7 @@ class Steel(Base):
         old = self.widget(bar.ROOT_NAME, steel=False)          # an older strip's root
         other = self.widget("someone else")
         self.set(QtWidgets.QApplication, "allWidgets", staticmethod(lambda: [ours, old, other]))
-        self.assertIn("cools into steel", tb.set_steel(True))
+        self.assertIn("the keys in steel", tb.set_steel(True))
         self.assertEqual(self.cmds.vars[look.STEEL_VAR], 1)
         self.assertEqual(ours.got, [True])
         self.assertEqual(other.got, [])

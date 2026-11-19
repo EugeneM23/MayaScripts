@@ -31,8 +31,6 @@ def edge_module():
 @unittest.skipIf(QT is None, "no Qt")
 class Edge(unittest.TestCase):
 
-    motion = False
-
     def setUp(self):
         from maya_timebar import edge
         self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
@@ -44,9 +42,9 @@ class Edge(unittest.TestCase):
         self.suspend = [False]
         self.link = FakeLink()
         self.edge = edge.BottomEdge(
-            lambda parent: bar.make(self.link, 1.0, maya_hubstyle.TOKENS, parent=parent, motion=self.motion),
+            lambda parent: bar.make(self.link, 1.0, maya_hubstyle.TOKENS, parent=parent),
             window_rect=lambda: tuple(self.window), cursor=lambda: tuple(self.cursor),
-            buttons=lambda: self.down[0], app_active=lambda: True, motion=self.motion,
+            buttons=lambda: self.down[0], app_active=lambda: True,
             over_maya=lambda: self.over[0], playing=lambda: self.play[0],
             suspended=lambda: self.suspend[0])
         self.addCleanup(self.edge.destroy)
@@ -87,7 +85,7 @@ class Edge(unittest.TestCase):
         self.assertTrue(self.edge.shown)
         self.assertTrue(self.edge.host.isVisible())
         self.assertFalse(self.edge.sensor.isVisible())
-        self.assertEqual(self.edge.offset, 0)
+        self.assertEqual(self.edge.strip.pos().y(), 0)          # out at once, whole
 
     def test_not_from_elsewhere_nor_with_a_button_held(self):
         self.edge.dwell_done()
@@ -208,9 +206,7 @@ class Edge(unittest.TestCase):
         self.edge.on_time()
         self.assertTrue(self.edge.shown)
         self.assertTrue(self.edge.host.isVisible())
-        if not self.motion:
-            self.assertIsNone(self.edge._slide)
-            self.assertEqual(self.edge.host.mask().boundingRect().width(), self.edge.host.width())
+        self.assertTrue(self.edge.host.mask().isEmpty())        # no mask: no unroll
 
     def in_band(self):
         x, y, w, h = look.bottom_band(self.window, self.edge.height())
@@ -268,15 +264,15 @@ class Edge(unittest.TestCase):
 
             def close(self, *_a):
                 self.open = False
-        self.edge.reveal(instant=True)
+        self.edge.reveal()
         self.edge.strip.layer_panel = Open()
         self.edge.strip.layers_btn.setChecked(True)
         self.edge.conceal()
         self.assertFalse(self.edge.strip.layers_btn.isChecked())
         self.edge.strip.layer_panel = None
 
-    def test_the_slide_settled_places_an_open_layer_panel(self):
-        """2026-10-18: the column stands on the bar where the slide ends."""
+    def test_out_it_places_an_open_layer_panel(self):
+        """2026-10-18: the column stands on the bar; out at once since 2026-11-19."""
         placed = []
 
         class Open:
@@ -286,107 +282,14 @@ class Edge(unittest.TestCase):
             def place(self):
                 placed.append(1)
         self.edge.strip.layer_panel = Open()
-        self.edge._settle(True)
-        self.assertEqual(placed, [1])
-        self.edge._settle(False)
-        self.assertEqual(placed, [1])
+        self.edge.reveal()
+        self.assertTrue(placed)
         self.edge.strip.layer_panel = None
 
-
-class EdgeMotion(Edge):
-    """The burst from the cursor (mockup A, 1.5x slower)."""
-
-    motion = True
-
-    def later(self, ms):
-        """Every clock of the burst moved `ms` into the past."""
-        b, e = self.edge._slide, self.edge.strip.entrance
-        if b is not None:
-            b["t0"] -= ms
-        if e is not None:
-            e["t0"] -= ms
-
-    def mask_width(self):
-        return self.edge.host.mask().boundingRect().width()
-
-    def test_play_bursts_it_out_frame_by_frame(self):
-        self.cursor[:] = [900, 300]                                # up in the viewport
-        self.play[0] = True
-        self.edge.on_time()
-        self.assertIsNotNone(self.edge._slide)
-        self.assertIsNotNone(self.edge.strip.entrance)
-        w = self.edge.host.width()
-        g = self.edge.host.geometry()
-        self.assertAlmostEqual(self.edge._slide["cx"], 900 - g.x())   # from the cursor's x
-        self.assertLess(self.mask_width(), 5)
-        self.later(look.UNROLL_MS / 3.0)
-        self.edge.on_time()                                        # the next frame of playback
-        self.assertTrue(5 < self.mask_width() < w)
-        self.later(10000)
-        self.edge.on_time()
-        self.edge.on_time()
-        self.assertIsNone(self.edge._slide)
-        self.assertIsNone(self.edge.strip.entrance)
-        self.assertEqual(self.mask_width(), w)
-
-    def test_resting_on_the_edge_brings_it_out(self):
-        self.at_edge()
-        self.edge.dwell_done()
-        self.assertTrue(self.edge.shown)
-        w = self.edge.host.width()
-        self.assertLess(self.mask_width(), 5)                       # from a point under the cursor
-        self.later(look.UNROLL_MS / 3.0)
-        self.edge.slide_tick()
-        self.assertTrue(5 < self.mask_width() < w)
-        self.later(look.UNROLL_MS)
-        self.edge.slide_tick()
-        self.assertEqual(self.mask_width(), w)
-        self.assertIsNone(self.edge._slide)
-
-    def test_the_nearest_control_pops_first(self):
-        self.at_edge()
-        self.edge.dwell_done()
-        strip = self.edge.strip
-        delays = strip.entrance["delays"]
-        x = self.cursor[0]
-        near = min(strip.moving, key=lambda w: abs(w.mapToGlobal(w.rect().center()).x() - x))
-        far = max(strip.moving, key=lambda w: abs(w.mapToGlobal(w.rect().center()).x() - x))
-        self.assertLess(delays[near.index], delays[far.index])
-        self.later(delays[near.index] + look.POP_OPEN_MS / 2.0)
-        self.assertGreater(strip.opening_of(near.index)[0], look.START_SCALE)
-        self.assertEqual(strip.opening_of(far.index), (look.START_SCALE, 0.0))
-
-    def test_the_keys_pop_with_them(self):
-        self.at_edge()
-        self.edge.dwell_done()
-        strip = self.edge.strip
-        self.assertEqual(strip.entrance_of(self.cursor[0] + 300, self.cursor[1]), (look.START_SCALE, 0.0))
-        self.later(strip.entrance["ends"])
-        self.assertEqual(strip.entrance_of(self.cursor[0] + 300, self.cursor[1]), (1.0, 1.0))
-
-    def test_leaving_it_sends_it_back(self):
-        self.at_edge()
-        self.edge.dwell_done()
-        self.later(10000)
-        self.edge.slide_tick()
-        self.cursor[:] = [900, 300]
-        self.edge.hide_due()
-        self.assertFalse(self.edge.shown)
-        b = self.edge._slide
-        self.assertFalse(b["showing"])
-        self.edge.slide_tick()
-        self.assertEqual(self.mask_width(), self.edge.host.width())    # the controls fold first
-        self.later(b["after"] + look.CLOSE_MS / 2.0)
-        self.edge.slide_tick()
-        self.assertLess(self.mask_width(), self.edge.host.width())
-        self.later(look.CLOSE_MS)
-        self.edge.slide_tick()
-        self.assertFalse(self.edge.host.isVisible())
-        self.assertTrue(self.edge.sensor.isVisible())
-
-    test_the_pin_keeps_it_out = None
-    test_a_drag_in_the_strip_keeps_it_out = None
-    test_coming_back_onto_it_stops_the_hide = None
+    def test_nothing_slides(self):
+        """2026-11-19, «удаляем все подсветки и анимации из плагина»."""
+        for name in ("_slide", "slide_tick", "_settle", "offset", "step"):
+            self.assertFalse(hasattr(self.edge, name), name)
 
 
 if __name__ == "__main__":

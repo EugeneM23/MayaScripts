@@ -3,16 +3,13 @@ just above the Time Bar (2026-10-20, «При свернутом окне чат
 активном окне маи с левой части экрана над таймслайдером»).
 
 Each card is a frameless Qt.Tool window owned by Maya's main window that never takes the focus.
-It flies in from the area's right edge across the viewport on a low swoop, an accent streak
-trailing it while it is fast (2026-10-22), lands with the accent ring flashing, stays TOAST_STAY_MS (held while the
-mouse is over it), and fades to the left. A click opens the chat on that conversation; the cross
-dismisses. A newer card comes in at the bottom and the older ones move up; a second message of
-the same chat replaces its card. One 16 ms timer for every card, stopped at rest. With ⋮ ->
-Interface animations off every card lands and leaves at once. State on sys (trap 111): an
-install drops the old module's cards by their object name.
+It stands at its place at once, stays TOAST_STAY_MS (held while the mouse is over it) and goes at
+once (2026-11-19: no flight, no fade, no flash). A click opens the chat on that conversation; the
+cross dismisses. A newer card comes in at the bottom and the older ones step up; a second message
+of the same chat replaces its card. Each card counts its own stay on a single-shot timer. State
+on sys (trap 111): an install drops the old module's cards by their object name.
 """
 import sys
-import time
 
 from . import look
 import maya_hubqt as hubqt
@@ -25,25 +22,19 @@ def _q():
     return hubqt.qt()
 
 
-def _now():
-    return time.monotonic() * 1000.0
-
-
-def _animations():
-    try:
-        import maya_hubmotion
-        return bool(maya_hubmotion.enabled())
-    except Exception:                                        # noqa: BLE001
-        return True
-
-
 def _state():
     st = getattr(sys, "_skeldar_chat_toasts", None)
     if st is None or st.get("module") is not sys.modules.get(__name__):
         if st is not None:
+            timer = st.get("timer")                 # an older build's motion timer
+            if timer is not None:
+                try:
+                    timer.stop()
+                except Exception:                            # noqa: BLE001
+                    pass
             for card in list(st.get("cards", [])):
                 _kill(card)
-        st = {"module": sys.modules.get(__name__), "cards": [], "timer": None}
+        st = {"module": sys.modules.get(__name__), "cards": []}
         sys._skeldar_chat_toasts = st
     return st
 
@@ -110,20 +101,13 @@ def card_class():
             self.setMouseTracking(True)
             self.scale = _scale()
             self.chat_id = chat_id
-            self.born = _now()
-            self.leaving = None
+            self.leaving = None                  # True once it went
             self.hover = False
             self.cross_hover = False
             self.stay_left = float(look.TOAST_STAY_MS)
-            self.last = self.born
-            self.place_from = None
-            self.place_at = None
-            self.place_to = None
-            self.base = None                     # where the card stands, the flight aside
-            self.fly_at = None
-            self.fly_distance = 0.0
-            self.fly_alpha = 1.0
-            self.trail = 0.0
+            self.stay = QtCore.QTimer(self)
+            self.stay.setSingleShot(True)
+            self.stay.timeout.connect(self.leave)
             self.set_text(user, head, text, fresh=False)
             self.cw = int(look.TOAST_W * self.scale)
             self.resize(self.cw, int(look.TOAST_H * self.scale))
@@ -134,114 +118,52 @@ def card_class():
         def set_text(self, user, head, text, fresh=True):
             self.user, self.head, self.text = user, head, look.toast_text(text)
             if fresh:
-                self.born = _now() - look.TOAST_IN_MS     # no unroll again, only the flash
-                self.flash_at = _now()
-                self.stay_left = float(look.TOAST_STAY_MS)
-            else:
-                self.flash_at = self.born
+                self.start_stay(look.TOAST_STAY_MS)
             self.update()
 
         def cross_rect(self):
             s = self.px(14)
             return QtCore.QRectF(self.cw - self.px(8) - s, self.px(7), s, s)
 
-        # ------------------------------------------------------------ time
-        def tick(self, now):
-            dt = now - self.last
-            self.last = now
-            if self.leaving is None and not self.hover and self.fly_at is None:
-                self.stay_left -= dt
-                if self.stay_left <= 0:
-                    self.leave()
-            if self.place_to is not None:
-                u = min(1.0, (now - self.place_at) / float(look.TOAST_MOVE_MS))
-                k = look.ease_out(u, 3)
-                (x0, y0), (x1, y1) = self.place_from, self.place_to
-                self.base = (int(x0 + (x1 - x0) * k), int(y0 + (y1 - y0) * k))
-                if u >= 1.0:
-                    self.place_to = None
-            self._stand(now)
-            self.update()
-            return self.moving(now)
-
-        # ------------------------------------------------------------ the flight in
-        def fly_from(self, start_x):
-            """Fly in from a global x on the right to where the card stands."""
-            if self.base is None:
-                self.base = (self.x(), self.y())
-            self.fly_distance = max(0.0, float(start_x - self.base[0]))
-            if self.fly_distance <= 0.0:
+        # ------------------------------------------------------------ the stay
+        def start_stay(self, ms=None):
+            """The stay counts down from `ms` (what is left of it when None); never while
+            the mouse is over the card."""
+            if ms is not None:
+                self.stay_left = float(ms)
+            if self.hover or self.leaving is not None:
                 return
-            self.fly_at = _now()
-            self.born = self.fly_at - look.TOAST_IN_MS        # whole from the start: no unroll
-            self.flash_at = self.fly_at + look.TOAST_FLY_MS * look.TOAST_LAND
-            self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
-            self.resize(self.cw + int(look.TOAST_TRAIL_MAX * self.scale), self.height())
-            self._stand(self.fly_at)
-
-        def flying(self):
-            return self.fly_at is not None
-
-        def _stand(self, now):
-            if self.base is None:
-                return
-            x, y = self.base
-            if self.fly_at is not None:
-                dx, dy, self.fly_alpha, speed = look.toast_fly(
-                    now - self.fly_at, self.fly_distance, look.TOAST_FLY_LIFT * self.scale)
-                self.trail = look.toast_trail(speed, self.scale)
-                if now - self.fly_at >= look.TOAST_FLY_MS:
-                    self.fly_at = None
-                    self.fly_alpha, self.trail = 1.0, 0.0
-                    self.resize(self.cw, self.height())
-                    if self.leaving is None:
-                        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, False)
-                else:
-                    x, y = int(x + dx), int(y + dy)
-            if (x, y) != (self.x(), self.y()):
-                self.move(x, y)
-
-        def moving(self, now):
-            if self.leaving is not None or self.place_to is not None or self.fly_at is not None:
-                return True
-            if now - self.born < look.TOAST_IN_MS or now - self.flash_at < look.TOAST_FLASH_MS:
-                return True
-            return not self.hover            # the stay counts down
-
-        def gone(self, now):
-            return self.leaving is not None and now - self.leaving >= look.TOAST_OUT_MS
+            self.stay.start(int(max(0.0, self.stay_left)))
 
         def leave(self):
-            if self.leaving is None:
-                self.leaving = _now() if _animations() else _now() - look.TOAST_OUT_MS
-                self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
-                _wake()
+            """The card goes at once and the ones above it step down into its place."""
+            if self.leaving is not None:
+                return
+            self.leaving = True
+            self.stay.stop()
+            st = _state()
+            if self in st["cards"]:
+                st["cards"].remove(self)
+            _kill(self)
+            _layout()
 
-        def go_to(self, x, y, animate=True):
-            if not animate or not self.isVisible():
-                self.place_to = None
-                self.base = (x, y)
-                self._stand(_now())
-                return
-            if self.base is None:
-                self.base = (self.x(), self.y())
-            if (x, y) == self.base:
-                return
-            self.place_from = self.base
-            self.place_to = (x, y)
-            self.place_at = _now()
+        def go_to(self, x, y):
+            if (x, y) != (self.x(), self.y()):
+                self.move(x, y)
 
         # ------------------------------------------------------------ mouse
         def enterEvent(self, event):                     # noqa: N802
             self.hover = True
+            if self.stay.isActive():
+                self.stay_left = float(self.stay.remainingTime())
+                self.stay.stop()
             self.update()
 
         def leaveEvent(self, event):                     # noqa: N802
             self.hover = False
             self.cross_hover = False
-            self.stay_left = max(self.stay_left, 1500.0)
-            self.last = _now()
-            _wake()
+            self.start_stay(max(self.stay_left, 1500.0))
+            self.update()
 
         def mouseMoveEvent(self, event):                 # noqa: N802
             on = self.cross_rect().contains(event.position())
@@ -260,54 +182,17 @@ def card_class():
 
         # ------------------------------------------------------------ paint
         def paintEvent(self, event):                     # noqa: N802
-            now = _now()
-            age = (now - self.born) if _animations() else 1e9
-            leaving = None if self.leaving is None else now - self.leaving
-            reveal, opacity, _flash, slide = look.toast_look(age, leaving)
-            flash = 0.0
-            if _animations() and now >= self.flash_at:
-                flash = max(0.0, 1.0 - (now - self.flash_at) / float(look.TOAST_FLASH_MS)) ** 1.5
-            opacity *= self.fly_alpha
-            if opacity <= 0.0:
-                return
             p = QtGui.QPainter(self)
             try:
-                if self.trail > 0.5:
-                    self._paint_trail(p, opacity)
-                self._paint(p, reveal, opacity, flash, slide)
+                self._paint(p)
             finally:
                 p.end()
 
-        def _paint_trail(self, p, opacity):
-            """The streak behind a flying card: added accent light from its right edge out."""
-            from . import window as W
-            pad = self.px(3)
-            x0 = self.cw - pad - self.px(10)
-            h = self.height() - 2 * pad
-            mid = pad + h / 2.0
-            p.save()
-            p.setRenderHint(QtGui.QPainter.Antialiasing)
-            p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-            p.setPen(QtCore.Qt.NoPen)
-            for share, alpha, length in ((0.78, 0.22, 1.0), (0.34, 0.38, 0.8), (0.08, 0.75, 0.62)):
-                band = h * share
-                end = x0 + self.trail * length
-                grad = QtGui.QLinearGradient(x0, 0, end, 0)
-                grad.setColorAt(0.0, W._colour("accent", alpha * opacity))
-                grad.setColorAt(1.0, W._colour("accent", 0.0))
-                p.setBrush(QtGui.QBrush(grad))
-                p.drawRoundedRect(QtCore.QRectF(x0, mid - band / 2.0, end - x0, band),
-                                  band / 2.0, band / 2.0)
-            p.restore()
-
-        def _paint(self, p, reveal, opacity, flash, slide):
+        def _paint(self, p):
             from . import window as W
             p.setRenderHint(QtGui.QPainter.Antialiasing)
-            p.setOpacity(opacity)
             pad = self.px(3)
-            full = QtCore.QRectF(pad - slide, pad, self.cw - 2 * pad, self.height() - 2 * pad)
-            card = QtCore.QRectF(full.x(), full.y(), max(self.px(12), full.width() * reveal),
-                                 full.height())
+            card = QtCore.QRectF(pad, pad, self.cw - 2 * pad, self.height() - 2 * pad)
             radius = self.px(8)
             path = QtGui.QPainterPath()
             path.addRoundedRect(card, radius, radius)
@@ -315,15 +200,13 @@ def card_class():
             p.fillPath(path, face)
             p.save()
             p.setClipPath(path)
-            ink = max(0.0, min(1.0, (reveal - 0.35) / 0.65))
-            p.setOpacity(opacity * ink)
             size = self.px(32)
             av = QtCore.QRectF(card.x() + self.px(10), card.center().y() - size / 2.0, size, size)
             held = getattr(sys, "_skeldar_chat", None)
             online = W.is_online(self.user, held.state.online if held is not None else {})
             W.paint_avatar(p, av, self.user, self.scale, online)
             tx = av.right() + self.px(10)
-            right = full.right() - self.px(28)
+            right = card.right() - self.px(28)
             base = QtGui.QFont(self.font())
             p.setFont(W._font(base, self.px(12), bold=True))
             p.setPen(W._colour("text"))
@@ -336,7 +219,7 @@ def card_class():
             from . import emojiart
             emojiart.draw_line(p, QtCore.QRectF(tx, card.y() + self.px(27), right - tx, self.px(16)),
                                self.text, p.font(), p.pen().color())
-            cross = self.cross_rect().translated(-slide, 0)
+            cross = self.cross_rect()
             p.setPen(QtGui.QPen(W._colour("text" if self.cross_hover else "faint"), self.px(1.4)))
             m = self.px(3.5)
             p.drawLine(QtCore.QPointF(cross.left() + m, cross.top() + m),
@@ -344,17 +227,9 @@ def card_class():
             p.drawLine(QtCore.QPointF(cross.right() - m, cross.top() + m),
                        QtCore.QPointF(cross.left() + m, cross.bottom() - m))
             p.restore()
-            p.setOpacity(opacity)
             p.setBrush(QtCore.Qt.NoBrush)
             p.setPen(QtGui.QPen(W._colour("line"), self.px(1)))
             p.drawPath(path)
-            if flash > 0.0:
-                p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-                for i in range(4):
-                    k = flash * (1.0 - i / 4.0)
-                    pen = QtGui.QPen(W._colour("accent", 0.55 * k), self.px(1.0 + i * 1.2))
-                    p.setPen(pen)
-                    p.drawRoundedRect(card, radius, radius)
 
     _CLASSES["card"] = Toast
     return Toast
@@ -362,7 +237,6 @@ def card_class():
 
 CALL_NAME = "skeldarChatCallCard"
 CALL_H = look.TOAST_H + 34          # logical px: the card plus a row of buttons
-HOVER_MS = 110.0
 BUTTONS = (("voice", "Голос"), ("video", "Видео"), ("decline", "Отклонить"))
 
 
@@ -381,7 +255,6 @@ def call_card_class():
             super(CallCard, self).__init__(call_view.get("chat"), user, head, "", parent)
             self.call_id = call_view["id"]
             self.kind = call_view.get("kind")
-            self.level = {name: 0.0 for name, _t in BUTTONS}
             self.over = None
             self.setObjectName(CALL_NAME)
             self.cw = int(look.TOAST_W * self.scale)
@@ -392,26 +265,9 @@ def call_card_class():
             self.user, self.head = user, head
             self.update()
 
-        # the card never leaves on its own
-        def tick(self, now):
-            self.stay_left = 1e12
-            for name, _t in BUTTONS:
-                goal = 1.0 if self.over == name else 0.0
-                if not _animations():
-                    self.level[name] = goal
-                else:
-                    step = (now - self.last) / HOVER_MS
-                    cur = self.level[name]
-                    self.level[name] = min(goal, cur + step) if goal > cur else max(goal, cur - step)
-            return super(CallCard, self).tick(now)
-
-        def moving(self, now):
-            if self.leaving is not None or self.place_to is not None or self.fly_at is not None:
-                return True
-            if now - self.born < look.TOAST_IN_MS or now - self.flash_at < look.TOAST_FLASH_MS:
-                return True
-            return any(0.0 < v < 1.0 or (v == 0.0 and n == self.over)
-                       for n, v in self.level.items())
+        def start_stay(self, ms=None):
+            """The card never leaves on its own."""
+            return None
 
         def button_rects(self):
             gap, pad = self.px(6), self.px(13)
@@ -443,9 +299,6 @@ def call_card_class():
             name = self._button_at(event.position())
             if name != self.over:
                 self.over = name
-                if not _animations():
-                    self.tick(_now())
-                _wake()
                 self.update()
 
         def leaveEvent(self, event):                     # noqa: N802
@@ -458,22 +311,17 @@ def call_card_class():
                 if name is not None:
                     self.press(name)
 
-        def _paint(self, p, reveal, opacity, flash, slide):
+        def _paint(self, p):
             from . import window as W
             p.setRenderHint(QtGui.QPainter.Antialiasing)
-            p.setOpacity(opacity)
             pad = self.px(3)
-            full = QtCore.QRectF(pad - slide, pad, self.cw - 2 * pad, self.height() - 2 * pad)
-            card = QtCore.QRectF(full.x(), full.y(), max(self.px(12), full.width() * reveal),
-                                 full.height())
+            card = QtCore.QRectF(pad, pad, self.cw - 2 * pad, self.height() - 2 * pad)
             radius = self.px(8)
             path = QtGui.QPainterPath()
             path.addRoundedRect(card, radius, radius)
             p.fillPath(path, W._blend("panel", "card_active", 0.6 if self.hover else 0.0))
             p.save()
             p.setClipPath(path)
-            ink = max(0.0, min(1.0, (reveal - 0.35) / 0.65))
-            p.setOpacity(opacity * ink)
             size = self.px(32)
             top = card.y() + self.px(8)
             av = QtCore.QRectF(card.x() + self.px(10), top + self.px(3), size, size)
@@ -481,7 +329,7 @@ def call_card_class():
             online = W.is_online(self.user, held.state.online if held is not None else {})
             W.paint_avatar(p, av, self.user, self.scale, online)
             tx = av.right() + self.px(10)
-            right = full.right() - self.px(10)
+            right = card.right() - self.px(10)
             base = QtGui.QFont(self.font())
             p.setFont(W._font(base, self.px(12), bold=True))
             p.setPen(W._colour("text"))
@@ -498,7 +346,7 @@ def call_card_class():
             p.setFont(W._font(base, self.px(11), bold=True))
             for name, text in BUTTONS:
                 rect = self.button_rects()[name]
-                k = self.level[name]
+                k = 1.0 if self.over == name else 0.0       # the button under the mouse, flat
                 accent, danger = W._colour("accent"), W._colour("danger")
                 if name == "video":
                     fill = W._blend("accent", "accent_text", 0.25 * k)
@@ -515,16 +363,9 @@ def call_card_class():
                 p.setPen(ink_c)
                 p.drawText(rect, QtCore.Qt.AlignCenter, text)
             p.restore()
-            p.setOpacity(opacity)
             p.setBrush(QtCore.Qt.NoBrush)
             p.setPen(QtGui.QPen(W._colour("accent", 0.7), self.px(1)))
             p.drawPath(path)
-            if flash > 0.0:
-                p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-                for i in range(4):
-                    k = flash * (1.0 - i / 4.0)
-                    p.setPen(QtGui.QPen(W._colour("accent", 0.55 * k), self.px(1.0 + i * 1.2)))
-                    p.drawRoundedRect(card, radius, radius)
 
     _CLASSES["call"] = CallCard
     return CallCard
@@ -549,12 +390,13 @@ def _alive(st):
     return st["cards"]
 
 
-def _layout(animate=True):
+def _layout():
+    """Every standing card at its place at once: the newest at the bottom, the call cards
+    nearest the Time Bar, the message cards above them."""
     st = _state()
     cards = [c for c in _alive(st) if c.leaving is None]
     if not cards:
         return
-    #  the call cards stand nearest the Time Bar, the message cards above them
     cards = [c for c in cards if not hasattr(c, "call_id")] + \
             [c for c in cards if hasattr(c, "call_id")]
     rect, obstacles = area()
@@ -565,41 +407,8 @@ def _layout(animate=True):
     bottom = y + h - margin
     for card in reversed(cards):                             # the newest at the bottom
         bottom -= card.height()
-        card.go_to(int(left), int(bottom), animate and _animations())
+        card.go_to(int(left), int(bottom))
         bottom -= look.TOAST_GAP * scale
-
-
-def _fly_in(card):
-    """A new card starts at the area's right edge and flies across to its place."""
-    (x, _y, w, _h), _o = area()
-    card.fly_from(x + w)
-
-
-def _wake():
-    st = _state()
-    q = _q()
-    timer = st.get("timer")
-    if timer is None or not hubqt._valid(timer):
-        timer = q.QtCore.QTimer()
-        timer.setInterval(16)
-        timer.timeout.connect(_tick)
-        st["timer"] = timer
-    if not timer.isActive():
-        timer.start()
-
-
-def _tick():
-    st = _state()
-    now = _now()
-    busy = False
-    for card in list(_alive(st)):
-        if card.gone(now):
-            st["cards"].remove(card)
-            _kill(card)
-            continue
-        busy = card.tick(now) or busy
-    if not busy and st.get("timer") is not None:
-        st["timer"].stop()
 
 
 def show(chat_id, user, head, text):
@@ -611,7 +420,6 @@ def show(chat_id, user, head, text):
             st["cards"].remove(card)
             st["cards"].append(card)
             _layout()
-            _wake()
             return card
     from . import window
     card = card_class()(chat_id, user, head, text, window._main_window())
@@ -620,15 +428,9 @@ def show(chat_id, user, head, text):
     for old in live[:-look.TOAST_MAX]:
         old.leave()
     _layout()
-    if not _animations():
-        card.born = _now() - 1e9
-        card.flash_at = card.born
-    else:
-        _fly_in(card)
     card.show()
     card.raise_()
-    _layout(animate=False)
-    _wake()
+    card.start_stay()
     return card
 
 
@@ -651,15 +453,8 @@ def show_call(call_view, user, head):
     card = call_card_class()(call_view, user, head, window._main_window())
     st["cards"].append(card)
     _layout()
-    if not _animations():
-        card.born = _now() - 1e9
-        card.flash_at = card.born
-    else:
-        _fly_in(card)
     card.show()
     card.raise_()
-    _layout(animate=False)
-    _wake()
     return card
 
 
@@ -667,8 +462,6 @@ def dismiss_call(call_id):
     for card in call_cards():
         if card.call_id == call_id:
             card.leave()
-            if not _animations():
-                _tick()
 
 
 def dismiss_chat(chat_id):

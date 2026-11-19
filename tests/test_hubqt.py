@@ -46,16 +46,12 @@ class SeamsMixin(object):
             "classic": lambda: self.calls.append("classic"),
             "jump": lambda key: self.calls.append(("jump", key)),
             "toggled": lambda key, c: self.calls.append(("toggled", key, c)),
-            "hover": lambda: self.calls.append("hover"),
             "sounds": lambda on: self.calls.append(("sounds", on)),
-            "animations": lambda on: self.calls.append(("animations", on)),
             "mayatheme": lambda on: self.calls.append(("mayatheme", on)),
             "mayaicons": lambda on: self.calls.append(("mayaicons", on)),
             "viewportbar": lambda on: self.calls.append(("viewportbar", on)),
             "mainbar": lambda on: self.calls.append(("mainbar", on)),
             "camview": lambda on: self.calls.append(("camview", on)),
-            "windowlight": lambda on: self.calls.append(("windowlight", on)),
-            "windowlight_maya": lambda on: self.calls.append(("windowlight_maya", on)),
             "timebar": lambda on: self.calls.append(("timebar", on)),
             "timebar_steel": lambda on: self.calls.append(("timebar_steel", on)),
             "timebar_at": lambda on: self.calls.append(("timebar_at", on)),
@@ -90,10 +86,10 @@ class FlaggedRows(SeamsMixin, unittest.TestCase):
 
     FEATURES = ("MAYA_THEME", "MAYA_ICONS")
 
-    def test_the_rows_are_built_after_interface_animations(self):
+    def test_the_rows_are_built_after_interface_sounds(self):
         texts = [a.text() for a in self.skin.menu.actions()
                  if not a.isSeparator()]
-        self.assertEqual(texts[5:8], ["Interface animations", "Maya theme",
+        self.assertEqual(texts[4:7], ["Interface sounds", "Maya theme",
                                       "Maya icons"])
 
     def test_the_maya_theme_row_is_a_checkbox_painted_without_a_call(self):
@@ -233,27 +229,27 @@ class TheShell(SeamsMixin, unittest.TestCase):
 
     def test_the_menu_offers_check_update_hotkey_editor_sounds_classic(self):
         actions = [a for a in self.skin.menu.actions() if not a.isSeparator()][2:]
+        #  2026-11-19: no Interface animations, Window light or Light Maya's
+        #  windows rows any more («удаляем все подсветки и анимации из плагина»)
         self.assertEqual([a.text() for a in actions],
                          ["Check update", "Hotkey Editor...",
-                          "Interface sounds", "Interface animations",
+                          "Interface sounds",
                           "Viewport bar", "Main bar", "1P in its camera",
-                          "Window light", "Light Maya's windows",
                           "Time bar", "Side panel", "Layout", "Edge panel", "Classic look"])
         self.skin.paint_sounds(True)
-        self.skin.paint_animations(True)
         #  "Layout" (2026-10-16) and "Edge panel" (2026-10-09) are submenus:
         #  their own rows call nothing
-        self.assertEqual(actions[11].menu().objectName(),
+        self.assertEqual(actions[8].menu().objectName(),
                          "skeldarHubLayoutMenu")
-        self.assertIs(actions[12].menu(), self.skin.edge_menu)
+        self.assertIs(actions[9].menu(), self.skin.edge_menu)
         for action in actions:
             action.trigger()
-        self.assertEqual(actions[9].menu().objectName(), "skeldarHubTimeBarMenu")
+        self.assertEqual(actions[6].menu().objectName(), "skeldarHubTimeBarMenu")
         self.assertEqual(self.calls,
                          ["check_update", "hotkey_editor", ("sounds", False),
-                          ("animations", False), ("viewportbar", True), ("mainbar", True), ("camview", True),
-                          ("windowlight", True), ("windowlight_maya", True), "classic"])
-        rows = actions[9].menu().actions()
+                          ("viewportbar", True), ("mainbar", True), ("camview", True),
+                          "classic"])
+        rows = actions[6].menu().actions()
         self.assertEqual([a.text() for a in rows if not a.isSeparator()],
                          ["Maya's", "Docked", "Bottom edge", "Steel keys", "AT bar"])
         rows[2].trigger()
@@ -289,8 +285,8 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.skin.paint_timebar("docked", True, True)
         self.assertTrue(layouts[0].isChecked())
         #  the side panel (2026-10-17): Maya's / Right edge
-        self.assertEqual(actions[10].menu().objectName(), "skeldarHubSidePanelMenu")
-        side = actions[10].menu().actions()
+        self.assertEqual(actions[7].menu().objectName(), "skeldarHubSidePanelMenu")
+        side = actions[7].menu().actions()
         self.assertEqual([a.text() for a in side if not a.isSeparator()],
                          ["Maya's", "Right edge", "Out on selection", "Our Channel Box"])
         side[1].trigger()
@@ -658,15 +654,11 @@ class Cards(SeamsMixin, unittest.TestCase):
                                   "#7fa9e6", "#23324a")
         frame = card.frame
         image = QtGui.QImage(200, 100, QtGui.QImage.Format_ARGB32)
-        for level, flash in ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)):
-            frame.level, frame.flash = level, flash
-            image.fill(0)
-            frame.render(image)
-            middle = max(1, frame.height() // 2)
-            for x in (0, 1, 2):
-                self.assertNotEqual(image.pixelColor(x, middle).name(),
-                                    "#7fa9e6", (level, flash, x))
-        frame.level = frame.flash = 0.0
+        image.fill(0)
+        frame.render(image)
+        middle = max(1, frame.height() // 2)
+        for x in (0, 1, 2):
+            self.assertNotEqual(image.pixelColor(x, middle).name(), "#7fa9e6", x)
 
     def test_compact_card_margins(self):
         card = self.skin.add_card("retarget", "Retarget", "arrows-exchange",
@@ -690,9 +682,10 @@ class Cards(SeamsMixin, unittest.TestCase):
         self.assertEqual(self.host_layout.count(), 0)
 
 
-class ActiveCard(SeamsMixin, unittest.TestCase):
-    """2026-09-28: «активное окно подсвечивалось немного другим цветом» -
-    the card being worked in is lit."""
+class NoLight(SeamsMixin, unittest.TestCase):
+    """2026-11-19 (the animator: «удаляем все подсветки и анимации из плагина»):
+    no card lights up under the mouse or when worked in, no control glows, no
+    hover is heard. The card worked in is still remembered (`pinned`)."""
 
     def setUp(self):
         SeamsMixin.setUp(self)
@@ -700,189 +693,45 @@ class ActiveCard(SeamsMixin, unittest.TestCase):
                                     "#f0a26b", "#4a3322")
         self.b = self.skin.add_card("colour", "Colour", "palette", "#c89be8",
                                     "#3a2a4a")
+        self.button = QtWidgets.QPushButton("Add", self.b.body)
         self.field = QtWidgets.QLineEdit(self.b.body)
 
-    def test_none_is_lit_at_first(self):
-        self.assertIsNone(self.skin.active)
-        self.assertFalse(self.a.frame.property("skActive"))
-
-    def test_set_active_lights_one_and_puts_the_other_back(self):
-        self.skin.set_active("characters")
-        self.assertTrue(self.a.frame.property("skActive"))
-        self.skin.set_active("colour")
-        self.assertTrue(self.b.frame.property("skActive"))
-        self.assertFalse(self.a.frame.property("skActive"))
-        self.assertEqual(self.skin.active, "colour")
-
-    def test_the_card_of_a_widget_inside_it(self):
-        self.assertEqual(self.skin.card_of(self.field), "colour")
-        self.assertEqual(self.skin.card_of(self.a.header), "characters")
-        self.assertIsNone(self.skin.card_of(self.skin.header))
-        self.assertIsNone(self.skin.card_of(None))
-
-    def test_focus_inside_a_card_lights_it(self):
-        from PySide6 import QtCore as C, QtGui as G
-        QtWidgets.QApplication.sendEvent(
-            self.field, G.QFocusEvent(C.QEvent.FocusIn))
-        self.assertEqual(self.skin.active, "colour")
-
-    def test_a_press_inside_a_card_lights_it(self):
-        from PySide6 import QtCore as C, QtGui as G
-        press = G.QMouseEvent(C.QEvent.MouseButtonPress, C.QPointF(2, 2),
-                              C.QPointF(2, 2), C.Qt.LeftButton,
-                              C.Qt.LeftButton, C.Qt.NoModifier)
-        QtWidgets.QApplication.sendEvent(self.a.header, press)
-        self.assertEqual(self.skin.active, "characters")
-
     def _enter(self, widget):
         from PySide6 import QtCore as C, QtGui as G
         QtWidgets.QApplication.sendEvent(
             widget, G.QEnterEvent(C.QPointF(1, 1), C.QPointF(1, 1),
                                   C.QPointF(1, 1)))
 
-    def test_the_mouse_over_a_card_lights_it(self):
-        """2026-09-28: «когда я наводил мышкой на какой-то раздел у него
-        включалась подсветка» - not only after a click."""
-        self._enter(self.field)
-        self.assertEqual(self.skin.active, "colour")
-        self._enter(self.a.header)
-        self.assertEqual(self.skin.active, "characters")
-        self.assertTrue(self.a.frame.property("skActive"))
-        self.assertFalse(self.b.frame.property("skActive"))
-
-    def test_off_every_card_the_open_one_worked_in_is_lit_after_a_pause(self):
-        self.skin.set_active("colour")                   # pressed in
-        self._enter(self.a.header)                       # hovering
-        self.assertEqual(self.skin.active, "characters")
-        self._enter(self.skin.header)                    # off the cards
-        self.assertEqual(self.skin.active, "characters")  # not yet
-        self.assertTrue(self.skin._fallback.isActive())
-        self.assertEqual(self.skin._fallback.interval(), hubqt.FALLBACK_MS)
-        self.skin._fallback.timeout.emit()
-        self.assertEqual(self.skin.active, "colour")
-        self.assertEqual(self.skin.pinned, "colour")
-
-    def test_a_gap_between_two_cards_lights_nothing_in_between(self):
-        """«подсветка перепрыгивает на последний активный раздел ...
-        картинка как бы мигает»: the next card, entered within the pause,
-        cancels the fall back."""
-        self.skin.set_active("colour")
-        self._enter(self.a.header)
-        self._enter(self.skin.content)                   # the gap
-        self._enter(self.field)                          # the next card
-        self.assertFalse(self.skin._fallback.isActive())
-        self.assertEqual(self.skin.active, "colour")
-
-    def test_a_closed_card_worked_in_stays_dark(self):
-        """2026-09-28: back to the last card worked in only if it is open."""
-        self.skin.set_active("colour")
-        self.b.set_collapsed(True)
-        self._enter(self.a.header)
-        self._enter(self.skin.header)
-        self.skin._fallback.timeout.emit()
-        self.assertIsNone(self.skin.active)
-        self.assertEqual(self.skin.resting(), None)
-        self.b.set_collapsed(False)
-        self.assertEqual(self.skin.resting(), "colour")
-
-    def test_leaving_the_hub_lights_the_open_one_worked_in(self):
-        from PySide6 import QtCore as C
+    def test_set_active_remembers_the_card_and_paints_nothing(self):
+        before = self.a.frame.grab().toImage()
         self.skin.set_active("characters")
-        self._enter(self.field)
-        QtWidgets.QApplication.sendEvent(self.skin.root,
-                                         C.QEvent(C.QEvent.Leave))
-        self.skin._fallback.timeout.emit()
-        self.assertEqual(self.skin.active, "characters")
-
-    def test_a_windowed_skin_rests_with_nothing_lit(self):
-        self.skin.set_active("characters")
-        self.skin.windowed = True
-        self.assertIsNone(self.skin.resting())
-
-    def test_a_hover_pins_nothing(self):
-        self._enter(self.field)
+        self.assertEqual(self.skin.pinned, "characters")
+        self.assertFalse(self.a.frame.property("skActive"))
+        self.assertEqual(self.a.frame.grab().toImage(), before)
+        self.skin.set_active("nonsense")
         self.assertIsNone(self.skin.pinned)
-        self._enter(self.skin.header)
-        self.skin._fallback.timeout.emit()
-        self.assertIsNone(self.skin.active)
 
-    def test_a_press_cancels_a_pending_fall_back(self):
-        self._enter(self.a.header)
-        self._enter(self.skin.header)
-        self.skin.set_active("colour")
-        self.assertFalse(self.skin._fallback.isActive())
-        self.assertEqual(self.skin.active, "colour")
+    def test_the_mouse_calls_nothing_and_lights_nothing(self):
+        before = self.b.frame.grab().toImage()
+        for widget in (self.button, self.field, self.b.header, self.skin.header):
+            self._enter(widget)
+        self.assertEqual(self.calls, [])
+        self.assertIsNone(self.button.graphicsEffect())
+        self.assertEqual(self.b.frame.grab().toImage(), before)
 
-    def test_widgets_outside_the_hub_are_no_card(self):
-        outside = QtWidgets.QLineEdit()
-        self.assertIsNone(self.skin.card_of(outside))
-
-    def test_the_card_paints_its_light_not_the_sheet(self):
-        """2026-10-01: the stylesheet switched the light at once; the card
-        paints it now, fading (CardLight below)."""
+    def test_no_light_machinery_is_left(self):
+        for name in ("glow", "_fallback", "resting", "card_of", "active",
+                     "paint_animations", "paint_windowlight", "animations"):
+            self.assertFalse(hasattr(self.skin, name), name)
+        for name in ("paint_light", "glowing", "sounding", "Glower",
+                     "FALLBACK_MS", "GLIDE_WAIT_S", "badge_pop", "rotated",
+                     "card_parts", "burst_parts"):
+            self.assertFalse(hasattr(hubqt, name), name)
+        for name in ("level", "flash"):
+            self.assertFalse(hasattr(self.a.frame, name), name)
+        for name in ("set_lit", "pulse", "sliding"):
+            self.assertFalse(hasattr(self.a, name), name)
         self.assertNotIn('[skActive="true"]', style.stylesheet())
-        self.assertTrue(hasattr(self.a.frame, "level"))
-
-
-class HoverSound(SeamsMixin, unittest.TestCase):
-    """2026-10-01: «я вожу мышкой по кнопочкам нашего меню и вот тут давай
-    сделаем приятный и простой звук наводки» - every button of the hub
-    (QAbstractButton: Maya's buttons, checkboxes and segments, our jump
-    icons and header), its dropdowns and the card headers; nothing else."""
-
-    def setUp(self):
-        SeamsMixin.setUp(self)
-        self.card = self.skin.add_card("colour", "Colour", "palette",
-                                       "#c89be8", "#3a2a4a")
-        body = self.card.body
-        self.button = QtWidgets.QPushButton("Add", body)
-        self.segment = QtWidgets.QPushButton("Rig", body)
-        self.segment.setCheckable(True)
-        self.check = QtWidgets.QCheckBox("Timeline", body)
-        self.combo = QtWidgets.QComboBox(body)
-        self.label = QtWidgets.QLabel("status", body)
-        self.field = QtWidgets.QLineEdit(body)
-        self.jump = self.skin.add_jump("colour", "Colour", "palette",
-                                       "#c89be8")
-
-    def _enter(self, widget):
-        from PySide6 import QtCore as C, QtGui as G
-        self.calls[:] = []
-        QtWidgets.QApplication.sendEvent(
-            widget, G.QEnterEvent(C.QPointF(1, 1), C.QPointF(1, 1),
-                                  C.QPointF(1, 1)))
-        return self.calls.count("hover")
-
-    def test_every_kind_of_button_sounds_once(self):
-        self.skin.set_edge_mode(True)             # the pin is shown
-        for widget in (self.button, self.segment, self.check, self.jump,
-                       self.skin.hotkeys, self.skin.pin,
-                       self.skin.menu_button):
-            self.assertEqual(self._enter(widget), 1, widget)
-
-    def test_a_dropdown_and_a_card_header_sound(self):
-        self.assertEqual(self._enter(self.combo), 1)
-        self.assertEqual(self._enter(self.card.header), 1)
-
-    def test_what_is_not_clickable_is_silent(self):
-        for widget in (self.label, self.field, self.card.body,
-                       self.card.frame, self.skin.header, self.skin.content,
-                       self.card.chevron):
-            self.assertEqual(self._enter(widget), 0, widget.objectName())
-
-    def test_a_disabled_button_is_silent(self):
-        self.button.setEnabled(False)
-        self.assertEqual(self._enter(self.button), 0)
-
-    def test_a_button_outside_the_hub_is_silent(self):
-        outside = QtWidgets.QPushButton("Maya's own")
-        self.assertEqual(self._enter(outside), 0)
-        self.assertFalse(hubqt.sounding(outside, self.skin.root))
-        self.assertFalse(hubqt.sounding(None, self.skin.root))
-
-    def test_the_hover_still_lights_the_card(self):
-        self._enter(self.button)
-        self.assertEqual(self.skin.active, "colour")
 
     def test_the_layer_knows_no_audio(self):
         """maya_hubqt calls back; maya_hub plays (maya_hubsound). The one
@@ -1788,755 +1637,6 @@ class Menu(unittest.TestCase):
         self.assertIsNone(hubqt.row_value(rows[0][0]))      # the dead wrapper itself
 
 
-class CardMotion(SeamsMixin, unittest.TestCase):
-    """2026-10-01: «открывать закрывать с какими-то анимациями» - the body
-    slides, its children clipped, never squeezed."""
-
-    def setUp(self):
-        super(CardMotion, self).setUp()
-        self.card = self.skin.add_card("colour", "Colour", "palette",
-                                       "#c89be8", "#3a2a4a")
-        self.child = QtWidgets.QWidget()
-        self.child.setObjectName("motionChild")
-        self.child.setFixedHeight(120)
-        self.card.body_layout.addWidget(self.child)
-        self.host.resize(400, 800)
-        self.host.show()
-        self._settle()
-
-    def _settle(self):
-        for _ in range(6):
-            self.app.processEvents()
-
-    def _at(self, fraction):
-        anim = self.card._anim
-        anim.setCurrentTime(int(anim.duration() * fraction))
-        self._settle()
-
-    def test_a_click_slides_the_body_shut(self):
-        full = self.card.body.height()
-        self.card.toggle()
-        self.assertTrue(self.card.collapsed())
-        self.assertTrue(self.card.sliding())
-        self.assertEqual(self.card._anim.objectName(),
-                         "skeldarHubCardSlide_colour")
-        self.assertFalse(self.card.body.isHidden())
-        self._at(0.5)
-        self.assertLess(self.card.body.height(), full)
-        self.assertGreater(self.card.body.height(), 0)
-        self.assertEqual(self.child.height(), 120)          # clipped
-        self._at(1.0)
-        self.assertFalse(self.card.sliding())
-        self.assertTrue(self.card.body.isHidden())
-        self.assertEqual(self.card.body.maximumHeight(), 16777215)
-        self.assertTrue(self.card.body_layout.isEnabled())
-
-    def test_opening_slides_from_nothing_to_its_own_height(self):
-        self.card.set_collapsed(True)
-        self._settle()
-        self.card.set_collapsed(False, animate=True)
-        self.assertFalse(self.card.collapsed())
-        self.assertTrue(self.card.sliding())
-        self.assertFalse(self.card.body.isHidden())
-        self.assertEqual(self.card.body.maximumHeight(), 0)
-        natural = self.card.natural_height()
-        self._at(0.5)
-        self.assertGreater(self.card.body.height(), 0)
-        self.assertLess(self.card.body.height(), natural)
-        self.assertEqual(self.child.height(), 120)          # clipped
-        self.assertFalse(self.card.body_layout.isEnabled())
-        self._at(1.0)
-        self.assertFalse(self.card.sliding())
-        self.assertEqual(self.card.body.maximumHeight(), 16777215)
-        self.assertTrue(self.card.body_layout.isEnabled())
-        self.assertEqual(self.card.body.height(), natural)
-
-    def test_opening_takes_longer_than_shutting(self):
-        import maya_hubmotion as motion
-        full = self.card.body.height()
-        self.card.toggle()                                  # shutting
-        self.assertEqual(self.card._anim.duration(),
-                         motion.duration(full, 1.0))
-        self._at(1.0)
-        self.card.toggle()                                  # opening
-        natural = self.card.natural_height()
-        self.assertEqual(self.card._anim.duration(),
-                         motion.duration(natural, 1.0, opening=True))
-        self.assertGreater(motion.duration(natural, 1.0, opening=True),
-                           motion.duration(full, 1.0))
-
-    def test_a_second_click_mid_way_turns_it_back(self):
-        self.card.toggle()
-        self._at(0.4)
-        self.card.toggle()
-        self.assertFalse(self.card.collapsed())
-        self.assertTrue(self.card.sliding())
-        self._at(1.0)
-        self.assertFalse(self.card.body.isHidden())
-        self.assertEqual(self.card.body.height(), self.card.natural_height())
-
-    def test_switched_off_it_is_instant(self):
-        self.skin.animations = False
-        self.card.toggle()
-        self.assertFalse(self.card.sliding())
-        self.assertTrue(self.card.body.isHidden())
-
-    def test_code_without_animate_is_instant(self):
-        self.card.set_collapsed(True)
-        self.assertFalse(self.card.sliding())
-        self.assertTrue(self.card.body.isHidden())
-
-    def test_a_card_off_screen_is_instant(self):
-        self.host.hide()
-        self.card.toggle()
-        self.assertFalse(self.card.sliding())
-        self.assertTrue(self.card.body.isHidden())
-
-    def test_set_collapsed_with_animate_does_not_call_back(self):
-        self.card.set_collapsed(True, animate=True)
-        self.assertEqual(self.calls, [])
-
-    def test_the_chevron_turns_with_the_body(self):
-        def image():
-            return self.card.chevron.pixmap().toImage()
-        down = image()
-        self.card.toggle()
-        self._at(0.5)
-        self.assertGreater(self.card._angle, 0.0)
-        self.assertLess(self.card._angle, 90.0)
-        mid = image()
-        self.assertEqual(mid.size(), down.size())
-        self.assertNotEqual(mid, down)
-        self._at(1.0)
-        self.assertEqual(self.card._angle, 0.0)
-        self.assertNotEqual(image(), mid)
-
-    def test_the_header_keeps_its_height_while_sliding(self):
-        """2026-10-01, the animator: «название заголовка "дрожит" во время
-        анимации» - the header took the card's lag and its title, centred,
-        shook. It is Fixed now, and the card is laid out every tick."""
-        header = self.card.header
-        self.assertEqual(header.sizePolicy().verticalPolicy(),
-                         QtWidgets.QSizePolicy.Fixed)
-        hint = header.sizeHint().height()
-        for _ in range(2):                                 # shut, then open
-            self.card.toggle()
-            anim = self.card._anim
-            for fraction in (0.1, 0.3, 0.5, 0.7, 0.9):
-                #  read at the tick itself, before Qt's queue runs: what is
-                #  painted next must already be laid out
-                anim.setCurrentTime(int(anim.duration() * fraction))
-                now = (header.height(), self.card.frame.height())
-                self._settle()
-                later = (header.height(), self.card.frame.height())
-                self.assertEqual(now, later, fraction)
-                self.assertEqual(now[0], hint, fraction)
-            self._at(1.0)
-
-    def test_the_gap_under_the_header_is_the_bodys_top_margin(self):
-        """The column's spacing moved into the body's top margin, so it
-        opens and shuts with the body; 4 since the compact skin
-        (2026-10-08, it was 6). Since 2026-10-16 the body opens with the
-        card's hairline and as much again under it."""
-        header = self.card.header
-        bottom = header.y() + header.height()
-        top = self.child.mapTo(self.card.frame, QtCore.QPoint(0, 0)).y()
-        self.assertEqual(top - bottom,
-                         2 * style.px(4, 1.0) + max(1, style.px(1, 1.0)))
-
-
-class Rotated(unittest.TestCase):
-
-    def test_same_size_turned(self):
-        _app()
-        pix = hubqt.pixmap("chevron-right", "#9a9ca3", 14)
-        turned = hubqt.rotated(pix, 90.0)
-        self.assertEqual(turned.size(), pix.size())
-        down = hubqt.pixmap("chevron-down", "#9a9ca3", 14).toImage()
-        #  a quarter turn of right is down, to the antialiasing
-        a, b = turned.toImage(), down
-        diff = max(abs(a.pixelColor(x, y).alpha() - b.pixelColor(x, y).alpha())
-                   for x in range(14) for y in range(14))
-        self.assertLess(diff, 90)
-
-
-class Glide(SeamsMixin, unittest.TestCase):
-    """2026-10-01: a jump glides the scroll to its card."""
-
-    def setUp(self):
-        super(Glide, self).setUp()
-        for key in ("a", "b", "c", "d"):
-            card = self.skin.add_card(key, key.upper(), "user", "#f0a26b",
-                                      "#4a3322")
-            filler = QtWidgets.QWidget()
-            filler.setFixedHeight(300)
-            card.body_layout.addWidget(filler)
-        self.host.resize(400, 500)
-        self.host.show()
-        self._settle()
-        self.bar = self.skin.scroll.verticalScrollBar()
-
-    def _settle(self):
-        for _ in range(6):
-            self.app.processEvents()
-
-    def _to_end(self):
-        glide = self.skin._glide
-        glide.setCurrentTime(glide.duration())
-        self._settle()
-
-    def test_it_glides_onto_the_card(self):
-        target = self.skin.cards["c"].frame.y()
-        self.assertEqual(self.skin.scroll_to("c", animate=True), target)
-        self.assertIsNotNone(self.skin._glide)
-        self.assertEqual(self.skin._glide.objectName(), "skeldarHubGlide")
-        self.assertEqual(self.bar.value(), 0)
-        glide = self.skin._glide
-        glide.setCurrentTime(glide.duration() // 2)
-        self._settle()
-        self.assertGreater(self.bar.value(), 0)
-        self.assertLess(self.bar.value(), target)
-        self._to_end()
-        self.assertIsNone(self.skin._glide)
-        self.assertEqual(self.bar.value(), min(target, self.bar.maximum()))
-
-    def test_it_waits_for_the_other_cards_to_finish_sliding(self):
-        """Live 2026-10-01: aimed while cards shut above, it overshot the
-        shrinking range and was pulled back."""
-        above = self.skin.cards["a"]
-        above.toggle()                                      # sliding shut
-        self.skin.scroll_to("c", animate=True)
-        self.assertIsNone(self.skin._glide)
-        self.assertIs(self.skin._glide_card, self.skin.cards["c"])
-        self.assertTrue(self.skin._glide_wait.isActive())
-        above._anim.setCurrentTime(above._anim.duration())
-        self._settle()
-        self.skin._glide_when_settled()
-        self.assertIsNotNone(self.skin._glide)
-        self.assertIsNone(self.skin._glide_card)
-        self._to_end()
-        self.assertEqual(self.bar.value(),
-                         min(self.skin.cards["c"].frame.y(),
-                             self.bar.maximum()))
-
-    def test_the_wait_covers_every_slide(self):
-        import maya_hubmotion as motion
-        self.assertGreater(hubqt.GLIDE_WAIT_S * 1000.0,
-                           motion.MAX_MS * motion.OPEN_FACTOR)
-
-    def test_the_glide_lasts_while_its_card_still_opens(self):
-        """An opening (1.5 times slower since 2026-10-01) may outlast
-        SCROLL_MS; a glide that ended first stopped short of a card near
-        the bottom, whose own opening is what lengthens the range."""
-        import maya_hubmotion as motion
-        card = self.skin.cards["d"]
-        card.set_collapsed(True)
-        self._settle()
-        card.set_collapsed(False, animate=True)
-        remaining = card._anim.duration() - card._anim.currentTime()
-        self.assertGreater(remaining, motion.SCROLL_MS)
-        self.skin.scroll_to("d", animate=True)
-        self.assertGreaterEqual(self.skin._glide.duration(), remaining)
-        card._anim.setCurrentTime(card._anim.duration())
-        self._to_end()
-        self.assertEqual(self.bar.value(),
-                         min(card.frame.y(), self.bar.maximum()))
-
-    def test_the_animator_s_own_scroll_stops_it(self):
-        self.skin.scroll_to("d", animate=True)
-        self.bar.triggerAction(QtWidgets.QAbstractSlider.SliderSingleStepAdd)
-        self.assertIsNone(self.skin._glide)
-
-    def test_without_animate_or_switched_off_it_jumps(self):
-        self.skin.scroll_to("c")
-        self.assertIsNone(self.skin._glide)
-        self.assertEqual(self.bar.value(),
-                         min(self.skin.cards["c"].frame.y(),
-                             self.bar.maximum()))
-        self.bar.setValue(0)
-        self.skin.animations = False
-        self.skin.scroll_to("c", animate=True)
-        self.assertIsNone(self.skin._glide)
-        self.assertGreater(self.bar.value(), 0)
-
-
-class AnimationsRow(SeamsMixin, unittest.TestCase):
-
-    def test_a_checkbox_painted_without_a_call(self):
-        action = self.skin.animations_action
-        self.assertTrue(action.isCheckable())
-        self.skin.paint_animations(False)
-        self.assertFalse(action.isChecked())
-        self.assertFalse(self.skin.animations)
-        self.skin.paint_animations(True)
-        self.assertTrue(action.isChecked())
-        self.assertTrue(self.skin.animations)
-        self.assertEqual(self.calls, [])
-        action.trigger()
-        self.assertEqual(self.calls, [("animations", False)])
-
-
-class CardLight(SeamsMixin, unittest.TestCase):
-    """2026-10-01: «красивый глоу и анимацию подсветки при выделении карточки
-    или наведении на раздел» - the light fades, a chosen card flashes."""
-
-    def setUp(self):
-        super(CardLight, self).setUp()
-        for key in ("a", "b"):
-            card = self.skin.add_card(key, key.upper(), "user", "#f0a26b",
-                                      "#4a3322")
-            filler = QtWidgets.QWidget()
-            filler.setFixedHeight(120)
-            card.body_layout.addWidget(filler)
-        self.a, self.b = self.skin.cards["a"], self.skin.cards["b"]
-        self.skin.finish(style.stylesheet())
-        self.host.resize(400, 700)
-        self.host.show()
-        self._settle()
-
-    def _settle(self):
-        for _ in range(6):
-            self.app.processEvents()
-
-    def _end(self, anim):
-        anim.setCurrentTime(anim.duration())
-        self._settle()
-
-    def test_a_hover_fades_the_new_card_up_and_the_old_down(self):
-        import maya_hubmotion as motion
-        self.skin._light("a")
-        self.assertTrue(self.a.frame.property("skActive"))      # at once
-        anim = self.a._light_anim
-        self.assertEqual(anim.objectName(), "skeldarHubCardLight_a")
-        self.assertEqual(anim.duration(), motion.LIGHT_IN_MS)
-        anim.setCurrentTime(anim.duration() // 2)
-        self.assertGreater(self.a.frame.level, 0.0)
-        self.assertLess(self.a.frame.level, 1.0)
-        self._end(anim)
-        self.assertEqual(self.a.frame.level, 1.0)
-        self.assertIsNone(self.a._light_anim)
-        self.skin._light("b")
-        self.assertFalse(self.a.frame.property("skActive"))
-        self.assertEqual(self.a._light_anim.duration(), motion.LIGHT_OUT_MS)
-        self._end(self.a._light_anim)
-        self._end(self.b._light_anim)
-        self.assertEqual((self.a.frame.level, self.b.frame.level), (0.0, 1.0))
-
-    def test_turned_back_mid_way_it_goes_on_from_where_it_stands(self):
-        self.skin._light("a")
-        self.a._light_anim.setCurrentTime(self.a._light_anim.duration() // 2)
-        mid = self.a.frame.level
-        self.skin._light(None)
-        self.assertAlmostEqual(self.a.frame.level, mid)
-        self.assertLess(self.a._light_anim.duration(), 260)
-        self._end(self.a._light_anim)
-        self.assertEqual(self.a.frame.level, 0.0)
-
-    def test_a_new_pick_flashes_the_same_pick_does_not(self):
-        self.skin.set_active("a")
-        flash = self.a._flash_anim
-        self.assertIsNotNone(flash)
-        flash.setCurrentTime(int(flash.duration() * 0.18))
-        self.assertAlmostEqual(self.a.frame.flash, 1.0, places=2)
-        self._end(flash)
-        self.assertEqual(self.a.frame.flash, 0.0)
-        self.skin.set_active("a")                     # a click inside it
-        self.assertIsNone(self.a._flash_anim)
-        self.skin.set_active("b")
-        self.assertIsNotNone(self.b._flash_anim)
-
-    def test_switched_off_the_light_switches_and_never_flashes(self):
-        self.skin.animations = False
-        self.skin.set_active("a")
-        self.assertEqual(self.a.frame.level, 1.0)
-        self.assertIsNone(self.a._light_anim)
-        self.assertIsNone(self.a._flash_anim)
-        self.skin._light("b")
-        self.assertEqual((self.a.frame.level, self.b.frame.level), (0.0, 1.0))
-
-    def _pixel(self, frame, x, y):
-        image = frame.grab().toImage()
-        colour = image.pixelColor(x, y)
-        return colour.red(), colour.green(), colour.blue()
-
-    def _near(self, rgb, hex_colour, tolerance=3):
-        want = tuple(int(hex_colour[i:i + 2], 16) for i in (1, 3, 5))
-        return all(abs(a - b) <= tolerance for a, b in zip(rgb, want))
-
-    def test_the_painted_light(self):
-        """Lit: the ring is card_edge and the face card_active (the look of
-        2026-09-28); dark: both the plain card."""
-        frame = self.a.frame
-        x, ring_y = frame.width() // 2, 1
-        face = (frame.width() // 2, frame.height() - 40)
-        self.assertTrue(self._near(self._pixel(frame, x, ring_y),
-                                   style.TOKENS["card"]))
-        self.assertTrue(self._near(self._pixel(frame, *face),
-                                   style.TOKENS["card"]))
-        self.skin.animations = False
-        self.skin._light("a")
-        self._settle()
-        ring = self._pixel(frame, x, ring_y)
-        self.assertTrue(self._near(ring, style.TOKENS["card_edge"], 12), ring)
-        self.assertTrue(self._near(self._pixel(frame, *face),
-                                   style.TOKENS["card_active"]))
-        #  the inner glow: warmer just inside the ring than in the face
-        inside = self._pixel(frame, x, 4)
-        middle = self._pixel(frame, *face)
-        self.assertGreater((inside[0] - inside[2]) - (middle[0] - middle[2]),
-                           15, (inside, middle))
-
-
-class HoverGlow(SeamsMixin, unittest.TestCase):
-    """2026-10-02: «все надпись немного подсвечивались легким свечением когда
-    мы наводим на них мышкой» - every clickable control of the hub glows in
-    its own ink's colour while the mouse is over it, fading in and out."""
-
-    def setUp(self):
-        SeamsMixin.setUp(self)
-        self.card = self.skin.add_card("colour", "Colour", "palette",
-                                       "#c89be8", "#3a2a4a")
-        body = self.card.body
-        layout = self.card.body_layout
-        self.button = QtWidgets.QPushButton("Add", body)
-        self.other = QtWidgets.QPushButton("Remove", body)
-        self.segment = QtWidgets.QPushButton("Rig", body)
-        self.segment.setCheckable(True)
-        self.check = QtWidgets.QCheckBox("Timeline", body)
-        self.combo = QtWidgets.QComboBox(body)
-        self.label = QtWidgets.QLabel("status", body)
-        self.field = QtWidgets.QLineEdit(body)
-        for widget in (self.button, self.other, self.segment, self.check,
-                       self.combo, self.label, self.field):
-            layout.addWidget(widget)
-        self.jump = self.skin.add_jump("colour", "Colour", "palette",
-                                       "#c89be8")
-        self.now = [100.0]
-        self.skin.glow._clock = lambda: self.now[0]
-
-    def _enter(self, widget):
-        from PySide6 import QtCore as C, QtGui as G
-        QtWidgets.QApplication.sendEvent(
-            widget, G.QEnterEvent(C.QPointF(1, 1), C.QPointF(1, 1),
-                                  C.QPointF(1, 1)))
-
-    def _leave(self, widget):
-        QtWidgets.QApplication.sendEvent(widget,
-                                         QtCore.QEvent(QtCore.QEvent.Leave))
-
-    def _at(self, ms):
-        self.now[0] = 100.0 + ms / 1000.0
-        self.skin.glow.tick()
-
-    def _effect(self, widget):
-        effect = widget.graphicsEffect()
-        return effect if isinstance(effect, hubqt._glow_class()) else None
-
-    # ---------------------------------------------------------------- what
-
-    def test_what_glows_is_what_is_clickable(self):
-        root = self.skin.root
-        for widget in (self.button, self.segment, self.check, self.combo,
-                       self.jump, self.skin.hotkeys, self.skin.pin,
-                       self.skin.menu_button):
-            self.assertTrue(hubqt.glowing(widget, root), widget)
-        for widget in (self.label, self.field, self.card.body,
-                       self.card.frame, self.skin.header, None):
-            self.assertFalse(hubqt.glowing(widget, root), widget)
-
-    def test_a_card_header_does_not_glow_its_card_lights(self):
-        """«уберем свечение из надписей заголовков разделов мы и так разделы
-        подсвечивали раньше» - the header still ticks and lights its card."""
-        self.assertFalse(hubqt.glowing(self.card.header, self.skin.root))
-        self.assertTrue(hubqt.sounding(self.card.header, self.skin.root))
-        self._enter(self.card.header)
-        self.assertIsNone(self.card.header.graphicsEffect())
-        self.assertIsNone(self.skin.glow.lit)
-        self.assertEqual(self.skin.active, "colour")
-        title = self.card.header.findChild(QtWidgets.QLabel,
-                                           "skeldarHubCardTitle_colour")
-        self._enter(title)
-        self.assertIsNone(self.skin.glow.lit)
-
-    def test_not_disabled_not_a_swatch_not_a_foreign_effect(self):
-        root = self.skin.root
-        self.button.setEnabled(False)
-        self.assertFalse(hubqt.glowing(self.button, root))
-        self.other.setProperty("skRole", "swatch")
-        self.assertFalse(hubqt.glowing(self.other, root))
-        foreign = QtWidgets.QGraphicsOpacityEffect()
-        self.segment.setGraphicsEffect(foreign)
-        self.assertFalse(hubqt.glowing(self.segment, root))
-        self._enter(self.segment)
-        self.assertIs(self.segment.graphicsEffect(), foreign)
-        self.assertIsNone(self.skin.glow.lit)
-
-    def test_a_button_outside_the_hub_never(self):
-        outside = QtWidgets.QPushButton("Maya")
-        self._enter(outside)
-        self.assertIsNone(outside.graphicsEffect())
-        self.assertIsNone(self.skin.glow.lit)
-
-    # --------------------------------------------------------------- fades
-
-    def test_entering_fades_it_up(self):
-        import maya_hubmotion as motion
-        self._enter(self.button)
-        effect = self._effect(self.button)
-        self.assertIsNotNone(effect)
-        self.assertIs(self.skin.glow.lit, effect)
-        self.assertEqual(effect.mode, "ink")
-        self.assertEqual(effect.level, 0.0)
-        self._at(motion.GLOW_IN_MS / 2.0)
-        self.assertGreater(effect.level, 0.0)
-        self.assertLess(effect.level, 1.0)
-        self._at(motion.GLOW_IN_MS)
-        self.assertEqual(effect.level, 1.0)
-        self.assertFalse(self.skin.glow._timer.isActive())
-
-    def test_leaving_fades_it_down_and_keeps_the_effect(self):
-        import maya_hubmotion as motion
-        self._enter(self.button)
-        self._at(motion.GLOW_IN_MS)
-        effect = self._effect(self.button)
-        self.assertTrue(effect.rising)
-        self.now[0] = 200.0
-        self._leave(self.button)
-        self.assertIsNone(self.skin.glow.lit)
-        self.assertFalse(effect.rising)                    # drawn directly
-        self.now[0] = 200.0 + motion.GLOW_OUT_MS / 2000.0
-        self.skin.glow.tick()
-        self.assertGreater(effect.level, 0.0)
-        self.assertLess(effect.level, 1.0)
-        self.now[0] = 200.0 + motion.GLOW_OUT_MS / 1000.0
-        self.skin.glow.tick()
-        self.assertEqual(effect.level, 0.0)
-        self.assertIs(self._effect(self.button), effect)   # kept, dark
-
-    def test_a_dark_effect_is_disabled_so_qt_never_calls_it(self):
-        """Every control hovered once keeps its effect; a sliding card
-        repaints them all - dark, Qt paints them as if they had none."""
-        import maya_hubmotion as motion
-        self._enter(self.button)
-        effect = self._effect(self.button)
-        self.assertFalse(effect.isEnabled())               # not up yet
-        self._at(motion.GLOW_IN_MS / 2.0)
-        self.assertTrue(effect.isEnabled())
-        self.now[0] = 300.0
-        self._leave(self.button)
-        self.now[0] = 301.0
-        self.skin.glow.tick()
-        self.assertEqual(effect.level, 0.0)
-        self.assertFalse(effect.isEnabled())
-
-    def test_one_at_a_time(self):
-        self._enter(self.button)
-        self._at(200)
-        first = self._effect(self.button)
-        self._enter(self.other)
-        second = self._effect(self.other)
-        self.assertIs(self.skin.glow.lit, second)
-        self._at(600)
-        self.assertEqual((first.level, second.level), (0.0, 1.0))
-
-    def test_a_child_of_a_glowing_control_keeps_it_lit(self):
-        """The mouse onto a child of the lit control (Maya builds some of
-        its controls from several widgets): the control stays lit."""
-        child = QtWidgets.QLabel("inner", self.button)
-        self._enter(self.button)
-        lit = self.skin.glow.lit
-        self._enter(child)
-        self.assertIs(self.skin.glow.lit, lit)
-        self.assertIsNone(child.graphicsEffect())
-
-    def test_the_card_body_darkens_it(self):
-        self._enter(self.button)
-        self._enter(self.card.body)
-        self.assertIsNone(self.skin.glow.lit)
-
-    def test_switched_off_it_switches_at_once(self):
-        self.skin.paint_animations(False)
-        self._enter(self.button)
-        effect = self._effect(self.button)
-        self.assertEqual(effect.level, 1.0)
-        self.assertFalse(self.skin.glow._timer.isActive())
-        self._leave(self.button)
-        self.assertEqual(effect.level, 0.0)
-
-    def test_switching_off_finishes_a_fade(self):
-        self._enter(self.button)
-        self._at(20)
-        self.skin.paint_animations(False)
-        self.assertEqual(self._effect(self.button).level, 1.0)
-        self.assertFalse(self.skin.glow._timer.isActive())
-
-    def test_the_primary_button_lights_its_rim(self):
-        self.button.setProperty("skRole", "primary")
-        self._enter(self.button)
-        self.assertEqual(self._effect(self.button).mode, "rim")
-
-    def test_a_control_deleted_mid_fade_is_dropped(self):
-        import shiboken6
-        self._enter(self.button)
-        effect = self._effect(self.button)
-        shiboken6.delete(self.button)
-        self.assertFalse(shiboken6.isValid(effect))
-        self._at(50)                                       # no error
-        self.assertIsNone(self.skin.glow.lit)
-        self.assertNotIn(effect, self.skin.glow.effects)
-        self.assertFalse(self.skin.glow._timer.isActive())
-        self._enter(self.other)                            # still works
-        self.assertIsNotNone(self.skin.glow.lit)
-
-    def test_destroy_stops_it(self):
-        self._enter(self.button)
-        self.skin.destroy()
-        self.assertEqual(self.skin.glow.effects, [])
-        self.assertIsNone(self.skin.glow.lit)
-
-    def test_the_effects_are_held(self):
-        """PySide deletes an effect whose wrapper is collected (measured
-        2026-10-02): the glower holds every one it made."""
-        import gc
-        self._enter(self.button)
-        self._enter(self.other)
-        gc.collect()
-        self.assertIsNotNone(self._effect(self.button))
-        self.assertEqual(len(self.skin.glow.effects), 2)
-
-
-class HoverGlowPaint(unittest.TestCase):
-    """The effect's own picture: light added round a button's letters, the
-    letters and everything far from them left alone, the glow cached."""
-
-    def setUp(self):
-        self.app = _app()
-        self.host = QtWidgets.QWidget()
-        self.host.setStyleSheet(
-            "QWidget { background: #2a2c30; }"
-            "QPushButton { background: #34363b; color: #e4e4e6; border: none;"
-            " font-size: 14px; padding: 6px 14px; }")
-        layout = QtWidgets.QVBoxLayout(self.host)
-        layout.setContentsMargins(30, 30, 30, 30)
-        self.button = QtWidgets.QPushButton("Camera Setup")
-        layout.addWidget(self.button)
-        self.host.resize(260, 110)
-        self.host.show()
-        for _ in range(4):
-            self.app.processEvents()
-        self.effect = hubqt._glow_class()("ink", 1.0)
-        self.button.setGraphicsEffect(self.effect)
-
-    def tearDown(self):
-        self.host.deleteLater()
-
-    def _pixels(self, image):
-        import numpy as np
-        from PySide6 import QtGui
-        image = image.convertToFormat(QtGui.QImage.Format_RGB32)
-        w, h, bpl = image.width(), image.height(), image.bytesPerLine()
-        data = np.frombuffer(image.constBits(), np.uint8, count=bpl * h)
-        return data.reshape(h, bpl // 4, 4)[:, :w, :3].astype(int)
-
-    def _grab(self, level):
-        self.effect.level = level
-        self.effect.update()
-        return self._pixels(self.host.grab().toImage())
-
-    def test_light_round_the_letters_and_nothing_else(self):
-        import numpy as np
-        import maya_hubglow
-        dark = self._grab(0.0)
-        lit = self._grab(1.0)
-        diff = lit - dark
-        self.assertGreaterEqual(int(diff.min()), -1)        # only adds
-        self.assertGreater(int(diff.max()), 25)             # it glows
-        rect = self.button.geometry()
-        reach = maya_hubglow.pad(1.0) + 1
-        outside = np.ones(diff.shape[:2], bool)
-        outside[max(0, rect.top() - reach):rect.bottom() + reach + 1,
-                max(0, rect.left() - reach):rect.right() + reach + 1] = False
-        self.assertEqual(int(np.abs(diff[outside]).max()), 0)
-        #  the letters' cores stay the letters' colour
-        bright = dark.min(axis=2) > 200
-        self.assertTrue(bright.any())
-        self.assertLessEqual(int(np.abs(diff[bright]).max()), 25)
-
-    def test_the_glow_is_computed_once_per_picture(self):
-        self._grab(1.0)
-        self._grab(0.5)
-        self._grab(1.0)
-        self.assertEqual(self.effect.computed, 1)
-        self.button.setText("Camera Setup...")
-        self._grab(1.0)
-        self.assertEqual(self.effect.computed, 2)
-
-    def test_level_zero_draws_the_control_as_it_is(self):
-        import numpy as np
-        dark = self._grab(0.0)
-        self.button.setGraphicsEffect(None)
-        plain = self._pixels(self.host.grab().toImage())
-        self.assertEqual(int(np.abs(dark - plain).max()), 0)
-
-    def test_a_failing_glow_draws_the_plain_control_from_then_on(self):
-        import maya_hubglow
-        saved = maya_hubglow.bloom
-
-        def broken(*_a, **_k):
-            raise ValueError("no numpy today")
-        maya_hubglow.bloom = broken
-        try:
-            dark = self._grab(0.0)
-            lit = self._grab(1.0)
-        finally:
-            maya_hubglow.bloom = saved
-        self.assertTrue(self.effect.broken)
-        self.assertIn("no numpy today", self.effect.error)
-        self.assertEqual(int(abs(lit - dark).max()), 0)
-
-    def test_going_dark_draws_the_control_directly(self):
-        """Fading out, the control is drawn as Qt draws it (its own
-        ClearType text back as the hover style comes off), the lit
-        picture's glow over it - no new source pixmap."""
-        import numpy as np
-        dark = self._grab(0.0)
-        self._grab(1.0)
-        drawn = self.effect.from_pixmap
-        self.assertGreaterEqual(drawn, 1)
-        self.effect.rising = False
-        fading = self._grab(0.6)
-        self.assertEqual(self.effect.from_pixmap, drawn)
-        diff = fading - dark
-        self.assertGreaterEqual(int(diff.min()), -1)
-        self.assertGreater(int(diff.max()), 10)
-
-    def test_going_dark_the_glow_follows_the_control(self):
-        import numpy as np
-        import maya_hubglow
-        self._grab(1.0)
-        self.effect.rising = False
-        self.host.layout().setContentsMargins(30, 50, 30, 10)
-        for _ in range(4):
-            self.app.processEvents()
-        dark = self._grab(0.0)
-        self.effect.rising = False
-        self.effect.level = 1.0
-        fading = self._grab(1.0)
-        diff = np.abs(fading - dark).max(axis=2)
-        rect = self.button.geometry()
-        reach = maya_hubglow.pad(1.0) + 1
-        outside = np.ones(diff.shape, bool)
-        outside[max(0, rect.top() - reach):rect.bottom() + reach + 1,
-                max(0, rect.left() - reach):rect.right() + reach + 1] = False
-        self.assertGreater(int(diff.max()), 10)
-        self.assertEqual(int(diff[outside].max()), 0)
-
-    def test_a_working_glow_is_not_broken(self):
-        self._grab(1.0)
-        self.assertFalse(self.effect.broken, self.effect.error)
-        self.assertEqual(self.effect.computed, 1)
-
-
 class Windowed(unittest.TestCase):
     """2026-10-18: the edge rail's card in look B (maya_hubwindow), with a close
     button (spec 2026-10-18-floating-windows-design.md §2, §4). The docked hub's
@@ -2608,28 +1708,16 @@ class Windowed(unittest.TestCase):
         chip = self.card.frame.findChild(QtWidgets.QLabel, "skeldarHubCardIcon_alpha")
         self.assertNotIn("background: #", chip.styleSheet())
 
-    def test_the_hub_s_ink_glow_passes_a_pill_by(self):
-        """A pill lifts and glows by itself: no second glow from the hub."""
-        root = self.skin.root
-        self.assertTrue(hubqt.sounding(self.card.close, root))
-        self.assertFalse(hubqt.glowing(self.card.close, root))
-        self.assertFalse(hubqt.glowing(self.card.popout, root))
-
     def test_set_popped_lights_the_float_pill(self):
         self.card.set_popped(True)
         self.assertTrue(self.card.popout.lit)
         self.card.set_popped(False)
         self.assertFalse(self.card.popout.lit)
 
-    def test_the_light_and_the_shape_still_work(self):
-        self.card.set_lit(True)
-        self.assertEqual(self.card.frame.level, 1.0)
-        self.card.pulse()
-        self.assertEqual(self.card.frame.flash, 0.0)
+    def test_the_shape_still_works(self):
         self.app.processEvents()
         rects = hubqt.card_shape(self.skin, self.host)
         self.assertTrue(rects)
-        self.assertEqual(self.skin.card_of(self.card.close), "alpha")
 
     def test_the_body_path_runs_through_named_layouts(self):
         self.assertEqual(self.card.body_layout.parentWidget(), self.card.body)
@@ -2637,7 +1725,7 @@ class Windowed(unittest.TestCase):
         self.assertTrue(self.card.frame.layout().objectName())
 
     def test_a_card_on_the_rail_never_slides(self):
-        self.card.set_collapsed(True, animate=True)
+        self.card.set_collapsed(True)
         self.card.toggle()
         self.assertFalse(self.card.collapsed())
 
@@ -2752,15 +1840,10 @@ class Rail(unittest.TestCase):
         """2026-10-20: the chat's unread on its rail icon."""
         self.assertEqual(self.skin.set_badge("a", 4), 4)
         self.assertEqual(self.skin.badges, {"a": 4})
-        self.assertIn("a", self.skin._badge_pop, "a new count pops")
-        self.assertGreaterEqual(self.skin.badge_grow("a"), 1.0)
         self.skin.set_badge("a", 0)
         self.assertEqual(self.skin.badges, {})
 
-    def test_a_count_pops_up_and_back(self):
-        self.assertEqual(hubqt.badge_pop(0), 1.0)
-        self.assertGreater(hubqt.badge_pop(hubqt.BADGE_POP_MS / 2.0), 1.25)
-        self.assertEqual(hubqt.badge_pop(hubqt.BADGE_POP_MS), 1.0)
+    def test_a_large_count_reads_99_plus(self):
         self.assertEqual(hubqt.badge_text(140), "99+")
 
     def test_the_count_changes_the_icon_pixels(self):
@@ -2855,18 +1938,12 @@ class Rail(unittest.TestCase):
         actions["accordion"].trigger()
         self.assertEqual(self.calls[-1], ("layout", "accordion"))
 
-    def test_a_switch_fades_in_and_leaves_no_effect(self):
-        self.skin.animations = True
-        self.skin.show_card("b", animate=True)
+    def test_a_switch_shows_the_card_at_once_with_no_effect(self):
+        self.skin.show_card("b")
         frame = self.skin.cards["b"].frame
-        self.assertIsNotNone(frame.graphicsEffect())
-        anim = self.skin._switch
-        self.assertIsNotNone(anim)
-        anim.setCurrentTime(anim.duration())
+        self.assertFalse(frame.isHidden())
         self.assertIsNone(frame.graphicsEffect())
-        self.skin.animations = False
-        self.skin.show_card("c", animate=True)
-        self.assertIsNone(self.skin.cards["c"].frame.graphicsEffect())
+        self.assertTrue(self.skin.cards["c"].frame.isHidden())
 
     def test_the_accordion_is_unchanged(self):
         host = QtWidgets.QWidget()

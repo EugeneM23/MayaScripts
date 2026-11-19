@@ -1,4 +1,4 @@
-"""maya_hubedge - the hub as a panel sliding out of a screen edge.
+"""maya_hubedge - the hub as a panel out of a screen edge.
 
 2026-10-08 (the animator: «когда я подношу мышку к левому краю экрана то
 появляется наша полка когда убираю то полка скрывается»); since 2026-10-09
@@ -12,17 +12,13 @@ window (so above Maya, never above another application, gone with Maya
 minimized):
 
     host    the panel: the work area's chosen edge, its full height; holds
-            the SLOT, which holds the Skin's root. A slide moves the SLOT
-            inside the host - no window crosses into a monitor beside it,
-            nothing is laid out again per frame. The host paints the hub's
+            the SLOT, which holds the Skin's root. The host paints the hub's
             `panel` colour and a 1 px `inset_line` down its inner edge (the
             right on the left side, the left on the right side); the slot
             stops short of that line, so it always shows. Only its
-            FRAME shows (a window mask): out, the frame leads and the slot
-            follows close behind it (rules.reveal_at); back, both go
-            together (2026-10-09, «фоновая рамка ... появляется сильно
-            резко»: the host had popped up whole and the hub slid inside
-            it). The spec's
+            FRAME shows (a window mask). Out and back are at once since
+            2026-11-19 (the animator: «удаляем все подсветки и анимации из
+            плагина»; it slid before). The spec's
             "soft shadow" is NOT drawn: a shadow wants a translucent
             top-level, and a translucent top-level holding Maya's own widgets
             is untried here (every Maya control would be composited through
@@ -50,8 +46,6 @@ Three details the rules cannot see:
     a Python call for nothing. It is a child of the host (it dies with it -
     Qt clears a deleted filter from the application's list), never swallows
     an event, and does nothing once the host is gone.
-  - A slide starts from where the slot STANDS: a reveal arriving while the
-    panel is still sliding out turns back from there, no jump.
 
 The controller is NOT registered by its constructor (tests build several);
 the caller puts it on `sys._skeldar_hubedge` through `state()` (an install
@@ -66,8 +60,6 @@ import sys
 import traceback
 
 import maya_edgerules as rules
-import maya_hubburst as hubburst
-import maya_hubmotion as hubmotion
 import maya_hubqt as hubqt
 import maya_hubstyle as hubstyle
 
@@ -328,7 +320,7 @@ def _classes():
 
             def paintEvent(self, event):                   # noqa: N802
                 #  only the frame shows (the window's mask); its line on
-                #  the frame's inner edge, so it slides out with it
+                #  the frame's inner edge
                 if self.edge.rail:
                     #  see-through: the rail and the card paint themselves
                     return
@@ -465,18 +457,17 @@ class Edge(object):
     windows' events and the timers call. Every decision is maya_edgerules'.
 
     `scale` is the display scale (Qt px are physical in Maya); `width` the
-    panel's logical width; `motion()` whether it slides (default: the hub's
-    Interface animations); `on_width(width)` is called when a drag of the
+    panel's logical width; `on_width(width)` is called when a drag of the
     grip ends (the caller remembers it); `side` the screen edge it stands
     on, "left" or "right" (2026-10-09; `set_side` moves it). The seams:
     `work_area()` -> (x, y, w, h), `cursor()` -> (x, y), `buttons()` ->
-    bool, `app_active()` -> bool, all physical px, default Qt's."""
+    bool, `app_active()` -> bool, all physical px, default Qt's. The panel
+    comes out and goes back at once (no slide since 2026-11-19)."""
 
     def __init__(self, scale=1.0, parent=None, width=rules.WIDTH,
-                 motion=None, on_width=None, work_area=None, cursor=None,
+                 on_width=None, work_area=None, cursor=None,
                  buttons=None, app_active=None, side="left", rail=False,
-                 rest=None, shape=None, burst=None, burst_stop=None,
-                 card=None, on_height=None, least=None):
+                 rest=None, shape=None, card=None, on_height=None, least=None):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         classes = _classes()
@@ -490,13 +481,6 @@ class Edge(object):
         #  host-local rects (x, y, w, h) shown beyond the rail when out - the card;
         #  None: the whole frame (2026-10-17)
         self.shape = shape
-        #  2026-10-18 (floating windows): `burst(showing, origin, done, on_shape)`
-        #  -> bool bursts the card out of a global point or folds it into one;
-        #  `on_shape((x0, y0, x1, y1))` hears the shape, host-local, each tick,
-        #  and `burst_shape` (x, y, w, h) cuts the card from the mask while it
-        #  runs. None, or a burst that cannot start: the frame's old slide.
-        self.burst = burst
-        self.burst_stop = burst_stop   # () stops every card's burst still drawing (2026-10-19)
         #  2026-10-22: `card()` -> the rail card's host-local rect (x, y, w, h) or None:
         #  the width grip stands down its inner side and the height grip along its
         #  bottom; `on_height(logical or None, save)` sets the card's height (None:
@@ -508,12 +492,9 @@ class Edge(object):
         #  never narrower, whatever width the grip left
         self.least = least
         self._least_seen = None
-        self.burst_shape = None
-        self._burst_gen = 0         # each rail move's number: stale bursts are deaf
         self.scale = float(scale or 1.0)
         self.width = rules.clamp_width(width)
         self.side = rules.side_of(side)
-        self.motion = motion or hubmotion.enabled
         self.on_width = on_width
         self._work_area = work_area
         self.cursor = cursor or _qt_cursor
@@ -521,15 +502,13 @@ class Edge(object):
         self.app_active = app_active or _qt_app_active
         self.hold = rules.Hold()
         self.pinned = False
-        self._anim = None
         self._shown = False
-        #  where the slot RESTS between slides: out (x 0) once a slide in has
-        #  ended, off the edge otherwise. Not `_shown`, which turns True as a
-        #  reveal begins - the host's first resize event arrives on its
-        #  show(), and a slot put at 0 there would leave nothing to slide.
+        #  where the slot RESTS: out (x 0) once the panel is out, off the edge
+        #  otherwise. Not `_shown`, which turns True as a reveal begins - the
+        #  host's first resize event arrives on its show(), before the reveal
+        #  has put the slot out.
         self._rest_out = False
-        #  how much of the host shows, physical px from the screen edge: the
-        #  frame slides out before the hub and leaves with it (2026-10-09)
+        #  how much of the host shows, physical px from the screen edge
         self._frame = 0
         self._watching = False
         self.slot = self.grip = self.hgrip = None
@@ -602,8 +581,6 @@ class Edge(object):
             area = (tuple(self.work_area()), self.rest_px())
         except Exception:                                    # noqa: BLE001
             return
-        if self._anim is not None:
-            return
         least = self.least_width()
         if area != self._area or least != self._least_seen:
             self._area = area
@@ -633,9 +610,8 @@ class Edge(object):
 
     def visible_rects(self):
         """Every part of the panel showing on screen now (global x, y, w, h): the
-        rail, and - when out - the card `shape()` names, as far as the frame has
-        opened. The time bar steps aside for these and not for the empty height
-        under a card (2026-10-17)."""
+        rail, and - when out - the card `shape()` names. The time bar steps aside
+        for these and not for the empty height under a card (2026-10-17)."""
         if not self.alive() or not self.host.isVisible() or self._frame <= 0:
             return []
         if not (self.rail and self.shape is not None):
@@ -650,13 +626,9 @@ class Edge(object):
             rects = self.shape() or []
         except Exception:                                    # noqa: BLE001
             rects = []
-        cut = self.burst_shape
         for sx, sy, sw, sh in rects:
             left, right = max(sx, fx), min(sx + sw, fx + fw)
             top, bottom = sy, sy + sh
-            if cut is not None:                  # a burst: as far as it has grown
-                left, right = max(left, cut[0]), min(right, cut[0] + cut[2])
-                top, bottom = max(top, cut[1]), min(bottom, cut[1] + cut[3])
             if right > left and bottom > top:
                 out.append((x + left, y + top, right - left, bottom - top))
         return out
@@ -664,9 +636,8 @@ class Edge(object):
     def visible_rect(self):
         """What of the panel shows on screen now (global x, y, w, h), or None:
         the time bar steps aside for it (maya_timebar.edge._obstacles). The
-        frame's whole span: a rail panel's time bar asks `visible_rects`, which
-        cuts the card to a running burst (2026-10-18); this one rect is the
-        bound round all of it."""
+        frame's whole span: a rail panel's time bar asks `visible_rects`; this
+        one rect is the bound round all of it."""
         if not self.alive() or not self.host.isVisible() or self._frame <= 0:
             return None
         x, y, w, h = self._host_rect()
@@ -685,14 +656,11 @@ class Edge(object):
 
     @property
     def shown(self):
-        """The panel is out (or sliding out)."""
+        """The panel is out."""
         return self._shown
 
     def alive(self):
         return hubqt._valid(self.host)
-
-    def sliding(self):
-        return self._anim is not None
 
     def work_area(self):
         if self._work_area:
@@ -716,10 +684,6 @@ class Edge(object):
         (rules.slot_x turns it into the slot's x)."""
         return rules.offset_of(self.slot.x(), self._line(), self.side)
 
-    def _put_slot(self, offset):
-        self.slot.move(rules.slot_x(int(round(offset)), self._line(),
-                                    self.side), 0)
-
     # ------------------------------------------------------------ geometry
 
     def place(self):
@@ -736,9 +700,8 @@ class Edge(object):
         self._fit_slot()
 
     def _fit_slot(self):
-        """The slot over the host (short of its line) - out (offset 0), off
-        the edge in, where the slide has it while one runs - and the grip
-        on the host's inner side."""
+        """The slot over the host (short of its line) - out (offset 0) or off
+        the edge - and the grip on the host's inner side."""
         host, slot, grip = self.host, self.slot, self.grip
         if not (hubqt._valid(host) and slot is not None
                 and hubqt._valid(slot)):
@@ -746,22 +709,18 @@ class Edge(object):
         w, h = host.width(), host.height()
         line = self._line()
         if self.rail:
-            #  the slot never moves: the frame (the window's mask) opens from
-            #  the rail to the whole panel and closes back onto it
+            #  the slot never moves: the frame (the window's mask) shows the
+            #  rail alone, or the whole panel when out
             offset = 0
-            if self._anim is None:
-                self._set_frame(w if self._rest_out else self.rest_px())
+            self._set_frame(w if self._rest_out else self.rest_px())
             if grip is not None and hubqt._valid(grip):
                 grip.setVisible(bool(self._rest_out))
             slot.setGeometry(rules.slot_x(offset, line, self.side), 0,
                              max(1, w - line), h)
             self._place_grips()
             return
-        elif self._anim is not None:
-            offset = self.offset
-        else:
-            offset = 0 if self._rest_out else -w
-            self._set_frame(w if self._rest_out else 0)
+        offset = 0 if self._rest_out else -w
+        self._set_frame(w if self._rest_out else 0)
         slot.setGeometry(rules.slot_x(offset, line, self.side), 0,
                          max(1, w - line), h)
         if grip is not None and hubqt._valid(grip):
@@ -785,9 +744,9 @@ class Edge(object):
         px = int(max(0, min(w, round(px))))
         self._frame = px
         if self.rail and self.shape is not None:
-            #  the rail panel shows its rail and, as far as the frame has opened,
-            #  only what `shape()` names (the card): no backdrop under it
-            #  (2026-10-17, «не нужно им рисовать фон под ними»)
+            #  the rail panel shows its rail and, when out, only what `shape()`
+            #  names (the card): no backdrop under it (2026-10-17, «не нужно им
+            #  рисовать фон под ними»)
             q = hubqt.qt()
             h = host.height()
             rx, rw = rules.frame_span(max(1, min(w, self.rest_px())), w, self.side)
@@ -798,10 +757,6 @@ class Edge(object):
                 rects = self.shape() or []
             except Exception:                                # noqa: BLE001
                 rects = []
-            cut = self.burst_shape
-            if cut is not None:
-                #  a burst running: the card as far as its shape has grown
-                opened = opened.intersected(q.QtGui.QRegion(*[int(v) for v in cut]))
             for x, y, rw2, rh in rects:
                 region = region.united(opened.intersected(
                     q.QtGui.QRegion(int(x), int(y), int(rw2), int(rh))))
@@ -818,30 +773,27 @@ class Edge(object):
 
     # ------------------------------------------------------------ in, out
 
-    def reveal(self, hold=False, origin=None):
-        """Bring the panel out. `hold`: by command (the shelf button, a
-        hotkey, a tool's show_window) - it stays until visited or a press
-        lands outside it (rules.Hold). `origin`: the rail's card bursts out
-        of that global point (2026-10-18; None: the frame's slide)."""
+    def reveal(self, hold=False):
+        """Bring the panel out, at once. `hold`: by command (the shelf button,
+        a hotkey, a tool's show_window) - it stays until visited or a press
+        lands outside it (rules.Hold)."""
         if not self.alive():
             return
         for timer in (self.dwell, self.hide, self.retry):
             timer.stop()
         if self.rail:
-            self._rail_slide(True, origin)
+            self._rail_move(True)
             return
-        if self._shown and self._anim is None:
+        if self._shown:
             self.host.raise_()
         else:
-            #  a slot at rest waits off the edge (`_rest_out`), and the
-            #  slide starts from where it stands
             self.place()
             self._shown = True
             self.sensor.hide()
             self.host.show()
             self.host.raise_()
             self.grip.raise_()
-            self._slide(True)
+            self._move_done(True)
         if hold:
             self.hold.start()
             #  the cursor already over the panel crossed no edge, so no
@@ -850,10 +802,8 @@ class Edge(object):
                 self.hold.enter()
         self._sync_watch()
 
-    def conceal(self, origin=None):
-        """Send the panel back off the edge (the sensor comes back when the
-        slide ends). `origin`: the rail's card folds into that global point
-        (2026-10-18: the ✕, the ⧉ or the lit rail icon pressed)."""
+    def conceal(self):
+        """Send the panel back off the edge, at once (the sensor comes back)."""
         if not self.alive():
             return
         for timer in (self.dwell, self.hide, self.retry):
@@ -861,12 +811,12 @@ class Edge(object):
         if not self._shown:
             return
         if self.rail:
-            self._rail_slide(False, origin)
+            self._rail_move(False)
             return
         self._shown = False
         self.hold = rules.Hold()
         self._sync_watch()
-        self._slide(False)
+        self._move_done(False)
 
     def toggle(self):
         """The rail: out when in, in when out."""
@@ -876,246 +826,22 @@ class Edge(object):
             self.reveal()
         return self._shown
 
-    def _rail_slide(self, showing, origin=None):
-        """The rail panel: the window's frame opens from the rail to the whole
-        width (out) or closes back onto it (in), from where it stands; the
-        host stays up with its rail. With a `burst` seam and an `origin`
-        (2026-10-18, «Из точки»), the card bursts out of that point instead -
-        the frame whole at once, the mask showing the rail and the card as far
-        as the burst has grown it - or folds into it, the frame back on the
-        rail when the fold ends."""
-        self._stop_anim()
-        self._burst_gen += 1        # any burst still running is no longer heard
+    def _rail_move(self, showing):
+        """The rail panel, at once: the window's frame shows the whole width
+        (out) or the rail alone (in); the host stays up with its rail."""
         self._shown = bool(showing)
         self.place()
         self.host.show()
         self.host.raise_()
-        width = max(1, self.host.width())
-        rest = min(width, self.rest_px())
-        end = width if showing else rest
-        start = self._frame
-        try:
-            moving = bool(self.motion())
-        except Exception:                                    # noqa: BLE001
-            moving = False
-        if moving and self.burst is not None and self._rail_burst(showing, origin):
-            return
-        self._stop_bursts()
-        self.burst_shape = None
-        if showing:
-            self._rest_out = True        # the grip and the frame follow at the end
-            if hubqt._valid(self.grip):
-                self.grip.setVisible(True)
-                self.grip.raise_()
-        if not moving or start == end:
-            self._rail_done(showing)
-            return
-        span = max(1, width - rest)
-        self._animate(rules.IN_MS if showing else rules.OUT_MS, span, showing,
-                      start, end, self._set_frame,
-                      lambda: self._rail_done(showing))
-
-    def _stop_bursts(self):
-        """A move without a burst (2026-10-19): a card's burst still drawing its
-        fold must not go on over the plain slide."""
-        if self.burst_stop is not None:
-            try:
-                self.burst_stop()
-            except Exception:                                # noqa: BLE001
-                traceback.print_exc()
-
-    def _rail_burst(self, showing, origin):
-        """Start the card's burst out of global `origin` (or its fold into it)
-        through the `burst` seam; False when it cannot (no origin, the seam
-        refusing or raising) and nothing was changed."""
-        if origin is None:
-            return False
-        width = max(1, self.host.width())
-        #  only the newest burst speaks (review 2026-10-18): a card folding
-        #  while another bursts out (each card has its own Burster) must not
-        #  write its shape or send the panel back to the rail when it ends
-        gen = self._burst_gen
-
-        def current():
-            return self._burst_gen == gen and self.alive()
-
-        if showing:
-            #  until the first tick the card shows as the burst's start box
-            #  about the point, pulled inside the card as the plan pulls it
-            #  (the host-local shape replaces it then)
-            self.burst_shape = self._start_box(origin)
-
-        def on_shape(shape):
-            if not current():
-                return
-            x0, y0, x1, y1 = shape
-            self.burst_shape = (int(round(x0)), int(round(y0)),
-                                max(0, int(round(x1 - x0))),
-                                max(0, int(round(y1 - y0))))
-            self._set_frame(self._frame)
-
-        def done():
-            if not current():
-                return
-            self.burst_shape = None
-            if not showing:
-                self._shown = False
-                self._set_frame(min(width, self.rest_px()))
-            self._rail_done(showing)
-
-        try:
-            ran = bool(self.burst(showing, origin, done, on_shape))
-        except Exception:                                    # noqa: BLE001
-            traceback.print_exc()
-            ran = False
-        if not ran:
-            self.burst_shape = None
-            return False
-        if showing and self._burst_gen == gen:
-            #  asked first, the frame whole only once the burst runs: a refused
-            #  one would have flashed the whole card for a frame
-            self._rest_out = True
-            self._set_frame(width)
-            if hubqt._valid(self.grip):
-                self.grip.setVisible(True)
-                self.grip.raise_()
-        return True
-
-    def _start_box(self, origin):
-        """The burst's start box (x, y, w, h), host-local, about global `origin`
-        pulled ORIGIN_PAD inside the card (the largest of `shape()`'s rects) the
-        way maya_hubburst.plan_open pulls it."""
-        q = hubqt.qt()
-        at = self.host.mapFromGlobal(q.QtCore.QPoint(int(origin[0]),
-                                                    int(origin[1])))
-        px, py = at.x(), at.y()
-        try:
-            rects = [r for r in (self.shape() or []) if r[2] > 0 and r[3] > 0] \
-                if self.shape is not None else []
-        except Exception:                                    # noqa: BLE001
-            rects = []
-        hx = hubstyle.px(hubburst.START_HALF[0], self.scale)
-        hy = hubstyle.px(hubburst.START_HALF[1], self.scale)
-        if not rects:
-            return (px - hx, py - hy, 2 * hx, 2 * hy)
-        cx, cy, cw, ch = max(rects, key=lambda r: r[2] * r[3])
-        lx, ly = hubburst.clamp_origin((px - cx, py - cy), (cw, ch),
-                                       hubburst.ORIGIN_PAD * self.scale)
-        if hubburst.MOTION == "spring":
-            #  the spring starts as the card scaled about the point (2026-10-22)
-            x0, y0, x1, y1 = hubburst.plan_spring(True, (lx, ly), (cw, ch),
-                                                  self.scale).start
-            return (int(round(cx + x0)), int(round(cy + y0)),
-                    int(round(x1 - x0)), int(round(y1 - y0)))
-        #  and the box kept inside the card (maya_hubburst._box)
-        x0, y0 = max(0.0, lx - hx), max(0.0, ly - hy)
-        x1, y1 = min(float(cw), lx + hx), min(float(ch), ly + hy)
-        return (int(round(cx + x0)), int(round(cy + y0)),
-                int(round(x1 - x0)), int(round(y1 - y0)))
-
-    def _rail_done(self, showing):
-        self._stop_anim()
         self._rest_out = bool(showing)
-        if self.alive():
-            self._fit_slot()
+        if showing and hubqt._valid(self.grip):
+            self.grip.setVisible(True)
+            self.grip.raise_()
+        self._fit_slot()
 
-    def _slide(self, showing):
-        """Out: the frame first, then the hub inside it (2026-10-09: the
-        frame had popped up whole and the hub slid in it). Back: the hub and
-        the frame together - no empty frame is left standing. Each phase
-        starts from where it stands, so a turn back part way never jumps."""
-        self._stop_anim()
-        width = max(1, self.host.width())
-        try:
-            moving = bool(self.motion())
-        except Exception:                                    # noqa: BLE001
-            moving = False
-        if not moving:
-            self._slide_done(showing)
-            return
-        hub_out = self.offset > -width
-        if showing and not hub_out and self._frame <= 0:
-            #  from rest: one timeline, the frame leading, the hub close
-            #  behind it (rules.reveal_at)
-            self._reveal_from_rest(width)
-            return
-        if showing and not hub_out and self._frame < width:
-            #  a frame part way out (a hide turned back): it finishes, then
-            #  the hub
-            self._animate(rules.FRAME_MS, width, True, self._frame, width,
-                          self._set_frame, lambda: self._slide(True))
-            return
-        if not showing and not hub_out:
-            #  only the frame was out: a reveal turned back in its first phase
-            self._animate(rules.OUT_MS, width, False, self._frame, 0,
-                          self._set_frame, lambda: self._slide_done(False))
-            return
-        if showing:
-            self._set_frame(width)
-        start = self.offset
-        end = 0 if showing else -width
-        if start == end:
-            self._slide_done(showing)
-            return
-        self._animate(rules.IN_MS if showing else rules.OUT_MS, width,
-                      showing, start, end,
-                      lambda x: self._move_slot(x, width, showing),
-                      lambda: self._slide_done(showing))
-
-    def _reveal_from_rest(self, width):
-        q = hubqt.qt()
-        total = rules.reveal_ms()
-        anim = q.QtCore.QVariantAnimation(self.host)
-        anim.setStartValue(0.0)
-        anim.setEndValue(1.0)
-        anim.setDuration(total)
-
-        def step(t):
-            if not hubqt._valid(self.slot):
-                return
-            frame, offset = rules.reveal_at(t * total, width)
-            self._set_frame(frame)
-            self._put_slot(offset)
-        anim.valueChanged.connect(step)
-        anim.finished.connect(lambda: self._slide_done(True))
-        self._anim = anim
-        anim.start()
-
-    def _animate(self, full, width, showing, start, end, step, done):
-        """`step(value)` from `start` to `end` with the rules' easing
-        (slide_x), over the rules' time for the whole width shortened for a
-        part of it; `done()` at the end."""
-        q = hubqt.qt()
-        anim = q.QtCore.QVariantAnimation(self.host)
-        anim.setStartValue(0.0)
-        anim.setEndValue(1.0)
-        anim.setDuration(max(1, int(round(
-            full * abs(end - start) / float(width)))))
-        anim.valueChanged.connect(lambda t: step(
-            start + (end - start) * self._eased(t, width, showing)))
-        anim.finished.connect(done)
-        self._anim = anim
-        anim.start()
-
-    @staticmethod
-    def _eased(t, width, showing):
-        """The rules' easing as a fraction 0..1 of the way: exactly slide_x
-        when a phase starts at rest."""
-        full = rules.slide_x(t, width, showing)
-        if showing:
-            return (full + width) / float(width)      # -width..0 -> 0..1
-        return -full / float(width)                   # 0..-width -> 0..1
-
-    def _move_slot(self, offset, width, showing):
-        if not hubqt._valid(self.slot):
-            return
-        offset = int(round(offset))
-        self._put_slot(offset)
-        if not showing:
-            self._set_frame(width + offset)           # the frame leaves with it
-
-    def _slide_done(self, showing):
-        self._stop_anim()
+    def _move_done(self, showing):
+        """The hover panel out or off the edge: its slot and frame where they
+        rest, the sensor back when it went."""
         self._rest_out = bool(showing)
         if not self.alive():
             return
@@ -1125,13 +851,6 @@ class Edge(object):
             self.sensor.show()
             #  above any floating window of Maya's left at the edge
             self.sensor.raise_()
-
-    def _stop_anim(self):
-        anim, self._anim = self._anim, None
-        if anim is not None and hubqt._valid(anim):
-            anim.blockSignals(True)
-            anim.stop()
-            anim.deleteLater()
 
     # ------------------------------------------------------------ events
 
@@ -1228,14 +947,13 @@ class Edge(object):
 
     def set_side(self, side):
         """Stand on `side` from now on (2026-10-09, ⋮ -> Edge panel ▸ Left
-        edge / Right edge). A new side: any slide stops, the panel goes at
-        once (no slide back across the screen), the windows stand at the new
-        edge with the slot off it and the sensor up - the caller reveals it
-        there. True when it moved; the side it already stands on, False."""
+        edge / Right edge). A new side: the panel goes, the windows stand at
+        the new edge with the slot off it and the sensor up - the caller
+        reveals it there. True when it moved; the side it already stands on,
+        False."""
         side = rules.side_of(side)
         if side == self.side or not self.alive():
             return False
-        self._stop_anim()
         for timer in (self.dwell, self.hide, self.retry):
             timer.stop()
         self._shown = False
@@ -1271,7 +989,7 @@ class Edge(object):
         return int(round(rect[3] / self.scale)) if rect else 0
 
     def _place_grips(self):
-        """The rail card's grips on the card while it is out and still (2026-10-22):
+        """The rail card's grips on the card while it is out (2026-10-22):
         the width grip down its inner side, the height grip along its bottom; in
         the old place (the host's whole inner side) with no card to follow."""
         if not self.rail or not self.alive():
@@ -1284,7 +1002,7 @@ class Edge(object):
                 grip.setGeometry(rules.grip_x(w, g, self.side), 0, g, h)
             return
         rect = self.card_rect()
-        out = bool(self._rest_out) and self._anim is None and rect is not None
+        out = bool(self._rest_out) and rect is not None
         g = hubstyle.px(rules.GRIP_PX, self.scale)
         grips = rules.card_grips(rect, g, self.side) if rect else None
         for widget, at in ((self.grip, grips[0] if grips else None),
@@ -1365,7 +1083,6 @@ class Edge(object):
     def destroy(self):
         """Delete the windows (the slot and what stands in it with them).
         Harmless twice, and after `destroy_all`."""
-        self._stop_anim()
         self.hold = rules.Hold()
         self._shown = False
         self._sync_watch()

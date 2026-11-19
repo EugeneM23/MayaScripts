@@ -1,25 +1,9 @@
-"""The Pose Library window's look as data, the corners `test_poselib_look` leaves out: a zoom that
-goes nowhere, the skill drop's own caption, an applied status with no count.
+"""The Pose Library window's look as data, the corners `test_poselib_look` leaves out: the skill
+drop's own caption, an applied status with no count.
 """
 import unittest
 
 from maya_poselib import look
-
-
-class ZoomTime(unittest.TestCase):
-
-    def test_no_way_to_go_takes_no_time(self):
-        self.assertEqual(look.zoom_ms(0.0, 0.0), 0)
-        self.assertEqual(look.zoom_ms(1.0, 1.0), 0)
-        self.assertEqual(look.zoom_ms(0.4, 0.4), 0)
-
-    def test_the_whole_way_takes_the_whole_time_in_or_out(self):
-        self.assertEqual(look.zoom_ms(0.0, 1.0), look.ZOOM_IN_MS)
-        self.assertEqual(look.zoom_ms(1.0, 0.0), look.ZOOM_OUT_MS)
-
-    def test_part_of_the_way_takes_its_share_and_never_under_the_least(self):
-        self.assertEqual(look.zoom_ms(0.0, 0.5), max(look.ZOOM_MIN_MS, int(round(look.ZOOM_IN_MS * 0.5))))
-        self.assertEqual(look.zoom_ms(0.5, 0.5001), look.ZOOM_MIN_MS)
 
 
 class DropCaption(unittest.TestCase):

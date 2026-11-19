@@ -10,7 +10,6 @@ import tests  # noqa: F401  (puts SkeldarAnim/ on sys.path)
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-import maya_hubmotion as hubmotion
 from maya_chat import look
 from maya_chat import notify
 from maya_chat import session as S
@@ -240,7 +239,6 @@ class ListAndChat(Base):
         self.win.refresh()
         last = [b for b in self.win.feed.boxes if b.item.kind == "msg"][-1]
         self.assertEqual(last.item.tick, "sent")
-        self.assertIn("m3", self.win.feed.flashing, "the sent one flashes")
         self.ses.state.reads["dm"] = {"bob": 3}
         self.win.refresh()
         last = [b for b in self.win.feed.boxes if b.item.kind == "msg"][-1]
@@ -295,16 +293,17 @@ class ListAndChat(Base):
         dict(self.win.menu_rows(box.item))["Повторить"]()
         self.assertIn(("retry", "f"), self.ses.calls)
 
-    def test_a_new_message_comes_in_from_below(self):
+    def test_a_new_message_stands_at_once_and_nothing_moves(self):
         self.win.open_chat("dm")
         new = msg("m9", 9, text="news")
         self.ses.state.messages["dm"].append(new)
         self.ses.tell("message", {"message": new})
         self.win.refresh()
-        self.assertIn("m9", self.win.feed.entering)
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self.win.animate()
-        self.assertEqual(self.win.feed.entering, {})
+        self.assertIn("m9", [b.item.key() for b in self.win.feed.boxes if b.item.kind == "msg"])
+        for gone in ("entering", "flashing", "folding", "pill_pops", "plays", "anim"):
+            self.assertFalse(hasattr(self.win.feed, gone), gone)
+        for gone in ("animate", "timer", "burster"):
+            self.assertFalse(hasattr(self.win, gone), gone)
 
     def test_typing_goes_to_the_session(self):
         self.win.open_chat("dm")
@@ -456,20 +455,11 @@ class Toasts(unittest.TestCase):
         cards = [self.toast.show("c%d" % i, BOB, "Bob", "m") for i in range(4)]
         live = self.toast.cards()
         self.assertEqual(live, cards[1:])
-        for card in live:
-            self._land(card)
-        self.toast._layout(animate=False)
         self.assertLess(cards[2].y(), cards[3].y())
         self.assertEqual(cards[2].x(), cards[3].x())
 
-    def _land(self, card):
-        card.fly_at -= look.TOAST_FLY_MS + 1
-        self.toast._tick()
-
-    def test_it_stands_at_the_bottom_left_of_its_area(self):
+    def test_it_stands_at_the_bottom_left_of_its_area_at_once(self):
         card = self.toast.show("dm", BOB, "Bob", "hi")
-        self._land(card)
-        self.toast._layout(animate=False)
         (x, y, w, h), _o = self.toast.area()
         margin = look.TOAST_MARGIN * card.scale
         self.assertAlmostEqual(card.x(), x + margin, delta=1)
@@ -485,22 +475,17 @@ class Toasts(unittest.TestCase):
         opened.assert_called_once_with("dm")
         self.assertEqual(self.toast.cards(), [])
 
-    def test_it_goes_by_itself_after_its_stay(self):
+    def test_it_goes_by_itself_after_its_stay_and_at_once(self):
         card = self.toast.show("dm", BOB, "Bob", "hi")
-        self._land(card)
-        card.stay_left = 0
-        card.last -= 20
-        self.toast._tick()
+        self.assertTrue(card.stay.isActive())
+        self.assertLessEqual(card.stay.remainingTime(), look.TOAST_STAY_MS)
+        card.stay.timeout.emit()                     # the stay is over
         self.assertIsNotNone(card.leaving)
-        card.leaving -= look.TOAST_OUT_MS + 1
-        self.toast._tick()
         self.assertEqual(self.toast._state()["cards"], [])
+        self.assertFalse(card.isVisible())
 
     def test_the_card_paints_ink(self):
         card = self.toast.show("dm", BOB, "Bob", "hi there")
-        self._land(card)
-        card.born -= 10000
-        card.flash_at -= 10000
         image = QtGui.QImage(card.size(), QtGui.QImage.Format_ARGB32)
         image.fill(0)
         card.render(image)
@@ -508,37 +493,17 @@ class Toasts(unittest.TestCase):
                     if image.pixelColor(x, y).alpha() > 0)
         self.assertGreater(inked, 100)
 
-    def test_a_new_card_flies_in_from_the_right_and_lands_whole(self):
+    def test_a_new_card_is_whole_at_its_place_at_once(self):
         card = self.toast.show("dm", BOB, "Bob", "hi")
-        self.assertTrue(card.flying())
         (x, y, w, h), _o = self.toast.area()
-        target = card.base
-        self.assertGreater(card.x(), target[0] + w * 0.5)       # far to the right at first
-        self.assertGreater(card.width(), card.cw)               # room for the streak
-        self.assertTrue(card.testAttribute(QtCore.Qt.WA_TransparentForMouseEvents))
-        card.fly_at -= look.TOAST_FLY_MS * 0.5
-        self.toast._tick()
-        self.assertGreater(card.x(), target[0])
-        self.assertLess(card.y(), target[1])                    # the swoop rises
-        self.assertGreater(card.trail, 0)
-        before = card.stay_left
-        self._land(card)
-        self.assertFalse(card.flying())
-        self.assertEqual((card.x(), card.y()), tuple(target))
+        margin = look.TOAST_MARGIN * card.scale
+        self.assertAlmostEqual(card.x(), x + margin, delta=1)
         self.assertEqual(card.width(), card.cw)
         self.assertFalse(card.testAttribute(QtCore.Qt.WA_TransparentForMouseEvents))
-        self.assertGreaterEqual(before, look.TOAST_STAY_MS)      # the stay starts on landing
-
-    def test_a_flying_card_paints_its_streak(self):
-        card = self.toast.show("dm", BOB, "Bob", "hi")
-        card.fly_at -= look.TOAST_FLY_MS * 0.15
-        self.toast._tick()
-        image = QtGui.QImage(card.size(), QtGui.QImage.Format_ARGB32)
-        image.fill(0)
-        card.render(image)
-        y = card.height() // 2
-        behind = [image.pixelColor(x, y).alpha() for x in range(card.cw + 4, card.width(), 4)]
-        self.assertGreater(max(behind), 0)
+        for gone in ("fly_from", "flying", "trail", "flash_at", "born", "tick"):
+            self.assertFalse(hasattr(card, gone), gone)
+        for gone in ("_tick", "_wake", "_fly_in", "_animations"):
+            self.assertFalse(hasattr(self.toast, gone), gone)
 
     def test_opening_its_chat_takes_its_card_away(self):
         self.toast.show("dm", BOB, "Bob", "hi")
@@ -847,64 +812,26 @@ class EmojiPictures(Base):
         found, where = self.win.feed.box_at(box.bigs[1][0].center())
         self.assertEqual(where, "big:😂")
 
-    def test_an_animated_big_emoji_plays_once_then_on_hover(self):
+    def test_an_emoji_alone_is_its_still_picture_and_nothing_plays(self):
+        from maya_chat import emojiart
         box = self._send_in("😂")
         feed = self.win.feed
-        frames = [(QtGui.QImage(4, 4, QtGui.QImage.Format_ARGB32), 50)]
+        rect = box.bigs[0][0]
+        original = emojiart.pixmap
+        drawn = []
 
-        class FakeAnim(object):
-            def frames(self, cp, px):
-                return frames
-
-            def take_changed(self):
-                return False
-        feed.anim = FakeAnim()
-        with mock.patch.object(hubmotion, "enabled", return_value=True):
+        def pixmap(glyph, px):
+            drawn.append((glyph, px))
+            return original(glyph, px)
+        with mock.patch.object(emojiart, "pixmap", side_effect=pixmap):
             self._paint(feed)
-            key = (box.item.key(), "😂", "big")
-            self.assertIn(key, feed.plays)
-            self.assertIn(key, feed.played)
-            feed.plays.clear()
-            self._paint(feed)
-            self.assertNotIn(key, feed.plays)            # once only
-            ev = QtGui.QMouseEvent(QtCore.QEvent.MouseMove, box.bigs[0][0].center(),
-                                   box.bigs[0][0].center(), QtCore.Qt.NoButton,
-                                   QtCore.Qt.NoButton, QtCore.Qt.NoModifier)
-            feed.mouseMoveEvent(ev)
-            self.assertIn(key, feed.plays)               # the mouse plays it again
-
-    def test_no_animation_when_animations_are_off(self):
-        box = self._send_in("😂")
-        feed = self.win.feed
-
-        class FakeAnim(object):
-            def frames(self, cp, px):
-                return [(QtGui.QImage(4, 4, QtGui.QImage.Format_ARGB32), 50)]
-
-            def take_changed(self):
-                return False
-        feed.anim = FakeAnim()
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self._paint(feed)
-        self.assertFalse(feed.plays)
-
-    def test_a_play_never_painted_again_is_dropped_past_the_cap(self):
-        feed = self.win.feed
-        for store in (feed.entering, feed.flashing, feed.pill_pops):
-            store.clear()
-        feed.folding = []
-        feed.playing = None
-        key = (("gone", "x"), "😂", "big")                 # its box is never painted again
-        feed.plays[key] = W._now_ms() - W.PLAY_CAP_MS - 1
-        busy = feed.tick(16)
-        self.assertNotIn(key, feed.plays)
-        self.assertFalse(busy)
-
-    def test_another_chat_drops_the_plays(self):
-        feed = self.win.feed
-        feed.plays[(("dm", "m1"), "😂", "big")] = W._now_ms()
-        self.win.open_chat("dm2")
-        self.assertFalse(feed.plays)
+        self.assertIn(("😂", int(rect.width())), drawn)
+        ev = QtGui.QMouseEvent(QtCore.QEvent.MouseMove, rect.center(), rect.center(),
+                               QtCore.Qt.NoButton, QtCore.Qt.NoButton, QtCore.Qt.NoModifier)
+        feed.mouseMoveEvent(ev)
+        self.assertFalse(feed.play_timer.isActive(), "an emoji under the mouse plays nothing")
+        for gone in ("Animated", "animated", "anim_of", "frame_at", "decode"):
+            self.assertFalse(hasattr(emojiart, gone), gone)
 
     def test_a_pill_is_a_picture_and_a_count(self):
         self.ses.state.messages["dm"][0]["reactions"] = {"🔥": ["bob"]}
@@ -978,7 +905,7 @@ class Picker(Base):
         top = self.picker.section_top("food")
         self.assertAlmostEqual(self.picker.scroll, min(top, self.picker.max_scroll()), delta=1)
 
-    # ---- fix round 1: the glow, the screen, the lit tab
+    # ---- fix round 1: the hovered cell, the screen, the lit tab
     def _cell_in_widget(self, i=0):
         rect, g = self.picker.cells[i]
         return QtCore.QRectF(rect.x(), rect.y() + self.picker.top_grid - self.picker.scroll,
@@ -1005,27 +932,24 @@ class Picker(Base):
                                  QtCore.Qt.NoButton, QtCore.Qt.NoModifier)
         self.picker.mouseMoveEvent(move)
 
-    def test_the_hovered_cell_glows(self):
+    def test_the_hovered_cell_takes_a_flat_face_at_once(self):
         rect, g = self._cell_in_widget(0)
         cold = self._mean(self._render(), rect)
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self._hover(rect)
-        self.assertEqual(self.picker.levels.get(("emoji", g)), 1.0)
+        self._hover(rect)
+        self.assertEqual(self.picker.hover, ("emoji", g))
         lit = self._mean(self._render(), rect)
-        with mock.patch.object(self.picker, "_glow"):
-            plain = self._mean(self._render(), rect)
         self.assertGreater(sum(lit), sum(cold) + 10)
-        self.assertGreater(lit[0], plain[0] + 3)          # the accent's warm light
-        self.assertGreater(lit[0] - lit[2], plain[0] - plain[2])
+        #  a grey face, no warm accent light added
+        self.assertLessEqual(lit[0] - lit[2], cold[0] - cold[2] + 1)
+        for gone in ("levels", "timer", "_glow", "_wake", "_tick"):
+            self.assertFalse(hasattr(self.picker, gone), gone)
 
-    def test_the_glow_stays_inside_its_cell(self):
+    def test_the_hover_face_stays_inside_its_cell(self):
         rect, g = self._cell_in_widget(0)
         right, _g = self._cell_in_widget(1)
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self._hover(rect)
+        plain = self._mean(self._render(), right)
+        self._hover(rect)
         lit = self._mean(self._render(), right)
-        with mock.patch.object(self.picker, "_glow"):
-            plain = self._mean(self._render(), right)
         self.assertAlmostEqual(sum(lit), sum(plain), delta=0.5)
 
     def test_the_picker_stays_inside_a_small_screen(self):
@@ -1279,9 +1203,7 @@ class LookA(Base):
         box = self.msgs()[0]
         self.win.feed._hover_row(box.bubble.center())
         self.assertEqual(self.win.feed.hover_key, box.item.key())
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self.win.feed.tick(16)
-        rect = self.win.feed._reply_rect(box)
+        rect = self.win.feed._reply_rect(box)              # at once: no fade in
         self.assertGreater(rect.left(), box.bubble.right(), "theirs: on the right")
         found, where = self.win.feed.box_at(rect.center())
         self.assertEqual(where, "reply")

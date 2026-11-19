@@ -3388,7 +3388,14 @@ def sheet(scale=1.0):
 
 def make_window(scene, parent=None, root=None):
     """A window over `scene` - the tests' seam; `build` makes the real one."""
-    return _classes()["PoseWindow"](scene, parent, root)
+    window = _classes()["PoseWindow"](scene, parent, root)
+    try:
+        #  no field holds the keyboard until clicked, no button ever (2026-11-19)
+        import maya_hubqt
+        maya_hubqt.quiet_focus(window)
+    except Exception:                                        # noqa: BLE001
+        pass
+    return window
 
 
 _BUILT_HERE = False      # this module object built the window standing in the control

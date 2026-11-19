@@ -1,5 +1,14 @@
 # Interface look and motion: the Time Bar's style is the rule
 
+> **Retired 2026-11-19: no motion and no light.** The animator: «удаляем все подсветки и
+> анимации из плагина больше они не нужны. интерфейс должен быть максимально легким».
+> Every animation (bursts, slides, fades, pops, springs, flights, zooms, eased
+> transitions, the 16 ms drivers) and every decorative light (hover glow, card light,
+> window light, key glows, sparks, fire) was taken out of the plugin. A panel appears,
+> changes and goes at once; state (selected, current, active) is drawn flat - a face
+> colour or a plain outline. The LOOK below (the dark tokens, painted controls) still
+> stands; every MOTION rule below is history. Do not add motion back unless asked.
+
 The animator, 2026-10-18: «Давай составим правила и требования к анимациям интерфейса в
 нашем проекте. Я хочу что бы мы всегда делали интерфейс в стиле в котором у нас сейчас
 сделан тайм слайдер».

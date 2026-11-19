@@ -1,5 +1,5 @@
 """The skill library drawer, offscreen (2026-10-19): chips, categories, search, a chip clicked into
-the cell it was opened for, a chip dragged onto the bar, the fold."""
+the cell it was opened for, a chip dragged onto the bar, opening and closing at once."""
 import os
 import unittest
 
@@ -43,12 +43,10 @@ class Geometry(unittest.TestCase):
 @unittest.skipIf(QT is None, "no Qt")
 class Drawer(unittest.TestCase):
 
-    motion = False
-
     def setUp(self):
         self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
         self.link = SkillLink(look.defaults())
-        self.strip = bar.make(self.link, 1.0, maya_hubstyle.TOKENS, motion=self.motion)
+        self.strip = bar.make(self.link, 1.0, maya_hubstyle.TOKENS)
         self.strip.resize(1100, 150)
         self.strip.move(200, 900)
         self.strip.show()
@@ -58,10 +56,10 @@ class Drawer(unittest.TestCase):
         self.model = self.link.model
 
     def drawer(self, target=None):
-        d = library.make(self.strip, target, (400, 900), entries=fake_entries, motion=self.motion)
+        d = library.make(self.strip, target, entries=fake_entries)
         d.open()
         self.app.processEvents()
-        self.addCleanup(lambda: library.close(instant=True))
+        self.addCleanup(library.close)
         return d
 
     def mouse(self, widget, kind, x, y, button, buttons):
@@ -130,26 +128,33 @@ class Drawer(unittest.TestCase):
         self.assertFalse(getattr(d, "_failed", False))
 
 
-@unittest.skipIf(QT is None, "no Qt")
-class DrawerMotion(Drawer):
-
-    motion = True
-
-    def test_chips_pop_in_from_the_point_and_fold(self):
+    def test_it_opens_and_closes_at_once_with_no_timer(self):
+        """2026-11-19, «удаляем все подсветки и анимации»."""
+        self.assertFalse(hasattr(library, "FOLD_MS"))
         d = self.drawer()
-        x, y = self.chip(d, 0)
-        scale, _o = d._entrance(x, y)
-        self.assertLess(scale, 1.0)
-        d.t0 -= 5000
-        self.assertEqual(d._entrance(x, y), (1.0, 1.0))
-        d.fold()
-        self.assertIsNotNone(d.folding)
+        for name in ("timer", "folding", "t0", "lift", "motion", "_entrance", "_tick"):
+            self.assertFalse(hasattr(d, name), name)
+        self.assertTrue(d.isVisible())
+        library.close()
+        self.assertFalse(d.isVisible())
+        self.assertFalse(library.is_open())
 
-    def test_a_chip_clicked_goes_to_its_cell_and_the_drawer_folds(self):
-        d = self.drawer(("cell", 6, 0, 4))
-        self.click(d, *self.chip(d, 2))
-        self.assertEqual(look.item_at(self.model.data(), 6, 0, 4), {"kind": "maya", "command": "GraphEditor"})
-        self.assertIsNotNone(d.folding)
+    def test_a_hovered_chip_changes_its_face_only(self):
+        E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
+        d = self.drawer()
+
+        def picture():
+            image = QT.QtGui.QImage(d.size(), QT.QtGui.QImage.Format_ARGB32)
+            image.fill(0)
+            d.render(image)
+            return image
+        x, y, w, h = d.rects()[0]
+        before = picture()
+        self.mouse(d, E.MouseMove, x + w / 2, y + h / 2, Qt.NoButton, Qt.NoButton)
+        self.assertEqual(d.hover, 0)
+        after = picture()
+        self.assertNotEqual(before.pixel(int(x + 3), int(y + h - 4)), after.pixel(int(x + 3), int(y + h - 4)))
+        self.assertEqual(before.pixel(int(x - 2), int(y - 2)), after.pixel(int(x - 2), int(y - 2)))
 
 
 if __name__ == "__main__":

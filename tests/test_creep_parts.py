@@ -156,13 +156,6 @@ class Auto(unittest.TestCase):
         self.assertIn('if not getattr(entry, "part", "")', src)
 
 
-class FitsTheGrid(unittest.TestCase):
-
-    def test_every_model_with_a_row_has_a_fire(self):
-        import maya_charfire
-        for model in ("Creep2_ArmR", "Creep2_Head"):
-            self.assertIn(model, maya_charfire.FIRES)
-
 
 if __name__ == "__main__":
     unittest.main()

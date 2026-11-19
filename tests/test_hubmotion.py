@@ -93,21 +93,21 @@ class Switch(unittest.TestCase):
     def tearDown(self):
         motion._cmds = self.saved
 
-    def test_on_by_default(self):
-        self.assertTrue(motion.enabled())
+    def test_always_off(self):
+        """2026-11-19: no animations - off whatever is remembered."""
+        self.assertFalse(motion.enabled())
+        motion.set_enabled(True)
+        self.assertFalse(motion.enabled())
 
-    def test_set_enabled_remembers(self):
+    def test_set_enabled_still_writes_the_option(self):
         self.assertFalse(motion.set_enabled(False))
         self.assertEqual(self.cmds.vars[motion.OPTIONVAR], 0)
-        self.assertFalse(motion.enabled())
-        self.assertTrue(motion.set_enabled(True))
-        self.assertTrue(motion.enabled())
 
-    def test_without_maya_it_is_on(self):
+    def test_without_maya_it_is_off(self):
         def broken():
             raise ImportError("no maya")
         motion._cmds = broken
-        self.assertTrue(motion.enabled())
+        self.assertFalse(motion.enabled())
         self.assertFalse(motion.set_enabled(False))
 
 

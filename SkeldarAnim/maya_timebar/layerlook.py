@@ -1,11 +1,8 @@
 """The Time Bar's layer panel, laid out (2026-10-18): pure functions of sizes and rows.
-Stdlib and `look` only (a test pins it). Rects are (x, y, w, h); every length is
-logical px x `ui`.
+Stdlib only (a test pins it). Rects are (x, y, w, h); every length is logical px x `ui`.
 
 Spec: docs/superpowers/specs/2026-10-18-time-bar-layer-panel-design.md
 """
-
-from . import look
 
 ROW_H = 30          # a layer's row
 ROW_GAP = 3
@@ -208,17 +205,6 @@ def step_type(t):
 
 def signature(rows):
     return tuple(tuple(sorted(r.items())) for r in rows)
-
-
-def schedule(parts, origin, ui):
-    """(open delay, fold delay) of each part rect: in nearest the origin first,
-    out farthest first (the Time Bar's burst, a vertical step counting 1.5)."""
-    out = []
-    for x, y, w, h in parts:
-        dx, dy = x + w / 2.0 - origin[0], y + h / 2.0 - origin[1]
-        d = abs(dx) + abs(dy) * 1.5
-        out.append((look.burst_delay(dx, dy, ui), look.fold_delay(d, ui)))
-    return out
 
 
 # -- the lanes as a dope sheet (2026-10-19) ---------------------------------------------

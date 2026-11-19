@@ -143,17 +143,6 @@ class SliderTests(unittest.TestCase):
         self.assertEqual(look.modifier(ctrl=True), 0.2)
 
 
-class KeyMoveTests(unittest.TestCase):
-
-    def test_a_key_that_came_or_left_this_frame(self):
-        before = {"tx": (False, 3), "ty": (True, 3), "tz": (True, 3), "rx": (True, 2)}
-        after = {"tx": (True, 4), "ty": (False, 2), "tz": (True, 3), "ry": (True, 1)}
-        self.assertEqual(look.key_moves(before, after, 12), (["tx"], ["ty"]))
-
-    def test_a_key_dragged_away_is_no_deletion(self):
-        self.assertEqual(look.key_moves({"tx": (True, 3)}, {"tx": (False, 3)}, 12), ([], []))
-
-
 class HeadTests(unittest.TestCase):
 
     def test_head_text(self):
@@ -168,7 +157,7 @@ class Purity(unittest.TestCase):
                               "SkeldarAnim")
         code = ("import sys; import maya_channelbox, maya_channelbox.look; "
                 "bad = [m for m in sys.modules if m.split('.')[0] in "
-                "('maya', 'PySide6', 'PySide2', 'shiboken6')]; print(bad); "
+                "('maya', 'PySide6', 'PySide2', 'shiboken6', 'maya_timebar')]; print(bad); "
                 "sys.exit(1 if bad else 0)")
         done = subprocess.run([sys.executable, "-c", code], cwd=plugin,
                               capture_output=True, text=True)

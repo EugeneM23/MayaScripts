@@ -808,11 +808,18 @@ def _file_cache_path(source, location):
 
 
 def _load_file_cache(source, location):
+    """The last scan of `location`, less what a scan now leaves out (a
+    listing cached before the rule - the AppleDouble rows of 2026-11-19)."""
+    from maya_uebridge import sources
     try:
         with open(_file_cache_path(source, location), "r") as handle:
-            return records.parse_payload(json.load(handle))
+            found = records.parse_payload(json.load(handle))
     except (OSError, IOError, ValueError):
         return None
+    if found is None:
+        return None
+    return [r for r in found if not getattr(r, "path", "")
+            or sources.walked(r.path, location)]
 
 
 def _save_file_cache(record_list, source, location):

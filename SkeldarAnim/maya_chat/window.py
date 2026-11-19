@@ -7,6 +7,10 @@ state, listening to it. The window never talks to the server but through the ses
 to send). A message may carry a file (2026-10-22, spec 2026-10-22-chat-files-design.md): its card
 opens, imports, saves or stashes it, a paperclip sends a scene or a file, and files from Explorer,
 Stash or Shared dropped on the window go into the open chat.
+
+Nothing in it moves or glows (2026-11-19, «удаляем все подсветки и анимации»): a message, a
+count, a hover, the window itself come and go at once. What still runs on a timer is content -
+an animation card's preview sheet playing under the mouse.
 """
 import math
 import sys
@@ -14,7 +18,6 @@ import os
 import time
 import traceback
 
-import maya_hubmotion as hubmotion
 import maya_hubqt as hubqt
 import maya_hubstyle as hubstyle
 import maya_hubwindow as hubwindow
@@ -26,12 +29,6 @@ from . import calls as _calls
 POS_VAR = "skeldarChatWindowPos"
 SIZE_VAR = "skeldarChatWindowSize"
 ROOT_NAME = "skeldarChatWindow"
-TICK_MS = 16
-ENTER_MS = 260        # a new message comes up from below, a little overshoot
-FOLD_MS = 200         # a deleted one folds
-SENT_FLASH_MS = 120   # a message sent (its ack) flashes
-POP_MS = 200          # a count pops when it changes
-HOVER_MS = 110
 TYPING_FRAME_S = 3.0
 FILE_CARD = 46        # a file message's card (2026-10-22)
 FILE_ROW = 24         # its buttons / its progress bar
@@ -46,7 +43,6 @@ FILE_FILTER = "Maya scenes, FBX and pictures (*.ma *.mb *.fbx *.png *.jpg *.jpeg
 PLAY_MS = 33          # an animation preview's frame while it plays under the mouse
 BIG_EMOJI = 64        # an emoji sent alone (1-3 of them), logical px (2026-10-22)
 PILL_EMOJI = 18       # a reaction's picture in its pill
-PLAY_CAP_MS = 5000    # an emoji's play is dropped past this, painted or not (Noto's ~2.2 s)
 
 _CLASSES = {}
 _VARS = {}            # optionVars where there is no Maya (tests)
@@ -132,20 +128,6 @@ def _blend(a, b, k):
     return q.QtGui.QColor(int(ca.red() + (cb.red() - ca.red()) * k),
                           int(ca.green() + (cb.green() - ca.green()) * k),
                           int(ca.blue() + (cb.blue() - ca.blue()) * k))
-
-
-def back_out(u):
-    u = max(0.0, min(1.0, u))
-    c = 1.70158
-    return 1 + (c + 1) * (u - 1) ** 3 + c * (u - 1) ** 2
-
-
-def pop_scale(age_ms):
-    """A count's pop: 1 -> 1.25 -> 1 over POP_MS."""
-    if age_ms < 0 or age_ms >= POP_MS:
-        return 1.0
-    import math
-    return 1.0 + 0.25 * math.sin(math.pi * age_ms / float(POP_MS))
 
 
 def _picture(user, rect):
@@ -329,9 +311,6 @@ def list_class():
                 self.rows = []            # dicts: id, chat, title, preview, time, unread, user, typing
                 self.selected = None
                 self.hovered = None
-                self.glow = {}            # id -> 0..1
-                self.pops = {}            # id -> started (ms)
-                self._unread = {}
                 self.setMouseTracking(True)
                 self.setObjectName("skeldarChatList")
 
@@ -348,16 +327,8 @@ def list_class():
                 return out, y
 
             def set_rows(self, rows):
-                now = _now_ms()
-                for r in rows:
-                    before = self._unread.get(r["id"])
-                    if before is not None and before != r.get("unread") and r.get("unread"):
-                        self.pops[r["id"]] = now
-                    self._unread[r["id"]] = r.get("unread")
                 self.rows = rows
                 self.setMinimumHeight(max(1, int(self.tops()[1])))
-                if self.pops:
-                    self.win.animate()
                 self.update()
 
             def index_at(self, y):
@@ -380,11 +351,12 @@ def list_class():
                 hovered = self.rows[i]["id"] if i >= 0 else None
                 if hovered != self.hovered:
                     self.hovered = hovered
-                    self.win.animate()
+                    self.update()
 
             def leaveEvent(self, event):                   # noqa: N802
-                self.hovered = None
-                self.win.animate()
+                if self.hovered is not None:
+                    self.hovered = None
+                    self.update()
 
             def mousePressEvent(self, event):              # noqa: N802
                 pos = event.position() if hasattr(event, "position") else event.pos()
@@ -400,26 +372,6 @@ def list_class():
                     else:
                         self.win.open_chat(row["id"])
 
-            def tick(self, dt):
-                busy = False
-                for r in self.rows:
-                    goal = 1.0 if r["id"] == self.hovered else 0.0
-                    have = self.glow.get(r["id"], 0.0)
-                    new = look_approach(have, goal, dt, HOVER_MS)
-                    if new != have:
-                        self.glow[r["id"]] = new
-                        busy = True
-                    if new != goal:
-                        busy = True
-                now = _now_ms()
-                for key, start in list(self.pops.items()):
-                    if now - start >= POP_MS:
-                        del self.pops[key]
-                    busy = True
-                if busy:
-                    self.update()
-                return busy or bool(self.pops)
-
             def paintEvent(self, event):                   # noqa: N802
                 p = QtGui.QPainter(self)
                 try:
@@ -434,7 +386,6 @@ def list_class():
                 px = lambda n: hubstyle.px(n, s)              # noqa: E731
                 p.setRenderHint(QtGui.QPainter.Antialiasing)
                 w = self.width()
-                now = _now_ms()
                 tops, _total = self.tops()
                 online = self.win.session.state.online
                 from . import emojiart
@@ -451,9 +402,8 @@ def list_class():
                                    QtCore.QPointF(w - px(14), top + px(4)))
                         continue
                     #  look A (2026-10-22): rows inset in the column, the open chat
-                    #  `card_active` in a 1.5 px accent outline with an inner glow
+                    #  `card_active` in a 1.5 px accent outline; the row under the mouse `card`
                     rect = QtCore.QRectF(px(6), top + px(1), w - px(12), h - px(2))
-                    glow = self.glow.get(r["id"], 0.0)
                     ring = "panel"
                     if r["id"] == self.selected:
                         ring = "card_active"
@@ -461,18 +411,13 @@ def list_class():
                         p.setBrush(_colour("card_active"))
                         p.drawRoundedRect(rect, px(8), px(8))
                         p.setBrush(QtCore.Qt.NoBrush)
-                        for k, alpha in ((3.0, 0.05), (2.0, 0.08), (1.0, 0.12)):
-                            p.setPen(QtGui.QPen(_colour("accent", alpha), px(2)))
-                            inset = (1.0 + k) * s
-                            p.drawRoundedRect(rect.adjusted(inset, inset, -inset, -inset),
-                                              px(8) - inset, px(8) - inset)
                         p.setPen(QtGui.QPen(_colour("accent"), max(1.0, 1.5 * s)))
                         p.drawRoundedRect(rect.adjusted(0.75 * s, 0.75 * s, -0.75 * s, -0.75 * s),
                                           px(8), px(8))
-                    elif glow > 0.002:
-                        ring = "card" if glow > 0.5 else "panel"
+                    elif r["id"] == self.hovered:
+                        ring = "card"
                         p.setPen(QtCore.Qt.NoPen)
-                        p.setBrush(_colour("card", glow))
+                        p.setBrush(_colour("card"))
                         p.drawRoundedRect(rect, px(8), px(8))
                     av = QtCore.QRectF(px(14), top + (h - px(42)) / 2.0, px(42), px(42))
                     dot = r.get("kind") == "person" or (r.get("chat") or {}).get("kind") == "dm"
@@ -510,8 +455,7 @@ def list_class():
                         bf = _font(self.font(), px(10), True)
                         bfm = QtGui.QFontMetrics(bf)
                         badge_w = max(px(20), bfm.horizontalAdvance(text) + px(12))
-                        k = pop_scale(now - self.pops.get(r["id"], -10 ** 9))
-                        badge = QtCore.QRectF(0, 0, badge_w * k, px(20) * k)
+                        badge = QtCore.QRectF(0, 0, badge_w, px(20))
                         badge.moveCenter(QtCore.QPointF(right - badge_w / 2.0,
                                                         line_y - pfm.ascent() / 2.0 + px(1)))
                         p.setPen(QtCore.Qt.NoPen)
@@ -555,8 +499,8 @@ TAB_VAR = "skeldarChatTab"
 
 def tabs_class():
     """Tabs(window): «Все / Личные / Группы» over the list (look A, 2026-10-22), painted: the
-    current one in `text` underlined in the accent with its glow, a grey count of the tab's
-    chats with unread; a click shows that tab (`window.set_tab`)."""
+    current one in `text` underlined in the accent, a grey count of the tab's chats with
+    unread; a click shows that tab (`window.set_tab`)."""
     if "tabs" not in _CLASSES:
         q = _q()
         QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
@@ -664,23 +608,11 @@ def tabs_class():
                         bar = QtCore.QRectF(rect.left() + px(6), h - px(2),
                                             rect.width() - px(12), px(2))
                         p.setPen(QtCore.Qt.NoPen)
-                        for grow, alpha in ((px(4), 0.08), (px(2.5), 0.14), (px(1.2), 0.24)):
-                            p.setBrush(_colour("accent", alpha))
-                            p.drawRoundedRect(bar.adjusted(-grow, -grow, grow, 0), grow, grow)
                         p.setBrush(_colour("accent"))
                         p.drawRoundedRect(bar, px(1), px(1))
 
         _CLASSES["tabs"] = Tabs
     return _CLASSES["tabs"]
-
-
-def look_approach(value, goal, dt_ms, ms):
-    import math
-    if ms <= 0 or not hubmotion.enabled():
-        return goal
-    k = 1.0 - math.exp(-3.0 * dt_ms / ms)
-    out = value + (goal - value) * k
-    return goal if abs(out - goal) < 0.005 else out
 
 
 # ------------------------------------------------------------------ the feed
@@ -732,72 +664,29 @@ def feed_class():
                 self.boxes = []
                 self.ctx = {}
                 self.docs = {}            # (key, text, width) -> QTextDocument
-                self.entering = {}        # key -> started
-                self.flashing = {}        # key -> started
-                self.folding = []         # [(y, height, started)]
-                self.pill_pops = {}       # (message id, emoji) -> started
-                self._counts = {}         # (message id, emoji) -> count last seen
-                self._known = None
                 self._laid_w = -1
                 self._press = None        # (point, item) on a file card, before a drag starts
                 self._dragging = False
                 self._hover_button = None
                 self.playing = None       # (message key, started ms): an animation preview playing
-                self.plays = {}           # (message key, glyph, "big"|"pill") -> started ms
-                self.played = set()       # the same keys, played once since the window opened
-                self.anim = None          # emojiart.Animated (the window sets it)
-                self._emoji_hover = None  # (message key, glyph, kind) under the mouse
+                #  the preview's own frames, only while one plays (content, not decoration)
+                self.play_timer = QtCore.QTimer(self)
+                self.play_timer.setInterval(PLAY_MS)
+                self.play_timer.timeout.connect(self.update)
                 self.hover_key = None     # the message whose row the mouse is on (look A)
-                self.reply_level = 0.0    # its reply button fading in, 0..1
-                self.reply_hot = False    # the mouse on that button
+                self.reply_hot = False    # the mouse on its reply button
                 self._tile = None         # the backdrop's dots
                 self.setObjectName("skeldarChatFeed")
                 self.setMouseTracking(True)
 
             # ---------------------------------------------------------- data
-            def set_items(self, items, ctx, animate=True):
-                keys = [i.key() for i in items if i.kind == "msg"]
-                now = _now_ms()
-                if self._known is not None and animate and hubmotion.enabled():
-                    old = self._known
-                    for i in items:
-                        if i.kind != "msg":
-                            continue
-                        k = i.key()
-                        if k not in old["keys"]:
-                            # a pending one becoming its message keeps its place: it flashes
-                            cid = i.message.get("cid")
-                            if not i.pending and cid and cid in old["pending"]:
-                                self.flashing[k] = now
-                            elif not old.get("history"):
-                                self.entering[k] = now
-                    for box in self.boxes:
-                        k = box.item.key() if box.item.kind == "msg" else None
-                        if k and k not in keys and not box.item.pending \
-                                and k in ctx.get("deleted", ()):
-                            self.folding.append((box.rect.top(), box.height, now))
-                counts = {}
-                for i in items:
-                    if i.kind == "msg" and not i.pending:
-                        for e, ids in (i.message.get("reactions") or {}).items():
-                            counts[(i.message.get("id"), e)] = len(ids)
-                if self._known is not None and animate and hubmotion.enabled():
-                    for k, n in counts.items():
-                        if n > self._counts.get(k, 0):
-                            self.pill_pops[k] = now
-                self._counts = counts
-                chat_id = (ctx.get("chat") or {}).get("id")
-                if chat_id != getattr(self, "_chat_id", None):
-                    self.plays.clear()            # another chat: nothing of the last one plays
-                    self._emoji_hover = None
-                self._chat_id = chat_id
-                self._known = {"keys": set(keys),
-                               "pending": set(i.key() for i in items if i.pending)}
+            def set_items(self, items, ctx):
                 self.items = items
                 self.ctx = ctx
+                if self.playing is not None and not any(
+                        i.kind == "msg" and i.key() == self.playing[0] for i in items):
+                    self._play(None)              # the card it played left the feed
                 self.relayout()
-                if self.entering or self.flashing or self.folding or self.pill_pops:
-                    self.win.animate()
 
             def relayout(self):
                 self.boxes = self._layout(max(1, self.width()))
@@ -1237,71 +1126,15 @@ def feed_class():
                         cx += w + gap
                     y += ph + gap
 
-            # ---------------------------------------------------------- motion
-            def tick(self, dt):
-                now = _now_ms()
-                for store, ms in ((self.entering, ENTER_MS), (self.flashing, SENT_FLASH_MS)):
-                    for k, start in list(store.items()):
-                        if now - start >= ms:
-                            del store[k]
-                self.folding = [f for f in self.folding if now - f[2] < FOLD_MS]
-                for k, start in list(self.pill_pops.items()):
-                    if now - start >= POP_MS:
-                        del self.pill_pops[k]
-                for k, start in list(self.plays.items()):
-                    if now - start >= PLAY_CAP_MS:     # its box may never be painted again
-                        del self.plays[k]
-                goal = 1.0 if self.hover_key is not None else 0.0
-                self.reply_level = look_approach(self.reply_level, goal, dt, HOVER_MS)
-                busy = bool(self.entering or self.flashing or self.folding or self.pill_pops
-                            or self.playing or self.plays or self.reply_level != goal)
-                self.update()
-                return busy
-
-            def _start(self, key, glyph):
-                """Play `glyph`'s animation now when it has one and its frames are ready."""
+            # ---------------------------------------------------------- pictures
+            def _draw_emoji(self, p, rect, glyph):
+                """Draw an emoji's still picture into `rect`; False when it has none."""
                 from . import emojiart
-                if self.anim is None or not hubmotion.enabled():
-                    return False
-                cp = emojiart.anim_of(glyph)
-                if not cp:
-                    return False
-                side = int(hubstyle.px(BIG_EMOJI if key[2] == "big" else PILL_EMOJI,
-                                       self.win.scale))
-                if not self.anim.frames(cp, side):
-                    return False
-                self.plays[key] = _now_ms()
-                self.played.add(key)
-                self.win.animate()
-                return True
-
-            def _draw_emoji(self, p, rect, key, glyph, now):
-                """Draw an emoji picture into `rect`; False when it has none."""
-                pic = self._emoji_frame(key, glyph, rect.width(), now)
+                pic = emojiart.pixmap(glyph, int(rect.width()))
                 if pic is None:
                     return False
-                if isinstance(pic, QtGui.QPixmap):
-                    p.drawPixmap(rect, pic, QtCore.QRectF(pic.rect()))
-                else:
-                    p.drawImage(rect, pic, QtCore.QRectF(pic.rect()))
+                p.drawPixmap(rect, pic, QtCore.QRectF(pic.rect()))
                 return True
-
-            def _emoji_frame(self, key, glyph, side, now):
-                """What to draw for an emoji picture at `side`: its animation's frame (a QImage)
-                while it plays (starting it the first time it is painted), else its still
-                picture (a QPixmap)."""
-                from . import emojiart
-                if key not in self.played:
-                    self._start(key, glyph)
-                start = self.plays.get(key)
-                if start is not None and self.anim is not None:
-                    frames = self.anim.frames(emojiart.anim_of(glyph), int(side))
-                    img, done = emojiart.frame_at(frames, now - start)
-                    if done:
-                        self.plays.pop(key, None)
-                    if img is not None:
-                        return img
-                return emojiart.pixmap(glyph, int(side))
 
             # ---------------------------------------------------------- paint
             def paintEvent(self, event):                   # noqa: N802
@@ -1318,17 +1151,8 @@ def feed_class():
                 px = lambda n: hubstyle.px(n, s)              # noqa: E731
                 p.setRenderHint(QtGui.QPainter.Antialiasing)
                 p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
-                now = _now_ms()
                 small = self._meta_font()
-                group = (self.ctx.get("chat") or {}).get("kind") == "group"
                 self._paint_backdrop(p, clip)
-                for top, height, start in self.folding:
-                    k = 1.0 - (now - start) / float(FOLD_MS)
-                    p.setPen(QtCore.Qt.NoPen)
-                    p.setBrush(_colour("card_active", 0.6 * k))
-                    r = QtCore.QRectF(self.width() * 0.25, top + height * (1 - k) / 2,
-                                      self.width() * 0.5, height * k)
-                    p.drawRoundedRect(r, px(8), px(8))
                 from . import emojiart
                 for box in self.boxes:
                     if box.rect.bottom() < clip.top() - px(40) or \
@@ -1362,18 +1186,9 @@ def feed_class():
                         continue
                     p.save()
                     key = item.key()
-                    if key in self.entering:
-                        u = (now - self.entering[key]) / float(ENTER_MS)
-                        p.translate(0, (1.0 - back_out(u)) * px(14))
-                        p.setOpacity(max(0.0, min(1.0, u * 2.0)))
                     bubble = box.bubble
                     mine = item.mine
-                    face = look.MINE if mine else look.THEIRS
-                    if key in self.flashing:
-                        k = 1.0 - (now - self.flashing[key]) / float(SENT_FLASH_MS)
-                        colour = _blend(face, "accent", 0.45 * k)
-                    else:
-                        colour = _q().QtGui.QColor(face)
+                    colour = _q().QtGui.QColor(look.MINE if mine else look.THEIRS)
                     if item.pending and item.tick == "clock":
                         colour.setAlphaF(0.75)
                     if not box.bare:
@@ -1427,18 +1242,12 @@ def feed_class():
                         box.doc.drawContents(p)
                         p.restore()
                     for rect, glyph in box.bigs:
-                        self._draw_emoji(p, rect, (key, glyph, "big"), glyph, now)
+                        self._draw_emoji(p, rect, glyph)
                     self._paint_meta(p, box, small)
                     if box.pills:
                         p.setFont(self._pill_font())
                         for rect, e, n, me in box.pills:
-                            k = pop_scale(now - self.pill_pops.get(
-                                (item.message.get("id"), e), -10 ** 9))
                             r = QtCore.QRectF(rect)
-                            if k != 1.0:
-                                c = r.center()
-                                r.setSize(r.size() * k)
-                                r.moveCenter(c)
                             if me:
                                 p.setPen(QtGui.QPen(_colour("accent"), max(1.0, s)))
                                 p.setBrush(_colour("accent", 0.3 if mine else 0.2))
@@ -1451,7 +1260,7 @@ def feed_class():
                             side = px(PILL_EMOJI)
                             pic = QtCore.QRectF(r.left() + px(7), r.center().y() - side / 2.0,
                                                 side, side)
-                            if not self._draw_emoji(p, pic, (key, e, "pill"), e, now):
+                            if not self._draw_emoji(p, pic, e):
                                 from . import emoji as _emoji
                                 fallback = QtGui.QFont(p.font())
                                 fallback.setFamilies([fallback.family(), _emoji.FONT])
@@ -1469,7 +1278,7 @@ def feed_class():
                                    QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
                                    if item.mine else QtCore.Qt.AlignLeft,
                                    "не отправлено — повторить")
-                    if key == self.hover_key and self.reply_level > 0.01:
+                    if key == self.hover_key:
                         self._paint_reply_button(p, box)
                     p.restore()
 
@@ -1589,26 +1398,17 @@ def feed_class():
                 return QtCore.QRectF(x, b.center().y() - side / 2.0, side, side)
 
             def _paint_reply_button(self, p, box):
+                """The reply button, shown while the mouse is on the message's row; under the
+                mouse its edge and arrow light, flat."""
                 s = self.win.scale
                 rect = self._reply_rect(box)
-                level = self.reply_level
                 p.save()
-                p.setOpacity(p.opacity() * level)
                 hot = self.reply_hot
-                if hot:
-                    for grow, alpha in ((3.0, 0.08), (1.6, 0.16)):
-                        p.setPen(QtCore.Qt.NoPen)
-                        p.setBrush(_colour("accent", alpha))
-                        g = grow * s
-                        p.drawEllipse(rect.adjusted(-g, -g, g, g))
                 p.setPen(QtGui.QPen(_colour("accent", 0.6) if hot else QtGui.QColor("#3a3c42"),
                                     max(1.0, s)))
-                p.setBrush(_colour("card"))
+                p.setBrush(_colour("hover") if hot else _colour("card"))
                 c = rect.center()
-                lift = 1.1 if hot else 1.0
-                r = QtCore.QRectF(0, 0, rect.width() * lift, rect.height() * lift)
-                r.moveCenter(c)
-                p.drawEllipse(r)
+                p.drawEllipse(rect)
                 side = hubstyle.px(15, s)
                 pic = hubqt.pixmap("corner-up-left",
                                    hubstyle.TOKENS["text" if hot else "muted"], side)
@@ -1625,8 +1425,7 @@ def feed_class():
 
             def box_at(self, point):
                 hovered = self.hover_box()
-                if hovered is not None and self.reply_level > 0.01 \
-                        and self._reply_rect(hovered).contains(point):
+                if hovered is not None and self._reply_rect(hovered).contains(point):
                     return hovered, "reply"
                 for box in self.boxes:
                     if box.callpill is not None:
@@ -1730,7 +1529,6 @@ def feed_class():
                         return
                 self._hover_row(pos)
                 box, _where = self.box_at(pos)
-                self._hover_emoji(box, _where)
                 self._hover_preview(box if _where == "thumb" else None)
                 if _where == "reply":
                     self.setCursor(QtCore.Qt.PointingHandCursor)
@@ -1770,21 +1568,17 @@ def feed_class():
                     key = box.item.key()
                 if key == (self.playing[0] if self.playing else None):
                     return
+                self._play(key)
+
+            def _play(self, key):
+                """The preview of message `key` plays from its first cell (None: none plays);
+                its timer runs only while one does."""
                 self.playing = (key, _now_ms()) if key else None
                 if self.playing:
-                    self.win.animate()
+                    self.play_timer.start()
+                else:
+                    self.play_timer.stop()
                 self.update()
-
-            def _hover_emoji(self, box, where):
-                """The mouse entering an animated emoji (a big one, a pill) plays it again."""
-                hit = None
-                if box is not None and (where.startswith("big:") or where.startswith("pill:")):
-                    kind, glyph = where.split(":", 1)
-                    hit = (box.item.key(), glyph, kind)
-                if hit != self._emoji_hover:
-                    self._emoji_hover = hit
-                    if hit is not None and hit not in self.plays:
-                        self._start(hit, hit[1])
 
             def _hover_row(self, pos):
                 """The message whose row the mouse is on shows its reply button (look A)."""
@@ -1797,15 +1591,13 @@ def feed_class():
                         break
                 if key != self.hover_key or hot != self.reply_hot:
                     self.hover_key, self.reply_hot = key, hot
-                    self.win.animate()
                     self.update()
 
             def leaveEvent(self, event):                   # noqa: N802
-                self._emoji_hover = None
                 self._hover_preview(None)
                 if self.hover_key is not None:
                     self.hover_key, self.reply_hot = None, False
-                    self.win.animate()
+                    self.update()
                 super(Feed, self).leaveEvent(event)
 
             def top_of(self, message_id):
@@ -1824,8 +1616,6 @@ PICK_COLS = 9
 PICK_ROWS = 8
 PICK_CELL = 32
 PICK_HEAD = 18        # a section's title row
-PICK_LIFT = 1.10      # a cell under the mouse grows 10 % (the Time Bar's hover)
-PICK_GLOW = 0.35      # the accent glow's alpha at a lit cell's centre
 PICK_TONES = ("#ffc93a", "#f7d7c4", "#e0b291", "#bf8f68", "#9b643d", "#594539")
 
 
@@ -1879,11 +1669,6 @@ def picker_class():
                 self.query = ""
                 self.scroll = 0.0
                 self.hover = None
-                self.levels = {}          # hovered cell -> its lift, 0..1
-                self._last = time.monotonic()
-                self.timer = QtCore.QTimer(self)
-                self.timer.setInterval(TICK_MS)
-                self.timer.timeout.connect(self._tick)
                 width = 2 * self.pad + PICK_COLS * self.cell
                 self.search = Search(self)
                 self.search.setObjectName("skeldarChatEmojiSearch")
@@ -2002,18 +1787,16 @@ def picker_class():
                 h = self.hit(pos)
                 if h != self.hover:
                     self.hover = h
-                    if h is not None and h[0] == "emoji" and not hubmotion.enabled():
-                        self.levels = {h: 1.0}
-                    self._wake()
+                    self.update()
 
             def mouseMoveEvent(self, event):              # noqa: N802
                 pos = event.position() if hasattr(event, "position") else QtCore.QPointF(event.pos())
                 self._rehover(pos)
-                self.update()
 
             def leaveEvent(self, event):                   # noqa: N802
-                self.hover = None
-                self._wake()
+                if self.hover is not None:
+                    self.hover = None
+                    self.update()
 
             def hideEvent(self, event):                    # noqa: N802
                 emojiart.release()
@@ -2043,33 +1826,6 @@ def picker_class():
                 except Exception:                            # noqa: BLE001
                     traceback.print_exc()
 
-            # ------------------------------------------------------ motion
-            def _wake(self):
-                if hubmotion.enabled() and not self.timer.isActive():
-                    self._last = time.monotonic()
-                    self.timer.start()
-                elif not hubmotion.enabled():
-                    self.levels = {self.hover: 1.0} if self.hover else {}
-                    self.update()
-
-            def _tick(self):
-                now = time.monotonic()
-                dt = (now - self._last) * 1000.0
-                self._last = now
-                keys = set(self.levels) | ({self.hover} if self.hover else set())
-                busy = False
-                for k in keys:
-                    goal = 1.0 if k == self.hover else 0.0
-                    v = look_approach(self.levels.get(k, 0.0), goal, dt, HOVER_MS)
-                    if v <= 0.0:
-                        self.levels.pop(k, None)
-                    else:
-                        self.levels[k] = v
-                    busy = busy or v != goal
-                self.update()
-                if not busy:
-                    self.timer.stop()
-
             # ------------------------------------------------------ paint
             def paintEvent(self, event):                   # noqa: N802
                 p = QtGui.QPainter(self)
@@ -2079,22 +1835,6 @@ def picker_class():
                     traceback.print_exc()
                 finally:
                     p.end()
-
-            def _glow(self, p, rect, lift):
-                """The Time Bar's hover glow: added accent light, brightest at the cell's
-                centre, never past the cell."""
-                p.save()
-                try:
-                    p.setClipRect(rect, QtCore.Qt.IntersectClip)
-                    grad = QtGui.QRadialGradient(rect.center(), rect.width() / 2.0)
-                    grad.setColorAt(0.0, _colour("accent", PICK_GLOW * lift))
-                    grad.setColorAt(1.0, _colour("accent", 0.0))
-                    p.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
-                    p.setPen(QtCore.Qt.NoPen)
-                    p.setBrush(QtGui.QBrush(grad))
-                    p.drawRect(rect)
-                finally:
-                    p.restore()
 
             def _active_tab(self):
                 if self.query:
@@ -2158,16 +1898,13 @@ def picker_class():
                 for rect, g in self.cells:
                     if rect.bottom() < lo or rect.top() > hi:
                         continue
-                    lift = self.levels.get(("emoji", g), 0.0)
-                    if lift > 0.0:
+                    if self.hover == ("emoji", g):
                         p.setPen(QtCore.Qt.NoPen)
-                        p.setBrush(_colour("hover", lift))
+                        p.setBrush(_colour("hover"))
                         p.drawRoundedRect(rect.adjusted(1, 1, -1, -1), px(6), px(6))
-                        self._glow(p, rect, lift)
-                    k = 1.0 + (PICK_LIFT - 1.0) * lift
-                    s = side * k
-                    target = QtCore.QRectF(rect.center().x() - s / 2.0, rect.center().y() - s / 2.0, s, s)
-                    pm = emojiart.pixmap(g, int(round(side * PICK_LIFT)))
+                    target = QtCore.QRectF(rect.center().x() - side / 2.0,
+                                           rect.center().y() - side / 2.0, side, side)
+                    pm = emojiart.pixmap(g, side)
                     if pm is not None:
                         p.drawPixmap(target, pm, QtCore.QRectF(pm.rect()))
                     else:
@@ -2383,9 +2120,7 @@ class ChatWindow(object):
         self.unseen = 0              # messages that came while scrolled up
         self.unread_from = None      # (chat, message id): where the unread band stands
         self._dirty = False
-        self._last_tick = None
         self.root = None
-        self.burster = None
         self.avatars = None
         self.profile = None          # a person's card standing over the window
         try:
@@ -2463,10 +2198,6 @@ class ChatWindow(object):
         card.setStyleSheet("#skeldarChatCard {{ background: transparent;"
                            " border-top: 1px solid {0}; }}".format(hubstyle.TOKENS["track_edge"]))
         self.root = root
-        self.burster = hubwindow.Burster(frame, self._burst_parts, self._burst_face, s)
-        self.timer = q.QtCore.QTimer(root)
-        self.timer.setInterval(TICK_MS)
-        self.timer.timeout.connect(self._tick)
         self.slow = q.QtCore.QTimer(root)
         self.slow.setInterval(1000)
         self.slow.timeout.connect(self._each_second)
@@ -2695,11 +2426,6 @@ class ChatWindow(object):
         lay.addWidget(head_w)
 
         self.feed = feed_class()(self)
-        from . import emojiart
-        try:
-            self.feed.anim = emojiart.animated(self.session)
-        except Exception:                                    # noqa: BLE001
-            self.feed.anim = None
         self.feed_area = self._scroll(self.feed, "skeldarChatFeedArea")
         self.feed_area.verticalScrollBar().valueChanged.connect(self._scrolled)
         self.feed_area.verticalScrollBar().rangeChanged.connect(self._range_changed)
@@ -3076,10 +2802,6 @@ class ChatWindow(object):
         self._history_came = False
         if history:
             ctx_bottom = self._distance_from_bottom()
-        if (self.feed.ctx.get("chat") or {}).get("id") != self.chat:
-            self.feed._known = None
-        if self.feed._known is not None:
-            self.feed._known["history"] = history
         self.feed.set_items(items, ctx)
         if history:
             self._keep_distance(ctx_bottom)
@@ -3161,10 +2883,6 @@ class ChatWindow(object):
             return False
         self._pending_scroll = None
         self.feed_area.verticalScrollBar().setValue(int(max(0, y - self.px(20))))
-        self.feed.flashing[next(b.item.key() for b in self.feed.boxes
-                                if b.item.kind == "msg"
-                                and b.item.message.get("id") == message_id)] = _now_ms()
-        self.animate()
         return True
 
     def _read_if_seen(self):
@@ -3198,7 +2916,6 @@ class ChatWindow(object):
             toast.dismiss_chat(chat_id)
         except Exception:                                    # noqa: BLE001
             pass
-        self.feed._known = None
         self._pending_scroll = ("bottom", 0)
         self.refresh()
         self.to_bottom()
@@ -4123,35 +3840,7 @@ class ChatWindow(object):
         except Exception:                                    # noqa: BLE001
             pass
 
-    # ---------------------------------------------------------- motion
-    def animate(self):
-        if not hubmotion.enabled():
-            self.feed.entering.clear()
-            self.feed.flashing.clear()
-            self.feed.folding = []
-            self.list.pops.clear()
-            self.list.glow = dict((r["id"], 1.0 if r["id"] == self.list.hovered else 0.0)
-                                  for r in self.list.rows)
-            self.list.update()
-            self.feed.update()
-            return
-        if not self.timer.isActive():
-            self._last_tick = time.monotonic()
-            self.timer.start()
-
-    def _tick(self):
-        now = time.monotonic()
-        dt = (now - (self._last_tick or now)) * 1000.0
-        self._last_tick = now
-        busy = False
-        try:
-            busy = self.list.tick(dt) or busy
-            busy = self.feed.tick(dt) or busy
-        except RuntimeError:
-            busy = False
-        if not busy:
-            self.timer.stop()
-
+    # ---------------------------------------------------------- once a second
     def _each_second(self):
         st = self.session.state
         if self.root is None or not self.root.isVisible():
@@ -4165,9 +3854,6 @@ class ChatWindow(object):
             for widget in self.root.findChildren(avatar_widget_class()):
                 widget.update()
             self.list.update()
-            self.feed.update()
-        anim = self.feed.anim
-        if anim is not None and anim.take_changed():
             self.feed.update()
         try:
             from . import thumbs
@@ -4216,65 +3902,24 @@ class ChatWindow(object):
         self.root.move(pos[0], pos[1])
 
     def show_at(self, origin=None):
+        """The window up at once (its remembered place, else on the screen of `origin`)."""
         self.place(origin)
         self.root.show()
         self.root.raise_()
         self.refresh()
         self.resized()
-        if origin is not None and self._burst(True, origin, self._opened):
-            return True
-        self._opened()
-        return False
-
-    def close_into(self, origin, done):
-        self.remember()
-        if origin is not None and self._burst(False, origin, lambda: self._folded(done)):
-            return True
-        self._folded(done)
-        return False
-
-    def _burst(self, opening, origin, done):
-        q = _q()
-        self.root.setAttribute(q.QtCore.Qt.WA_TransparentForMouseEvents, True)
-        try:
-            started = self.burster.run(opening, origin, done)
-        except Exception:                                    # noqa: BLE001
-            traceback.print_exc()
-            started = False
-        if not started:
-            self._end_burst()
-        return started
-
-    def _end_burst(self):
-        q = _q()
-        try:
-            self.burster.stop()
-        except Exception:                                    # noqa: BLE001
-            pass
-        try:
-            self.root.setAttribute(q.QtCore.Qt.WA_TransparentForMouseEvents, False)
-            self.frame.update()
-        except RuntimeError:
-            pass
-
-    def _opened(self):
-        self._end_burst()
         self._read_if_seen()
 
-    def _folded(self, done):
-        self._end_burst()
+    def close_into(self, origin, done):
+        """The window down at once; `origin` is where the press came from (unused since the
+        window no longer folds into it)."""
+        self.remember()
         try:
             self.root.hide()
         except RuntimeError:
             pass
         if done is not None:
             done()
-
-    def _burst_parts(self):
-        return hubqt.burst_parts(self.frame, self.title, self.pages, None, self.scale)
-
-    def _burst_face(self):
-        return hubstyle.TOKENS["card"]
 
     def _gone(self):
         try:
@@ -4458,7 +4103,8 @@ def is_open():
 
 
 def show(origin=None, session=None):
-    """The window up (made on first use), out of `origin`."""
+    """The window up (made on first use) at once; `origin` picks the screen when it has no
+    remembered place."""
     win = window()
     if win is None:
         if session is None:
@@ -4469,8 +4115,6 @@ def show(origin=None, session=None):
     if win.root.isVisible():
         win.root.raise_()
         win.root.activateWindow()
-        win.frame.flash = 1.0
-        win.frame.update()
         return win
     win.show_at(origin)
     _paint_rail(True)

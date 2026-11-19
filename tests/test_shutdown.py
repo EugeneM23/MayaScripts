@@ -66,7 +66,7 @@ class Plan(unittest.TestCase):
             self.assertIn(pair, pairs)
 
     def test_steps_keeps_plan_order_and_leaves_out_what_is_not_loaded(self):
-        loaded = {"maya_timebar", "maya_windowlight"}
+        loaded = {"maya_timebar", "maya_camview"}
         got = ms.steps(loaded)
         self.assertEqual([s.module for s in got],
                          [s.module for s in ms.PLAN if s.module in loaded])

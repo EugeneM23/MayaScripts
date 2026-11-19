@@ -99,36 +99,13 @@ class Patched(unittest.TestCase):
         state = radial._state()
         saved = dict(state)
         self.addCleanup(lambda: (state.clear(), state.update(saved)))
-        state["menu"] = state["leaving"] = state["finish"] = None
+        state["menu"] = state["finish"] = None
         self.addCleanup(hubstyle.take_marks)
 
     def patch(self, target, name, value, create=False):
         patcher = mock.patch.object(target, name, value, create=create)
         patcher.start()
         self.addCleanup(patcher.stop)
-
-
-@unittest.skipUnless(HAVE_MAYA, "needs maya.cmds importable")
-class Motion(Patched):
-    def test_animations_follow_the_hubs_switch(self):
-        import maya_hubmotion
-        self.patch(maya_hubmotion, "enabled", lambda: False)
-        self.assertFalse(radial.animated())
-        self.patch(maya_hubmotion, "enabled", lambda: True)
-        self.assertTrue(radial.animated())
-
-    def test_a_switch_that_raises_means_animated(self):
-        import maya_hubmotion
-
-        def broken():
-            raise RuntimeError("no optionVar")
-        self.patch(maya_hubmotion, "enabled", broken)
-        self.assertTrue(radial.animated())
-
-    def test_the_clock_runs_in_milliseconds(self):
-        first = radial._now_ms()
-        time.sleep(0.002)
-        self.assertGreater(radial._now_ms() - first, 1.0)
 
 
 @unittest.skipUnless(HAVE_MAYA, "needs maya.cmds importable")
@@ -324,7 +301,6 @@ class Presses(Patched):
         self.patch(radial, "_main_window", lambda q: None)
         self.patch(radial, "key_down", lambda vk: vk in self.down)
         self.patch(radial, "waiting", lambda key: False)
-        self.patch(radial, "animated", lambda: False)
         self.patch(radial, "_run_later", lambda q, item, point: self.ran.append((item, point)))
         self.addCleanup(self._close)
 
@@ -332,7 +308,6 @@ class Presses(Patched):
         menu = radial._state()["menu"]
         if menu is not None:
             menu.destroy()
-        radial.drop_leaving()
 
     def test_a_press_puts_the_menu_up_under_the_cursor(self):
         self.down = {rules_q()}
@@ -380,15 +355,6 @@ class Presses(Patched):
         self.assertEqual((menu.items, menu.texts, menu.count), (spec["items"], spec["texts"], 3))
         self.assertEqual(menu.marked, {0})
         self.assertEqual(menu.keys, [radial.VK_SPACE])
-
-    def test_a_press_drops_a_menu_still_closing(self):
-        old = types.SimpleNamespace(destroyed=[])
-        old.destroy = lambda: old.destroyed.append(1)
-        radial._state()["leaving"] = old
-        self.patch(radial, "held_keys", lambda kind: [])
-        radial.press()
-        self.assertEqual(old.destroyed, [1])
-        self.assertIsNone(radial._state()["leaving"])
 
     def _up(self, keys=(0x51,), items=None):
         self.patch(radial, "held_keys", lambda kind: list(keys))

@@ -1,6 +1,6 @@
 """maya_chat.callview: what test_chat_callview.py does not reach - the question before a second
 call, the screen and device menus (their exec answered by the test), the title's drag and click,
-the burst, the clock line, the buttons by their clicks. A fake session and a fake page; no
+showing and closing at once, the clock line, the buttons by their clicks. A fake session and a fake page; no
 QWebEngine page is loaded and nothing reaches a server."""
 import contextlib
 import os
@@ -16,8 +16,6 @@ import tests  # noqa: F401  (puts SkeldarAnim/ on sys.path)
 
 from PySide6 import QtCore, QtWidgets  # noqa: E402
 
-import maya_hubburst  # noqa: E402
-import maya_hubmotion as hubmotion  # noqa: E402
 from maya_chat import callview as V  # noqa: E402
 from maya_chat import toast  # noqa: E402
 
@@ -59,8 +57,7 @@ class Base(unittest.TestCase):
         return [a for n, a in self.store.get("sent", []) if n == name]
 
     def live(self, members=("me", "bob"), **kw):
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
+        w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
         self.store["bridge"].ready()
         self.ses.tell("call", {"kind": "call", "call": view("live", members, **kw)})
         return w
@@ -126,8 +123,7 @@ class Switching(Base):
 
     def test_hang_up_ends_the_standing_call_and_nothing_without_one(self):
         self.live()
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            V.hang_up()
+        V.hang_up()
         self.assertIn(("leave", "c1"), self.ses.calls)
         self.assertIsNone(V.current())
         V.hang_up()                                    # no call: nothing
@@ -137,9 +133,8 @@ class Switching(Base):
             from maya_chat import api
             raise api.ChatError("call_full", "full")
         self.ses.join_call = refuse
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self.assertIsNone(V.answer(self.ses, "c1", "audio",
-                                       view_factory=fake_factory(self.store)))
+        self.assertIsNone(V.answer(self.ses, "c1", "audio",
+                                   view_factory=fake_factory(self.store)))
         self.assertIsNone(V.current())
         self.assertNotIn(("leave", "c1"), self.ses.calls, "never in it: nothing to leave")
 
@@ -382,8 +377,7 @@ class Buttons(Base):
         self.assertEqual(self.sent("mute"), [{"on": True}])
         self.assertEqual(self.sent("camera"), [{"on": True}])
         self.assertEqual(self.sent("screen"), [{"on": True}])
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            w.root.findChild(QtWidgets.QAbstractButton, "skeldarChatCallClose").click()
+        w.root.findChild(QtWidgets.QAbstractButton, "skeldarChatCallClose").click()
         self.assertIn(("leave", "c1"), self.ses.calls)
         self.assertTrue(w.closed)
 
@@ -428,8 +422,7 @@ class Clock(Base):
 
     def test_a_closed_window_s_clock_does_nothing(self):
         w = self.live()
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            w.close_window()
+        w.close_window()
         w.timer_label = None                           # would raise if touched
         w._tick()
 
@@ -441,9 +434,8 @@ class Clock(Base):
 
 class Events(Base):
     def test_an_error_for_my_start_closes_and_says_it(self):
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
-            self.ses.tell("error", {"cid": "c-1", "code": "call_exists", "text": "x"})
+        w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
+        self.ses.tell("error", {"cid": "c-1", "code": "call_exists", "text": "x"})
         self.assertTrue(w.closed)
         self.assertEqual(w.last_message, V.REFUSALS["call_exists"])
         self.assertNotIn(("leave", "c1"), self.ses.calls)
@@ -454,9 +446,8 @@ class Events(Base):
         self.assertFalse(w.closed)
 
     def test_hanging_up_before_the_ack_leaves_once_it_is_known(self):
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
-            w.hang_up()
+        w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
+        w.hang_up()
         self.ses.tell("call", {"kind": "call", "call": view("ringing", ("me",), cid="other")})
         self.assertNotIn(("leave", "c1"), self.ses.calls, "another start: not mine")
         self.ses.tell("call", {"kind": "call", "call": view("ringing", ("me",))})
@@ -465,62 +456,48 @@ class Events(Base):
         self.assertEqual(self.ses.calls.count(("leave", "c1")), 1, "once: it listens no more")
 
     def test_an_error_for_a_hung_up_start_stops_listening(self):
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
-            w.hang_up()
+        w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
+        w.hang_up()
         before = len(self.ses.listeners)
         self.ses.tell("error", {"cid": "c-1", "code": "no_call"})
         self.assertEqual(len(self.ses.listeners), before - 1)
 
     def test_left_from_elsewhere_closes_the_window(self):
         w = self.live()
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self.ses.tell("call", {"kind": "call", "call": view("live", ("bob",))})
+        self.ses.tell("call", {"kind": "call", "call": view("live", ("bob",))})
         self.assertTrue(w.closed)
         self.assertEqual(self.sent("end"), [{}])
 
     def test_no_microphone_with_nobody_in_keeps_the_call(self):
         w = self.live()
-        with mock.patch.object(hubmotion, "enabled", return_value=False):
-            self.store["bridge"].state(u'{"nomic": "OverconstrainedError", "peers": {}}')
+        self.store["bridge"].state(u'{"nomic": "OverconstrainedError", "peers": {}}')
         self.assertFalse(w.closed)
         self.assertNotIn(("leave", "c1"), self.ses.calls)
 
 
-class Burst(Base):
-    def drive(self, w):
-        self.assertIsNotNone(w.burster.anim)
-        w.burster._tick(10 ** 6)
-        self.assertIsNone(w.burster.anim)
+class AtOnce(Base):
+    """2026-11-19: the call window stands and goes at once - no burst, no fold."""
 
-    def test_the_window_bursts_out_of_a_point_and_folds_away(self):
-        self.swap(maya_hubburst, "MOTION", "burst")
-        with mock.patch.object(hubmotion, "enabled", return_value=True):
-            w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
-            self.assertTrue(w.root.isVisible())
-            self.drive(w)
-            self.assertTrue(w._burst_parts())
-            self.assertEqual(w._burst_face(), V.hubstyle.TOKENS["panel"])
-            with mock.patch.object(V.W, "_cursor", return_value=(300, 200)):
-                w.close_window()
-            self.assertTrue(w.closed)
-            self.drive(w)
+    def test_the_window_stands_and_goes_at_once(self):
+        w = V.start(self.ses, "dm", "video", view_factory=fake_factory(self.store))
+        self.assertTrue(w.root.isVisible())
+        w.close_window()
+        self.assertTrue(w.closed)
         self.assertFalse(w.root.isVisible())
 
-    def test_a_burst_that_raises_shows_the_window_at_once(self):
+    def test_a_show_from_a_point_shows_it_at_once(self):
         w = self.live()
         w.root.hide()
-
-        def broken(*a, **k):
-            raise RuntimeError("no effect")
-        w.burster.run = broken
-        with mock.patch.object(hubmotion, "enabled", return_value=True), \
-                mock.patch("traceback.print_exc"):
-            w.show((10, 10))
-            self.assertTrue(w.root.isVisible())
-            with mock.patch.object(V.W, "_cursor", return_value=(300, 200)):
-                w.close_window()
+        w.show((10, 10))
+        self.assertTrue(w.root.isVisible())
+        w.close_window()
         self.assertFalse(w.root.isVisible())
+
+    def test_nothing_of_the_burst_is_left(self):
+        w = self.live()
+        for gone in ("burster", "_burst_parts", "_burst_face", "_end_burst"):
+            self.assertFalse(hasattr(w, gone), gone)
+        self.assertNotIn("hubmotion", vars(V))
 
 
 class Place(Base):

@@ -1,7 +1,7 @@
 """Our Channel Box offscreen (2026-10-18), on a fake link so no Maya scene is touched:
 painting, selection and its sync into Maya's Channel Box, the virtual slider in one
-undo chunk, typed values, the key cell, the effects a refresh finds, the keys the
-playhead reaches, the menu, and the mount over stand-in widgets.
+undo chunk, typed values, the key cell, the keys the playhead reaches, the plain
+hover (no motion, no glow), the menu, and the mount over stand-in widgets.
 
 Spec: docs/superpowers/specs/2026-10-18-channel-box-rows-design.md
 """
@@ -134,15 +134,14 @@ class BoxTests(unittest.TestCase):
     def setUp(self):
         self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
         self.link = FakeLink()
-        self.box = box_module.make(self.link, 1.0, maya_hubstyle.TOKENS, motion=True)
+        self.box = box_module.make(self.link, 1.0, maya_hubstyle.TOKENS)
         self.box.resize(340, 420)
         self.box.show()
         self.app.processEvents()
-        self.box.refresh(effects=False)
+        self.box.refresh()
         self.app.processEvents()
 
     def tearDown(self):
-        self.box.timer.stop()
         self.box.close()
         self.box.deleteLater()
         self.app.processEvents()
@@ -304,27 +303,34 @@ class BoxTests(unittest.TestCase):
         self.assertEqual(values["IKLeg_L.translateX"], 2.0)
         self.assertEqual(values["IKLeg_L.rotateX"], 2.0)
 
-    def test_the_key_cell_keys_or_unkeys_and_the_refresh_flashes_or_breaks(self):
+    def cell_colour(self, key):
+        _, parts = self.row_of(key)
+        x, y, w, h = look.cell_rect(parts["mark"])
+        return self.render().pixelColor(int(x + w / 2), int(y + h / 2) + self.box.head.height()).name()
+
+    def test_the_key_cell_keys_or_unkeys_and_shows_it_at_once(self):
+        accent = maya_hubstyle.TOKENS["accent"]
         _, ty = self.row_of("translateY")
+        self.assertNotEqual(self.cell_colour("translateY"), accent)
         self.mouse("press", self.point(look.cell_rect(ty["mark"])))
         keys = [e for e in self.link.log if e[0] == "key"]
         self.assertEqual(keys[-1][1], ["IKLeg_L.translateY", "IKLeg_R.translateY"])
-        self.assertTrue(any(i["kind"] == "set" for i in self.box.canvas.fx.items))
+        self.assertEqual(self.cell_colour("translateY"), accent)
         _, tx = self.row_of("translateX")
         self.mouse("press", self.point(look.cell_rect(tx["mark"])))
         self.assertEqual([e for e in self.link.log if e[0] == "unkey"][-1][2], 12.0)
-        self.assertTrue(any(i["kind"] == "delete" for i in self.box.canvas.fx.items))
+        self.assertNotEqual(self.cell_colour("translateX"), accent)
+        self.assertFalse(self.box.findChildren(QT.QtWidgets.QWidget, "skeldarChannelBoxFx"))
 
-    def test_a_bool_toggles_and_pops(self):
+    def test_a_bool_toggles(self):
         _, parts = self.row_of("visibility")
         self.mouse("press", self.point(parts["value"]))
         self.mouse("release", self.point(parts["value"]))
         self.assertEqual(dict([e for e in self.link.log if e[0] == "write"][-1][1])["IKLeg_L.visibility"], 0)
 
-    def test_time_moving_reads_the_key_cells_and_lights_nothing(self):
+    def test_time_moving_reads_the_key_cells(self):
         self.link.frame = 24.0
         self.box.on_time()
-        self.assertEqual(self.box.canvas.fx.items, [])       # no glow on keys the playhead passes
         tx = self.box.rows[self.row_of("translateX")[0]]["channel"]
         self.assertTrue(tx["on_key"])
 
@@ -371,12 +377,6 @@ class BoxTests(unittest.TestCase):
         y, h = self.box.placed[i][0], self.box.placed[i][1]
         self.assertTrue(painted[0][0].contains(QT.QtCore.QPoint(5, int(y + h / 2.0))))
 
-    def test_animations_off_adds_no_effect(self):
-        self.box.motion = False
-        self.link.frame = 24.0
-        self.box.on_time()
-        self.assertEqual(self.box.canvas.fx.items, [])
-
     def test_a_section_opens_and_reads_its_channels(self):
         i = [n for n, r in enumerate(self.box.rows) if r["kind"] == "section"][0]
         self.mouse("press", self.point(self.box.placed[i][2]["row"]))
@@ -395,17 +395,19 @@ class BoxTests(unittest.TestCase):
         self.box.paste_values()
         self.assertAlmostEqual(dict([e for e in self.link.log if e[0] == "write"][-1][1])["IKLeg_L.rotateX"], 4.8)
 
-    def test_hover_eases_and_the_driver_stops_at_rest(self):
-        t = [0.0]
-        self.box.clock = lambda: t[0]
-        _, parts = self.row_of("rotateX")
+    def test_hover_takes_the_row_at_once_and_runs_no_timer(self):
+        i, parts = self.row_of("rotateX")
+        rx, ry, rw, rh = parts["row"]
+        probe = (int(rx + 2), int(ry + rh / 2) + self.box.head.height())
+        before = self.render().pixelColor(*probe).name()
         self.mouse("move", self.point(parts["mark"]))
-        self.assertTrue(self.box.timer.isActive())
-        for _ in range(60):
-            t[0] += 16.0
-            self.box._step()
-        self.assertAlmostEqual(self.box.level(("mark", self.row_of("rotateX")[0])), 1.0)
-        self.assertFalse(self.box.timer.isActive())
+        self.assertTrue(self.box.hovered(i))
+        self.assertEqual(self.render().pixelColor(*probe).name(), maya_hubstyle.TOKENS["hover"])
+        self.assertNotEqual(before, maya_hubstyle.TOKENS["hover"])
+        self.assertFalse(self.box.findChildren(QT.QtCore.QTimer))
+        self.box.canvas.leaveEvent(QT.QtCore.QEvent(QT.QtCore.QEvent.Leave))
+        self.assertFalse(self.box.hovered(i))
+        self.assertEqual(self.render().pixelColor(*probe).name(), before)
 
 
 @unittest.skipIf(QT is None, "no Qt")
@@ -435,8 +437,8 @@ class MountTests(unittest.TestCase):
             holder.widget = lambda name: form if name == "MainChannelsLayersLayout" else None
             maya_channelbox.enabled = lambda: True
             maya_channelbox._start_callbacks = lambda: None
-            box_module.make = lambda link, ui, tokens, parent=None, motion=None: saved[3](
-                FakeLink(), ui, tokens, parent, motion)
+            box_module.make = lambda link, ui, tokens, parent=None: saved[3](
+                FakeLink(), ui, tokens, parent)
             built = maya_channelbox.mount(Panel(), [{"form": "MainChannelsLayersLayout"}])
             self.app.processEvents()
             self.assertIs(built.parentWidget(), page)

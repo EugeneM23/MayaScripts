@@ -107,7 +107,7 @@ def mount(panel, records, ui=1.0):
     _state().update(box=box, holder=kept, page=page)
     _start_callbacks()
     try:
-        box.refresh(effects=False)
+        box.refresh()
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
     return box

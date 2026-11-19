@@ -103,24 +103,20 @@ _PAYLOAD = (
     "maya_viewportbar.py",      # the viewport's menu and icon bar in our look (2026-10-20)
     "maya_viewportbar_art.py",  # its icons redrawn as vectors, Maya's shapes in our colours
     "maya_mainbar.py",          # Maya's title and menu bar in our colours (2026-10-21)
-    "maya_windowlight.py",      # only the window under the mouse is lit (2026-10-23)
     "maya_camview.py",          # a character's own camera puts it in 1P (2026-10-22)
     "maya_shutdown.py",         # our Qt taken down before Maya finalises Python (2026-11-02)
     "maya_crashlog.py",         # the Python line of a hard crash, logged (2026-11-03)
     "maya_mayaicons_art.py",    # our drawings of the most visible ones
-    "maya_hubglow.py",          # its controls glowing under the mouse (2026-10-02)
     "maya_edgerules.py",        # the edge panel's rules (2026-10-08)
     "maya_hubedge.py",          # the edge panel's windows (2026-10-08)
     "maya_hubcopy.py",          # a section's second build: the scope its names live in (2026-10-09)
     "maya_hubpop_rules.py",     # where a section's floating window stands (2026-10-09) (2026-10-09)
     "maya_hubwindow.py",        # the floating window's and the rail card's look and burst (2026-10-18)
     "maya_hubpop.py",           # a section's floating window (2026-10-09; look B since 2026-10-18) (2026-10-09)
-    "maya_hubburst.py",         # the burst's timing: windows and rail card (2026-10-17)
     "maya_invlook.py",          # the weapon inventory's look (2026-09-29)
     "maya_inventory.py",        # the weapon inventory: the Weapons card
     "maya_charlook.py",         # the Characters portrait grid's look (2026-09-30)
     "maya_chargrid.py",         # the Characters portrait grid
-    "maya_charfire.py",         # its fire under the mouse (2026-10-02)
     "maya_armorgrid.py",        # the Armor card's tiles (2026-10-01)
     "icons",
     "assets",
@@ -148,8 +144,6 @@ _PAYLOAD = (
     "maya_radial.py",           # the radial menu under alt+q and its editor card (2026-10-15)
     "maya_radial_rules.py",     # the radial menu's pure half: slots, items, the release rule (2026-10-15)
     "maya_camradial.py",        # Space: the camera menu in place of the hotbox (2026-10-20)
-    "maya_camflight.py",        # Space's switch flies between cameras (2026-10-21)
-    "maya_camflight_rules.py",
     "maya_camshake.py",         # the Camera Shake card: handheld and impact on a layer each (2026-10-13)
     "maya_timewarp.py",         # bakes and layer writes in curve time under a Scene Time Warp (2026-10-20)
     "maya_markers.py",          # our marked nodes found without combing the scene each time (2026-10-27)

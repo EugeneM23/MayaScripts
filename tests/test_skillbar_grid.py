@@ -1,5 +1,5 @@
 """The skill bar in the Time Bar's strip, offscreen (2026-10-19): the page row, a page of cells in
-place of the time rows, running, the menus, a cell dragged, text dropped, the burst.
+place of the time rows, running, the menus, a cell dragged, text dropped, nothing moving.
 
 Spec: docs/superpowers/specs/2026-10-19-skill-bar-design.md
 """
@@ -39,13 +39,12 @@ class SkillLink(FakeLink):
 @unittest.skipIf(QT is None, "no Qt")
 class Base(unittest.TestCase):
 
-    motion = False
     rows = 2
 
     def setUp(self):
         self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
         self.link = SkillLink(look.defaults())
-        self.strip = bar.make(self.link, 1.0, maya_hubstyle.TOKENS, motion=self.motion)
+        self.strip = bar.make(self.link, 1.0, maya_hubstyle.TOKENS)
         self.strip.resize(1200, 160)
         self.strip.move(3000, 3000)
         self.strip.show()
@@ -319,7 +318,6 @@ class Module(Base):
         self.assertEqual(self.strip.skill_grid.armed["cell"], (0, 2))
         self.assertEqual(self.bar.run_number(2), "")
         self.assertEqual([e for e in self.model.log if e[0] == "run"][-1][1], item)
-        self.assertIn((0, 2), self.strip.skill_grid.run_at)
         self.assertIsNone(self.strip.skill_grid.armed)
 
     def test_another_number_between_arms_itself(self):
@@ -372,104 +370,83 @@ class Module(Base):
         self.assertEqual(maya_chargrid.skill_aim(g.x(), g.y()), ("cell", 3, 0, 5))
 
 
-class Motion(Base):
+class Flat(Base):
+    """2026-11-19, «удаляем все подсветки и анимации»: nothing moves, nothing glows; a hover
+    changes a face, an armed cell wears a flat outline."""
 
-    motion = True
-
-    def test_a_page_pops_in_from_its_tab(self):
-        st = self.strip
-        st.show_page(3)
-        grid = st.skill_grid
-        self.assertIsNotNone(grid.pop)
-        scale, opacity = grid.entrance(0, 0)
-        self.assertLess(scale, 1.0)
-        grid.pop["t0"] -= 5000
-        self.assertEqual(grid.entrance(0, 0), (1.0, 1.0))
-        self.assertFalse(grid.busy(st.clock()) and grid.pop is not None)
-
-    def test_the_burst_reaches_the_cells(self):
-        st = self.strip
-        st.show_page(2)
-        st.skill_grid.pop = None
-        g = st.skill_grid.mapToGlobal(QT.QtCore.QPoint(0, 0))
-        st.burst_at(g.x(), g.y(), True)
-        near = st.skill_grid.entrance(0, 0)
-        far = st.skill_grid.entrance(1, st.skill_grid.cols() - 1)
-        self.assertLessEqual(near[0], 1.0)
-        self.assertLessEqual(far[1], near[1])
-
-    def test_a_run_glows(self):
-        st = self.strip
-        st.show_page(2)
-        st.skill_grid.run_cell((0, 0))
-        self.assertIn((0, 0), st.skill_grid.run_at)
-        self.assertTrue(st.skill_grid.busy(st.clock()))
-
-
-class CharacterFire(Base):
-    """A character cell burns under the mouse as Animation Setup's portrait does (2026-10-22)."""
-
-    motion = True
-
-    def cell_of(self, kind):
-        page = look.page_of(self.model.data(), 3)
-        for key, item in page["cells"].items():
-            if item.get("kind") == kind:
-                return tuple(look.parse_key(key))
-        self.fail("no %s cell on F3" % kind)
-
-    def hover(self, cell):
-        grid = self.strip.skill_grid
-        x, y = self.centre(*cell)
+    def hover(self, widget, x, y):
         E, Qt = QT.QtCore.QEvent, QT.QtCore.Qt
-        self.mouse(grid, E.MouseMove, x, y, Qt.NoButton, Qt.NoButton)
+        self.mouse(widget, E.MouseMove, x, y, Qt.NoButton, Qt.NoButton)
 
-    def run_for(self, seconds):
-        grid = self.strip.skill_grid
-        for _ in range(int(seconds / 0.016)):
-            grid.step(16.0)
+    def test_nothing_of_the_motion_is_left(self):
+        from maya_skillbar import grid as skillgrid
+        for name in ("HOVER_MS", "FLASH_MS", "RUN_MS", "POP_MS", "LIFT", "RUN_GLOW"):
+            self.assertFalse(hasattr(skillgrid, name), name)
+        self.show(2)
+        g, tabs = self.strip.skill_grid, self.strip.tabs
+        for name in ("flash_at", "run_at", "pop", "fire", "hover", "step", "busy",
+                     "entrance", "pop_from", "burning_model"):
+            self.assertFalse(hasattr(g, name), name)
+        for name in ("flash_at", "hover", "step", "busy"):
+            self.assertFalse(hasattr(tabs, name), name)
+            self.assertFalse(hasattr(tabs.tools, name), name)
+        self.assertFalse(hasattr(tabs.tools, "pop_at"))
 
-    def test_a_character_cell_catches_fire_and_burns_out(self):
-        from maya_skillbar import run as skillrun
-        self.model.picture = skillrun.picture            # the real portraits
+    def test_a_page_shows_whole_at_once(self):
         self.show(3)
+        image = self.image(self.strip.skill_grid)
+        rect = self.strip.skill_grid.cell_rect(0, 0).toRect()
+        c = rect.center()
+        self.assertNotEqual(image.pixel(c.x(), c.y()), 0)
+
+    def test_a_hover_changes_the_cell_face_and_leave_takes_it_back(self):
+        self.show(2)
         grid = self.strip.skill_grid
-        grid.pop, self.strip.entrance = None, None       # the page popped in: cells whole
-        cell = self.cell_of("character")
-        self.hover(cell)
-        self.assertIn(cell, grid.fire)
-        self.run_for(0.6)
-        self.assertGreater(grid.fire[cell][1].power, 0.5)
-        self.assertTrue(grid.busy(self.strip.clock()))
-        hot = self.image(grid)
-        fire, grid.fire = grid.fire, {}
-        cold = self.image(grid)                          # the same hover, no fire
-        grid.fire = fire
-        rect = grid.cell_rect(*cell).toRect()
-        changed = sum(1 for x in range(rect.left(), rect.right(), 2)
-                      for y in range(rect.top(), rect.bottom(), 2)
-                      if hot.pixel(x, y) != cold.pixel(x, y))
-        self.assertGreater(changed, 20)
+        x, y = self.centre(0, 0)
+        before = self.image(grid)
+        self.hover(grid, x, y)
+        self.assertEqual(grid.under, (0, 0))
+        under = self.image(grid)
+        rect = grid.cell_rect(0, 0).toRect()
+        self.assertNotEqual(before.pixel(rect.left() + 3, rect.center().y()),
+                            under.pixel(rect.left() + 3, rect.center().y()))
+        outside = grid.cell_rect(0, 0).adjusted(-6, -6, 6, 6).toRect()
+        self.assertEqual(before.pixel(outside.left() + 1, outside.top() + 1),
+                         under.pixel(outside.left() + 1, outside.top() + 1))     # no glow round it
         grid.leaveEvent(QT.QtCore.QEvent(QT.QtCore.QEvent.Leave))
-        self.run_for(4.0)
-        self.assertEqual(grid.fire, {})
+        self.assertIsNone(grid.under)
+        self.assertEqual(self.image(grid).pixel(rect.left() + 3, rect.center().y()),
+                         before.pixel(rect.left() + 3, rect.center().y()))
 
-    def test_a_tool_cell_does_not_burn(self):
-        self.show(3)
+    def test_an_armed_cell_wears_the_accent_outline_until_its_time_is_up(self):
+        self.show(2)
         grid = self.strip.skill_grid
-        page = look.page_of(self.model.data(), 3)
-        for key, item in page["cells"].items():
-            if item.get("kind") != "character":
-                r, c = look.parse_key(key)
-                self.assertIsNone(grid.burning_model((r, c)))
-                return
+        rect = grid.cell_rect(0, 1).toRect()
+        before = self.image(grid)
+        grid.arm((0, 1), 10000)
+        self.assertEqual(grid.armed_cell(), (0, 1))
+        armed = self.image(grid)
+        self.assertNotEqual(before.pixel(rect.center().x(), rect.top()),
+                            armed.pixel(rect.center().x(), rect.top()))
+        self.assertTrue(grid.disarm.isActive())
+        grid.armed["t0"] -= 20000
+        self.assertIsNone(grid.armed_cell())
+        grid._disarmed()
+        self.assertIsNone(grid.armed)
 
-    def test_no_fire_without_motion(self):
-        self.show(3)
-        grid = self.strip.skill_grid
-        self.strip.motion = False
-        self.hover(self.cell_of("character"))
-        self.assertEqual(grid.fire, {})
+    def test_a_run_runs_and_leaves_nothing_moving(self):
+        self.show(2)
+        self.strip.skill_grid.run_cell((0, 0))
+        self.assertTrue([e for e in self.model.log if e[0] == "run"])
+
+    def test_a_hovered_tab_changes_its_face(self):
+        tabs = self.strip.tabs
+        x, w = tabs.rects()[4]
+        before = self.image(tabs)
+        self.hover(tabs, x + w / 2.0, tabs.height() / 2.0)
+        self.assertEqual(tabs.under, 5)
+        self.assertNotEqual(before.pixel(int(x + 2), tabs.height() // 2),
+                            self.image(tabs).pixel(int(x + 2), tabs.height() // 2))
 
 
 if __name__ == "__main__":
