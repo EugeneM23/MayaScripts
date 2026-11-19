@@ -174,6 +174,30 @@ def check(label, root, card):
                     for n in ("pelvis", "spine_05", "head"))
         gate("%s: posed, no jolt above the clip's or the stance's own" % label, worst < 1.5,
              "%.2f cm a frame^2" % worst)
+    # In place on a whole clip (2026-11-19): the root stands still on the floor, the body plays about it exactly as
+    # the press without it, and a press without it gives the root motion back (what an export takes)
+    root_i = source.index["root"]
+    _r, pinfo, text = ws.apply(root, walk, None, None, ws.ALL_PARTS, params=dict(params(), in_place=1.0), whole=True)
+    placed = keyed(root)
+    travel = source.worlds[root_i, :, 3, :3] - source.worlds[root_i, 0, 3, :3]
+    travel[:, 1] = 0.0
+    root_path = placed.worlds[root_i, :, 3, :3] - placed.worlds[root_i, 0, 3, :3]
+    root_path[:, 1] = 0.0
+    gate("%s: In place keeps the root on the spot" % label,
+         float(np.linalg.norm(root_path, axis=1).max()) < 1e-3 and float(np.linalg.norm(travel, axis=1).max()) > 20.0,
+         "root moves %.4f cm where the clip carries it %.1f cm" % (float(np.linalg.norm(root_path, axis=1).max()),
+                                                                    float(np.linalg.norm(travel, axis=1).max())))
+    rel_in = placed.worlds[:, :, 3, :3] - placed.worlds[root_i, :, 3, :3][None]
+    rel_own = own.worlds[:, :, 3, :3] - own.worlds[root_i, :, 3, :3][None]
+    off = float(np.abs(rel_in - rel_own).max())
+    turn = float(np.abs(placed.worlds[:, :, :3, :3] - own.worlds[:, :, :3, :3]).max())
+    gate("%s: in place, the body about the root as without it" % label, off < 1e-3 and turn < 1e-6,
+         "%.2e cm, %.2e in the rotations" % (off, turn))
+    gate("%s: the line says in place" % label, "in place" in text and pinfo["whole"].get("in_place", 0) > 20.0,
+         text[text.find("in place"):][:60])
+    ws.apply(root, walk, None, None, ws.ALL_PARTS, params=params(), whole=True)
+    back = float(np.abs(keyed(root).worlds - own.worlds).max())
+    gate("%s: without In place the root motion is back" % label, back < 1e-3, "%.2e" % back)
     cmds.undoInfo(state=True)
     before = keyed(root).worlds
     ws.apply(root, walk, None, None, ws.ALL_PARTS, params=params(height=("offset", 9.0)), whole=True)

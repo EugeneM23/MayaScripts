@@ -527,3 +527,25 @@ def line(info):
     return "start %s, walk %d-%d (%d stride%s), stop %s" % (
         span(info["start"]), walking[0][0], walking[-1][1], len(walking), "" if len(walking) == 1 else "s",
         span(info["stop"]))
+
+
+def in_place(worlds, names, parents, up=(0.0, 1.0, 0.0)):
+    """A whole clip on the spot (2026-11-19, the animator: the scene shows the clips in place, the export keeps the
+    root motion): every joint moved back by the root's travel along the floor since the first frame. The root's
+    own height and turn and everything relative to it stay, so the body plays exactly as before about a root that
+    stands still. `worlds` (J, F, 4, 4), row vectors; returns (a copy, the travel in cm)."""
+    out = np.array(worlds, float, copy=True)
+    names = list(names)
+    if "root" in names:
+        root = names.index("root")
+    else:
+        tops = [j for j, p in enumerate(parents) if p is None or p < 0]
+        if not tops:
+            return out, 0.0
+        root = tops[0]
+    up = np.asarray(up, float)
+    up = up / np.linalg.norm(up)
+    travel = out[root, :, 3, :3] - out[root, 0, 3, :3]
+    travel = travel - np.outer(travel @ up, up)
+    out[:, :, 3, :3] -= travel[None]
+    return out, float(np.linalg.norm(travel, axis=1).max())

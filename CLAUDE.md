@@ -12564,6 +12564,15 @@ legs' solver made general). A source that already holds its weapon two-handed (O
 so the walk's own values still give it back. On their data: the hold exact (0.0), the arm bones whole, the weapon
 13 cm against the chest (the loop's 12). Tests `test_walk_wholeclip.Grip`.
 
+**…and In place works on a whole clip** (2026-11-19, for the motion-matching batch: the scene shows the clips on
+the spot, the export keeps the root motion). The model still never sees `in_place` (`TIMING_KNOBS`); after
+`_whole`, when the card's chip (or the model's knob) asks it (`scene.whole_in_place`), `wholeclip.in_place` moves
+every joint back by the root's travel along the floor since the first frame - the root keeps its height and turn,
+the body plays about it exactly as without it. The card no longer greys In place (`_grey_timing`); the line says
+«in place (the root's N cm of travel taken off)». A press without it gives the root motion back, so an export is
+one press without In place. Proof: `verify_walk_wholeclip.py` **17/17** (OxGuard start: the root 0.0000 cm where
+the clip carries it 207 cm, the body about it 1e-12 cm); `tests/test_walk_wholeclip_inplace.py`.
+
 ## The Pose Library: our look, a folder button, a list at the smallest size (2026-10-22)
 
 The animator: «перерисовать библеотеку поз в нашем стиле и сделать само меню более компактным ...

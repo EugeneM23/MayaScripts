@@ -1046,10 +1046,10 @@ WHOLE_TIP = "the clip keeps its own timing (Whole clip)"
 
 
 def _grey_timing(whole):
-    """Tempo, Step, Ground time, Speed and In place greyed out while a whole clip is keyed: it keeps its timing."""
+    """Tempo, Step, Ground time and Speed greyed out while a whole clip is keyed: it keeps its timing. In place
+    stays: a whole clip is put on the spot after the walk (2026-11-19)."""
     cmds = _cmds()
-    controls = [(_control(n), cmds.floatSliderGrp) for n in TIMING_PARAMS] + [(SPEED, cmds.floatSliderGrp),
-                                                                           (IN_PLACE_BOX, cmds.checkBox)]
+    controls = [(_control(n), cmds.floatSliderGrp) for n in TIMING_PARAMS] + [(SPEED, cmds.floatSliderGrp)]
     for control, command in controls:
         if not command(control, exists=True):
             continue
@@ -2561,7 +2561,7 @@ def build_panel():
     hubstyle.mark(cmds.checkBox(WHOLE_BOX, label="Whole clip", annotation=(
         "A walker's own clip that does not loop by itself - a start, more strides, a stop - is keyed whole: the "
         "walk's settings on its strides, the pose's stance where it stands. It keeps its own timing: Step, Tempo, "
-        "Speed, Ground time and In place do nothing on it"),
+        "Speed and Ground time do nothing on it; In place puts it on the spot"),
         value=whole_on(), changeCommand=whole_changed), "chip")
     cmds.setParent("..")
     _walker_list()
