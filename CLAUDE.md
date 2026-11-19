@@ -11978,6 +11978,12 @@ walk tests were kept green; one of them counts the card's popup menus and now ex
   {name: {"params": …, "parts": […], "pose_card": "…"}}}`, written through a `.part` file; `read` / `names` /
   `get` / `save` / `remove` / `rename` / `clean_name` (whitespace collapsed, no path separator, ≤ 60
   characters) / `record` / `fields` (whatever is in the file read back in its kind). The folder is handed in,
+- **…and, since 2026-11-19, the first working walker's own edits** («сохраняло все изменения в том числе и
+  аддитив который накладывает риг поза»): `edits` = `scene.dump_edits` (the rig pose's cycle layer and the four
+  key poses, Fix posture, Snap weapon, Head aim) without the walk's name; applied, they replace every working
+  walker's own, each under the walk it walks (`panel._put_preset_edits`). A preset saved before keeps none and
+  leaves a walker's edits alone. A rig pose standing keeps showing the old pose until Create again. Tests
+  `tests/test_walk_preset_edits.py`; not seen in a GUI Maya.
   so it is outside the plugin an install replaces and a verify can point it at a temporary one.
 - **The card**: a row `Preset [▾] [Save...]` right above the Main head. The dropdown lists `(none)` and the
   presets; picking one puts it on at once and keys the selected walkers (`apply_preset` → `_rekey`, the card

@@ -1843,9 +1843,39 @@ def apply_preset(name):
             show_values()
         finally:
             _QUIET[0] = quiet
+        note += _put_preset_edits(store.edits_of(stored))
         _set_preset(chosen)
         return _rekey("preset %s%s" % (chosen, note))
     return _press(run)
+
+
+def _preset_edits():
+    """(the first working walker's own edits in their JSON form, that walker): what a preset keeps of the rig pose,
+    Fix posture, Snap weapon and Head aim (2026-11-19). (None, None) with no working walker."""
+    working = scene.working()
+    if not working:
+        return None, None
+    root = working[0]
+    edits = scene.edits_of(root) or scene.empty_edits()
+    return scene.dump_edits(edits), root
+
+
+def _put_preset_edits(edits):
+    """A preset's walker edits put on every working walker, each under the walk it walks (a walker's edits of
+    another walk are dropped when it is keyed). A preset saved before them (None) leaves the walkers' own alone.
+    The note for the line."""
+    if edits is None:
+        return ""
+    roots = scene.working()
+    for root in roots:
+        walk = scene.memo_of(root).get("walk") or ""
+        scene.set_edits(root, scene.parse_edits(edits, walk=walk))
+    if not roots:
+        return " | its rig pose edits wait for a working walker"
+    if scene.edits_empty(scene.parse_edits(edits)):
+        return " | the rig pose edits cleared"
+    return " | its rig pose edits on %d walker%s (a rig pose standing shows the old pose - Create it again)" % (
+        len(roots), "" if len(roots) == 1 else "s")
 
 
 def preset_changed(*_):
@@ -1870,11 +1900,18 @@ def press_save_preset(*_):
         if not name:
             raise scene.Refusal("a preset needs a name")
         had = name in preset_names()
+        edits, whose = _preset_edits()
         name = store.save(scene.folder(), name, scene.plain_params(card_params()), chosen_parts(),
-                          chosen_card() or "")
+                          chosen_card() or "", edits)
         _set_preset(name)
-        return "preset %s %s - the parameters, the macros, the character, the physics, the pose and its parts" \
-            % (name, "replaced" if had else "saved")
+        if edits is None:
+            kept = " | no working walker: the rig pose's edits are not in it"
+        elif scene.edits_empty(scene.parse_edits(edits)):
+            kept = " | %s has no rig pose edits: the preset clears a walker's" % scene.walker_label(whose)
+        else:
+            kept = ", and %s's rig pose edits" % scene.walker_label(whose)
+        return "preset %s %s - the parameters, the macros, the character, the physics, the pose and its parts%s" \
+            % (name, "replaced" if had else "saved", kept)
     return _press(run)
 
 

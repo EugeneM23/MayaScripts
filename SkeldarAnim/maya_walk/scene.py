@@ -941,9 +941,15 @@ def edits_of(root):
         raw = json.loads(cmds.getAttr(root + "." + EDITS_ATTR) or "{}")
     except ValueError:
         return None
+    return parse_edits(raw)
+
+
+def parse_edits(raw, walk=None):
+    """Edits out of their JSON form (the walker's attribute, a preset's record), None when it is no object; `walk`
+    given names the walk they belong to in place of the record's."""
     if not isinstance(raw, dict):
         return None
-    out = empty_edits(raw.get("walk"))
+    out = empty_edits(raw.get("walk") if walk is None else walk)
     # each read on its own (2026-10-27): a correction this build cannot read took the key poses' edits with it
     try:
         out["fix"] = mp.loads(raw.get("fix") or {})
@@ -959,12 +965,18 @@ def edits_of(root):
     return out
 
 
+def dump_edits(edits):
+    """Edits in their JSON form - what the walker's attribute and a preset keep."""
+    edits = edits or {}
+    return {"walk": edits.get("walk") or "", "fix": mp.dumps(edits.get("fix") or mp.empty()),
+            "keys": kp.dumps(edits.get("keys") or {}), "posture": bool(edits.get("posture")),
+            "snap": edits.get("snap") or None, "head": edits.get("head") or None}
+
+
 def set_edits(root, edits):
     """The walker `root`'s own edits written - unrecorded (Ctrl+Z is the rig's, or the press's own)."""
     cmds = _cmds()
-    data = {"walk": (edits or {}).get("walk") or "", "fix": mp.dumps((edits or {}).get("fix") or mp.empty()),
-            "keys": kp.dumps((edits or {}).get("keys") or {}), "posture": bool((edits or {}).get("posture")),
-            "snap": (edits or {}).get("snap") or None, "head": (edits or {}).get("head") or None}
+    data = dump_edits(edits)
     with Unrecorded():
         if not cmds.attributeQuery(EDITS_ATTR, node=root, exists=True):
             cmds.addAttr(root, longName=EDITS_ATTR, dataType="string")

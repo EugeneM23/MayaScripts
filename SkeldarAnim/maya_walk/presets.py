@@ -5,7 +5,11 @@ The animator: «Давай сделаем в Walk builder возможность
 A preset holds what the card itself holds and nothing of the scene: the walk's PARAMETERS (each a change from the
 cycle's own, so a preset reads the same on any clip - gait.stored_change), the macros, the character and its
 strength, the physics' flags, the pose's share, In place, the clean's knobs, the pose parts and the pose card's
-path. Never the walk cycle, never a walker: a preset is a look, put on whatever cycle is active.
+path - and, since 2026-11-19, the working walker's own edits: the rig pose's layer (the mean pose's correction and
+the four key poses'), Fix posture, Snap weapon and Head aim (`edits`, scene.dump_edits without the walk's name;
+«Нужно чтобы сохранение присета сохраняло все изменения в том числе и аддитив который накладывает риг поза»).
+Applied, they replace the working walkers' own edits. Never the walk cycle: a preset is a look, put on whatever
+cycle is active. A preset saved before keeps no `edits` and leaves a walker's own alone.
 
 The file is `<walks folder>/presets.json` - the walks folder, outside the plugin folder an install replaces:
 
@@ -79,9 +83,19 @@ def write(folder, presets):
     return whole
 
 
-def record(params, parts=(), pose_card=""):
-    """A preset's record out of the card's settings: `params` as JSON holds them (scene.plain_params)."""
-    return {"params": dict(params or {}), "parts": sorted(parts or ()), "pose_card": str(pose_card or "")}
+def record(params, parts=(), pose_card="", edits=None):
+    """A preset's record out of the card's settings: `params` as JSON holds them (scene.plain_params); `edits` the
+    working walker's edits in their JSON form (scene.dump_edits), None to keep none."""
+    out = {"params": dict(params or {}), "parts": sorted(parts or ()), "pose_card": str(pose_card or "")}
+    if isinstance(edits, dict):
+        out["edits"] = dict(edits, walk="")      # a look, put on whatever walk is active
+    return out
+
+
+def edits_of(stored):
+    """The walker edits a record keeps (their JSON form), None when it keeps none (a preset saved before them)."""
+    edits = (stored if isinstance(stored, dict) else {}).get("edits")
+    return edits if isinstance(edits, dict) else None
 
 
 def fields(stored):
@@ -95,13 +109,13 @@ def fields(stored):
             card if isinstance(card, str) else "")
 
 
-def save(folder, name, params, parts=(), pose_card=""):
+def save(folder, name, params, parts=(), pose_card="", edits=None):
     """A preset saved (a name already there is replaced). The name used."""
     name = clean_name(name)
     if not name:
         raise ValueError("a preset needs a name")
     presets = read(folder)
-    presets[name] = record(params, parts, pose_card)
+    presets[name] = record(params, parts, pose_card, edits)
     write(folder, presets)
     return name
 
