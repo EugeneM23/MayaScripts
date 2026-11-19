@@ -1661,8 +1661,11 @@ def press_apply(*_, **kw):
             chosen_walk()
         except scene.Refusal:
             _walk_taken(walks[0], say=False)
+        carried = _preset_onto(roots, walks)
         lines = [_apply_to(root, walk) for root, walk in zip(roots, walks)]
         scene.set_working(roots)                     # the card works on them now, whatever is selected
+        if carried:
+            lines = [line + carried for line in lines]
         _SELECTED[0] = scene.selected_top()          # keyed with the card: nothing to take back from it
         if len(lines) == 1:
             return lines[0]
@@ -1673,6 +1676,28 @@ def press_apply(*_, **kw):
             len(roots), ", ".join("%s (%s)" % (scene.walker_label(r), scene.walk_label(w))
                                   for r, w in zip(roots, walks)))
     return _press(run)
+
+
+def _preset_onto(roots, walks):
+    """Pick with a preset lit in the card (2026-11-19, «при нажатии pick пресет не применяется а должен»): its
+    walker edits - the rig pose's layer, the key poses, Fix posture, Snap weapon, Head aim - put on each picked
+    skeleton under the walk it is about to walk, before it is keyed. The card's own settings are the card's
+    already. A preset keeping no edits, or none lit: nothing. The note for the line."""
+    chosen = chosen_preset()
+    if not chosen:
+        return ""
+    edits = store.edits_of(store.get(scene.folder(), chosen))
+    if edits is None:
+        return ""
+    try:
+        active = chosen_walk()
+    except scene.Refusal:
+        active = ""
+    for root, walk in zip(roots, walks):
+        scene.set_edits(root, scene.parse_edits(edits, walk=walk or active or ""))
+    if scene.edits_empty(scene.parse_edits(edits)):
+        return ""
+    return " | preset %s's rig pose edits" % chosen
 
 
 def press_apply_own(*_):

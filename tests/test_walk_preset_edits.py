@@ -86,3 +86,36 @@ class Panel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PickTakesThePreset(unittest.TestCase):
+    """Pick puts the lit preset's walker edits on the picked skeletons (2026-11-19)."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        presets.save(self.folder, "Hunch", {}, (), "",
+                     scene.dump_edits(dict(scene.empty_edits("asd"), posture=True)))
+
+    def tearDown(self):
+        shutil.rmtree(self.folder, ignore_errors=True)
+
+    def _pick(self, preset):
+        written = {}
+        with mock.patch.object(panel, "chosen_preset", return_value=preset), \
+                mock.patch.object(scene, "folder", return_value=self.folder), \
+                mock.patch.object(panel, "chosen_walk", return_value="card:Walk cycles/asd.anim"), \
+                mock.patch.object(scene, "set_edits", side_effect=lambda r, e: written.__setitem__(r, e)):
+            note = panel._preset_onto(["|A", "|B"], ["own:1", None])
+        return written, note
+
+    def test_the_lit_preset_s_edits_go_on_each_under_its_walk(self):
+        written, note = self._pick("Hunch")
+        self.assertEqual(written["|A"]["walk"], "own:1")
+        self.assertEqual(written["|B"]["walk"], "card:Walk cycles/asd.anim")
+        self.assertTrue(written["|A"]["posture"])
+        self.assertIn("Hunch", note)
+
+    def test_no_preset_lit_touches_nothing(self):
+        written, note = self._pick("")
+        self.assertEqual(written, {})
+        self.assertEqual(note, "")
