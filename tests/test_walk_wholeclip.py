@@ -212,5 +212,99 @@ class Grip(unittest.TestCase):
         np.testing.assert_allclose(out[raw.index["hand_l"]], raw.worlds[raw.index["hand_l"]], atol=1e-6)
 
 
+def bent(clip, name, deg, frames=None):
+    """The clip with `name` turned `deg` about its own z (the synthetic arm's elbow hinge) on `frames` (all)."""
+    from tests.test_walkmodel import rot_z
+    w = clip.worlds.copy()
+    j = clip.index[name]
+    for f in (range(clip.F) if frames is None else frames):
+        before = w[:, f].copy()
+        new = before[j].copy()
+        new[:3, :3] = rot_z(deg) @ before[j][:3, :3]
+        changed = {j: new}
+        for i in clip.order:
+            q = clip.parents[i]
+            if i != j and q in changed:
+                changed[i] = before[i] @ np.linalg.inv(before[q]) @ changed[q]
+        for i, m in changed.items():
+            w[i, f] = m
+    return ss.Clip(clip.names, clip.parents, w, clip.fps, clip.name)
+
+
+def elbow_bend(worlds, clip, side, f):
+    """The angle (deg) between the upper arm and the forearm: 0 a straight arm."""
+    up, lo, ha = (clip.index["%s_%s" % (b, side)] for b in ("upperarm", "lowerarm", "hand"))
+    a = worlds[lo, f, 3, :3] - worlds[up, f, 3, :3]
+    b = worlds[ha, f, 3, :3] - worlds[lo, f, 3, :3]
+    c = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    return float(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))))
+
+
+def roll_about_x(local):
+    """The twist (deg) about the bone's own x in a row-vector local turn (swing-twist)."""
+    m = np.asarray(local).T
+    w = np.sqrt(max(0.0, 1.0 + np.trace(m))) / 2.0
+    x = (m[2, 1] - m[1, 2]) / (4.0 * w)
+    return float(np.degrees(2.0 * np.arctan2(x, w)))
+
+
+class GripArms(unittest.TestCase):
+    """2026-11-19, the TwoHand batch: under a pose's two-handed grip the whole clip's elbows stuck out and the
+    forearms rolled 180-340 deg against the upper arms (the twist bones riding them)."""
+
+    def test_an_arm_solve_keeps_the_forearms_roll_in_the_arm(self):
+        loop = loop_clip()
+        rng = np.random.RandomState(7)
+        chain = ["upperarm_l", "lowerarm_l", "hand_l"]
+        up, lo, ha = (loop.index[n] for n in chain)
+        for f in range(0, loop.F, 3):
+            w = loop.worlds[:, f].copy()
+            roll = roll_about_x(ss.orthonormal(w[lo]) @ ss.orthonormal(w[up]).T)
+            target = np.array(w[ha])
+            target[3, :3] = w[up, 3, :3] + (w[ha, 3, :3] - w[up, 3, :3]) * 0.8 + rng.uniform(-12, 12, 3)
+            short = wcl._arm_fix(loop, w, target, chain, 1.0)
+            self.assertLess(short, 1e-9)
+            np.testing.assert_allclose(w[ha, 3, :3], target[3, :3], atol=1e-6)
+            after = roll_about_x(ss.orthonormal(w[lo]) @ ss.orthonormal(w[up]).T)
+            self.assertAlmostEqual(after, roll, places=6)
+            for j, q in ((lo, up), (ha, lo)):
+                self.assertAlmostEqual(np.linalg.norm(w[j, 3, :3] - w[q, 3, :3]),
+                                       np.linalg.norm(loop.worlds[j, f, 3, :3] - loop.worlds[q, f, 3, :3]), places=6)
+
+    def test_the_grips_arms_are_the_walks_not_a_change_laid_on_the_clips(self):
+        # the clip's own elbows bent 100 deg more than the loop's (a run's), on its first strides; the walk's grip
+        # bends them its own way. Laid on as a difference the two bends added up past 180 and the forearm folded
+        loop = loop_clip()
+        res, _hold = gripped(bent(loop, "lowerarm_l", -60.0))
+        raw = tiled(before=0, after=0)
+        raw = bent(bent(raw, "lowerarm_l", -100.0, range(0, 40)), "lowerarm_r", 100.0, range(0, 40))
+        out, info = wcl.build(raw, loop, res)
+        self.assertTrue(info["grip"])
+        rc = ss.Cycle(res)
+        for f in range(raw.F):
+            R = rc.sample(info["phases"][f])[:, None]
+            for side in "lr":
+                self.assertLess(elbow_bend(out, raw, side, f), 150.0)
+                self.assertAlmostEqual(elbow_bend(out, raw, side, f), elbow_bend(R, res, side, 0), delta=8.0)
+            for side in "lr":
+                up, lo = raw.index["upperarm_" + side], raw.index["lowerarm_" + side]
+                got = roll_about_x(ss.orthonormal(out[lo, f]) @ ss.orthonormal(out[up, f]).T)
+                want = roll_about_x(ss.orthonormal(R[lo, 0]) @ ss.orthonormal(R[up, 0]).T)
+                self.assertAlmostEqual(got, want, delta=3.0)
+
+    def test_a_walk_with_no_grip_keeps_the_clips_own_arms_under_the_change(self):
+        raw = bent(tiled(), "lowerarm_l", -60.0)
+        loop = loop_clip()
+        out, info = wcl.build(raw, loop, loop)
+        self.assertFalse(info["grip"])
+        np.testing.assert_allclose(out[raw.index["hand_l"]], raw.worlds[raw.index["hand_l"]], atol=1e-6)
+
+    def test_the_arms_taken_whole_are_both_clavicles_and_everything_under_them(self):
+        loop = loop_clip()
+        got = set(loop.names[j] for j in wcl.absolute_arms(loop))
+        self.assertEqual(got, {"clavicle_l", "upperarm_l", "lowerarm_l", "hand_l", "index_01_l",
+                               "clavicle_r", "upperarm_r", "lowerarm_r", "hand_r", "index_01_r"})
+
+
 if __name__ == "__main__":
     unittest.main()

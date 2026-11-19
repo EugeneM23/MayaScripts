@@ -1545,7 +1545,11 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     parts = wp.parts_read(parts)        # the memo below is written with this build's names for them
     whole = bool(whole) and is_own(walk_name)
     anim = animate(root, walk_name, given, pose_name, parts, pose_card, params, whole=whole)
-    whole = whole and whole_applies(walk_name, anim)
+    if whole and not whole_applies(walk_name, anim):
+        # a clip that loops by itself is no whole clip: evaluated again with the card's own timing, or a whole
+        # clip's held timing (TIMING_KNOBS) keeps In place, Step and Tempo off a plain loop (2026-11-19)
+        whole = False
+        anim = animate(root, walk_name, given, pose_name, parts, pose_card, params)
     walk, statics, start, report = anim.walk, anim.statics, anim.start, anim.report
     given, params, result = anim.given, anim.params, anim.result
     bones, note = read_bones(root)

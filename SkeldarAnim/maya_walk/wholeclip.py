@@ -24,6 +24,14 @@ WALK_SHARE = 0.75          # a stride as fast as this share of the loop's is wal
 MIN_RUN = 8                # frames: the least walking run a clip with no whole walking stride is aligned on
 REACH = 0.999              # a leg reaches no further than this share of its length
 SINK_SIGMA = 3.0           # frames: the hips' sink smoothed
+SINK_MOST = 0.15           # the most the hips sink a frame for a leg's reach, a share of the leg
+HINGE_MIN = 0.5            # cm: a knee this near its hip-end line is straight - its hinge read from the bend asked
+HINGE_SHARE = 0.06         # a leg's own bend is read off its knee once the thigh stands this share off the hip-ankle
+                           # line (about 13 deg of knee), its thigh's hinge (thigh_hinge) below half of it
+WIDTH_LEAST = 5.0          # cm: a narrowing never brings the ankles nearer than this across the body (unless the clip does)
+WIDTH_SLACK = 3.0          # cm: the feet's width may leave what the walk asks by this much either way
+WIDTH_ROUNDS = 6           # rounds the contacts are moved in (each foot takes half the excess a round)
+SOFT = 0.04              # a leg's last share of its reach eased into (soft_reach): a near-straight knee never clicks
 STANCE_SIGMA = 4.0         # frames: the stance's weight spread
 JOLT = 1.0                 # cm a frame^2: the most the hand-over from a held pose to the walk may jolt the body
 PACE_LOOK = 10             # frames past the fall the stance-to-walk distance is read over
@@ -32,6 +40,7 @@ LEGS = ("thigh", "calf", "foot")
 ARMS = ("upperarm", "lowerarm", "hand")
 GRIP_DIST = 30.0           # cm: two hands this near each other, holding still against each other, hold one thing
 GRIP_STILL = 0.5           # cm: how little the two hands may move against each other in the walk to count as held
+RATE_FREE = 1.1            # a stride this much faster than the clip's own walking pace still takes the whole change
 
 
 class Refusal(Exception):
@@ -154,49 +163,118 @@ def phase_of(raw_a, loop_a, loop_cycle, loop_strides=1):
         phases = s0 + (np.arange(F) - t0).astype(float)
         return phases, [(t0, t1)], loop_speed
     s0 = _align(raw_a.clip, loop_a.clip, loop_cycle, walking[0][0], walking[0][1], step)
-    phases = np.zeros(F)
     first, last = walking[0][0], walking[-1][1]
     # the strides between the first and the last walking strike, walking or not (a slow stride inside the walk
-    # keeps the phase running)
+    # keeps the phase running): each strike a knot one loop stride on, the phase a monotone C1 curve through them
+    # (2026-11-19: piecewise linear, the rate jumped at every strike - 1.15 to 1.67 at a Box clip's turn stride -
+    # and the walk's change, laid at that rate, jolted the body there)
     inside = [(t0, t1) for t0, t1 in zip(strikes[:-1], strikes[1:]) if first <= t0 and t1 <= last]
-    count = 0.0
-    for t0, t1 in inside:
-        for f in range(t0, t1):
-            phases[f] = s0 + step * (count + (f - t0) / float(t1 - t0))
-        count += 1.0
-    end_phase = s0 + step * count
-    for f in range(0, first):
-        phases[f] = s0 - (first - f)
-    for f in range(last, F):
-        phases[f] = end_phase + (f - last)
+    knots = [first] + [t1 for _t0, t1 in inside]
+    values = [s0 + step * i for i in range(len(knots))]
+    # before the first walking strike and after the last the phase runs at the loop's own rate, as it always did:
+    # the curve leaves and joins it at rate 1
+    phases = monotone(np.asarray(knots, float), np.asarray(values, float), np.arange(F, dtype=float), ends=(1.0, 1.0))
     return phases, walking, loop_speed
+
+
+def monotone(x, y, at, ends=None):
+    """The monotone C1 cubic through the knots (x, y) (Fritsch-Carlson's harmonic slopes) at `at`; past the ends a
+    straight line on. `ends` (slope at the first knot, at the last): the curve's slopes there and the lines past
+    them (each held to 3 times its secant, the monotone bound); None: the end secants."""
+    x, y, at = np.asarray(x, float), np.asarray(y, float), np.asarray(at, float)
+    h = np.diff(x)
+    secant = np.diff(y) / h
+    m = np.zeros(len(x))
+    m[0], m[-1] = secant[0], secant[-1]
+    if ends is not None:
+        m[0] = min(float(ends[0]), 3.0 * secant[0])
+        m[-1] = min(float(ends[1]), 3.0 * secant[-1])
+    for i in range(1, len(x) - 1):
+        a, b = secant[i - 1], secant[i]
+        if a * b <= 0.0:
+            m[i] = 0.0
+        else:
+            w1, w2 = 2.0 * h[i] + h[i - 1], h[i] + 2.0 * h[i - 1]
+            m[i] = (w1 + w2) / (w1 / a + w2 / b)
+    out = np.empty(len(at))
+    for k, t in enumerate(at):
+        if t <= x[0]:
+            out[k] = y[0] + m[0] * (t - x[0])
+            continue
+        if t >= x[-1]:
+            out[k] = y[-1] + m[-1] * (t - x[-1])
+            continue
+        i = min(int(np.searchsorted(x, t, side="right")) - 1, len(x) - 2)
+        u = (t - x[i]) / h[i]
+        u2, u3 = u * u, u * u * u
+        out[k] = ((2 * u3 - 3 * u2 + 1) * y[i] + (u3 - 2 * u2 + u) * h[i] * m[i]
+                  + (-2 * u3 + 3 * u2) * y[i + 1] + (u3 - u2) * h[i] * m[i + 1])
+    return out
+
+
+def change_share(phases, walking):
+    """(F,) how much of the walk's change - its motion about its own cycle mean - each frame takes: all of it where
+    the phase runs no faster than RATE_FREE times the clip's own walking pace (the median of its walking strides'
+    rates, never under the loop's - a walk's strides differ by a few frames), (free pace / rate)^2 where it runs
+    faster. The change laid at a stride's own rate has its accelerations times rate^2: a turn's short stride (a Box
+    clip's corner, 18 frames for the loop's 30) took the walk's swing and bob at 2.8 times their accelerations and
+    jolted the body (2026-11-19, review note F). Its posture - the change's cycle mean - is always taken whole."""
+    phases = np.asarray(phases, float)
+    rate = np.gradient(phases)
+    per = [(phases[t1] - phases[t0]) / float(t1 - t0) for t0, t1 in walking if t1 > t0 and t1 < len(phases)]
+    pace = RATE_FREE * (max(1.0, float(np.median(per))) if per else 1.0)
+    return np.where(rate <= pace * (1.0 + 1e-9), 1.0, (pace / np.maximum(rate, 1e-6)) ** 2)
 
 
 # ---- the walk's difference ----
 
-def walk_difference(raw, loop_cycle, result_cycle, phases, names_raw, names_walk):
+def change_mean(loop_cycle, result_cycle):
+    """(turns (J, 3, 3), offsets (J, 3)): the walk's change over one period of the loop, each joint's mean - the
+    change's posture, what stays when its motion is let go (change_share)."""
+    loop_clip = loop_cycle.clip
+    turns, offsets = [], []
+    for u in range(int(loop_cycle.period)):
+        sl, so = _locals(loop_clip, loop_cycle.sample(float(u)))
+        rr, rro = _locals(loop_clip, result_cycle.sample(float(u)))
+        turns.append(rr @ np.swapaxes(sl, 1, 2))
+        offsets.append(rro - so)
+    turns = np.asarray(turns)
+    return np.array([ss.mean_rot(turns[:, j]) for j in range(turns.shape[1])]), np.mean(offsets, axis=0)
+
+
+def walk_difference(raw, loop_cycle, result_cycle, phases, names_raw, names_walk, share=None, absolute=()):
     """(J, F) local turns and offsets of the raw clip with the walk's change at each frame's phase laid over: the
     change is the result's local against the loop's own (each joint's turn in its own frame, its offset in its
-    parent's; the top joint's place turned from the loop's heading onto the clip's)."""
+    parent's; the top joint's place turned from the loop's heading onto the clip's). `share` (F,) (change_share):
+    where it is under 1 the change's motion about its cycle mean is taken that much, its mean whole. A joint in
+    `absolute` (raw indices) takes the result's own turn at the phase instead - an arm the walk holds in a pose's
+    grip, which is the pose's arm and not a change to the clip's (absolute_arms)."""
     J, F = raw.worlds.shape[:2]
     idx = dict((n, i) for i, n in enumerate(names_walk))
     lr = np.zeros((J, F, 3, 3))
     lo = np.zeros((J, F, 3))
     loop_clip = loop_cycle.clip
+    mean = None
+    if share is not None and float(np.min(share)) < 1.0:
+        mean = change_mean(loop_cycle, result_cycle)
     for f in range(F):
         rl, ro = _locals(raw, raw.worlds[:, f])
         S = loop_cycle.sample(phases[f])
         R = result_cycle.sample(phases[f])
         sl, so = _locals(loop_clip, S)
         rr, rro = _locals(loop_clip, R)
+        a = 1.0 if mean is None else float(share[f])
         for j, name in enumerate(names_raw):
             w = idx.get(name)
             if w is None:
                 lr[j, f], lo[j, f] = rl[j], ro[j]
                 continue
             turn = rr[w] @ sl[w].T                     # the result's local against the loop's, in the joint's frame
-            lr[j, f] = turn @ rl[j]
             d = rro[w] - so[w]
+            if a < 1.0:                                # its motion about the cycle mean taken `a` of the way
+                turn = ss.slerp(np.eye(3), turn @ mean[0][w].T, a) @ mean[0][w]
+                d = mean[1][w] + a * (d - mean[1][w])
+            lr[j, f] = rr[w] if j in absolute else turn @ rl[j]
             if raw.parents[j] < 0:                     # the top joint: its place's change carried by the headings
                 h_loop = ss.yaw(ss.yaw_of(sl[w]))
                 h_raw = ss.yaw(ss.yaw_of(rl[j]))
@@ -241,33 +319,179 @@ def _mix(a, b, w):
     return out
 
 
-def _leg_fix(clip, worlds, targets, side, reach=REACH):
-    """The leg of `side` solved onto its foot target, in place (worlds (J, 4, 4)): the thigh and the calf turned the
-    least way onto the two-bone IK's knee (toward the leg's own bend), the foot standing in its target's turn. The
-    children of the three bones carried rigidly. Returns how far it fell short."""
-    return _limb_fix(clip, worlds, targets, ["%s_%s" % (b, side) for b in LEGS], reach)
+def _leg_fix(clip, worlds, targets, side, reach=REACH, outward=None, floor=None, hinge=None):
+    """The leg of `side` solved onto its foot target, in place (worlds (J, 4, 4)): the thigh and the calf turned
+    onto the two-bone IK's knee (toward the leg's own bend), the foot standing in its target's turn. The children of
+    the three bones carried rigidly. `hinge` (the knee's hinge axis in the thigh's own frame, `thigh_hinge`): where
+    the leg comes in near straight and leaves bent (its own bend too small to say which way, a few millimetres of
+    noise), the knee bends about it. With `outward` (the body's outside for this leg, world) and `floor` the knee's
+    bend turns about the hip-ankle line no further in than `floor` (knee_plane). Returns how far it fell short."""
+    chain = ["%s_%s" % (b, side) for b in LEGS]
+    ix = clip.index
+    th, ca, fo = (ix[n] for n in chain)
+    hip, knee0, ankle0 = worlds[th, 3, :3], worlds[ca, 3, :3], worlds[fo, 3, :3]
+    e = ss._unit(targets[3, :3] - hip)
+    plane = ss.bend_side(knee0 - hip, e)
+    old = None
+    if hinge is not None:
+        l1, l2 = float(np.linalg.norm(knee0 - hip)), float(np.linalg.norm(ankle0 - knee0))
+        d = min(float(np.linalg.norm(targets[3, :3] - hip)), reach * (l1 + l2))
+        d = max(d, abs(l1 - l2) + 1e-6)
+        along = (l1 * l1 - l2 * l2 + d * d) / (2.0 * d)
+        h_out = math.sqrt(max(0.0, l1 * l1 - along * along))
+        e0 = ss._unit(ankle0 - hip)
+        h_in = float(np.linalg.norm((knee0 - hip) - float(np.dot(knee0 - hip, e0)) * e0))
+        # how far the leg's own bend can be trusted: bent enough to say which way (HINGE_SHARE of the thigh off its
+        # line), or bent the way it will be bent (solved to about its own bend - and the clip given back as it is)
+        sure = ss._smooth(min(1.0, max(0.0, (h_in / max(l1, 1e-6) - HINGE_SHARE) / HINGE_SHARE)))
+        same = ss._smooth(min(1.0, max(0.0, (h_in / max(h_out, 1e-6) - 0.5) / 0.4))) if h_out > 1e-6 else 1.0
+        w = max(sure, same)
+        if w < 1.0:
+            rot = ss.orthonormal(worlds[th])
+            n = np.asarray(hinge, float) @ rot
+            pref, pref0 = ss.bend_side(np.cross(n, e), e), ss.bend_side(np.cross(n, e0), e0)
+            mixed = w * plane + (1.0 - w) * pref
+            plane = ss.bend_side(mixed if np.linalg.norm(mixed) > 1e-6 else pref, e)
+            # the leg as it came in read the same way: its bones keep their roll about the hinge they carry
+            geom0 = ss.bend_side(knee0 - hip, e0)
+            mixed0 = w * geom0 + (1.0 - w) * pref0
+            old = ss.bend_side(mixed0 if np.linalg.norm(mixed0) > 1e-6 else pref0, e0)
+    if outward is not None and floor is not None:
+        plane = knee_plane(plane, e, outward, floor)
+    return _limb_fix(clip, worlds, targets, chain, reach, plane, old)
 
 
-def _limb_fix(clip, worlds, targets, chain, reach=REACH):
-    """A three-joint chain (`chain` leaf names, root to end) solved onto `targets` (4x4, the end's world), in place."""
+def thigh_hinge(clip, worlds, side, least=20.0):
+    """The knee's hinge axis (unit, the normal of hip-knee-ankle) in the thigh's own frame, the median over the
+    frames of `worlds` (J, F, 4, 4) the knee bends at least `least` degrees - or None."""
+    ix = clip.index
+    th, ca, fo = (ix["%s_%s" % (b, side)] for b in LEGS)
+    h, k, a = worlds[th, :, 3, :3], worlds[ca, :, 3, :3], worlds[fo, :, 3, :3]
+    u, v = h - k, a - k
+    bent = 180.0 - np.degrees(np.arccos(np.clip(np.sum(u * v, 1) / (np.linalg.norm(u, axis=1)
+                                                                     * np.linalg.norm(v, axis=1) + 1e-12), -1, 1)))
+    keep = bent >= least
+    if not keep.any():
+        return None
+    n = np.cross(h - k, a - k)            # = (hip-end line) x (the knee's bend direction): bend = n x line
+    n /= np.linalg.norm(n, axis=1, keepdims=True) + 1e-12
+    rot = _rots(worlds[th])
+    local = np.einsum("fi,fji->fj", n, rot)[keep]
+    m = np.median(local, axis=0)
+    return m / np.linalg.norm(m) if np.linalg.norm(m) > 1e-9 else None
+
+
+def knee_share(hip, knee, ankle, outward):
+    """How far the knee's bend direction points to the body's outside: its unit share along `outward` made square to
+    the hip-ankle line (1 straight out, -1 straight in, 0 forward or back)."""
+    e = ss._unit(np.asarray(ankle, float) - hip)
+    bend = ss.bend_side(np.asarray(knee, float) - hip, e)
+    side = np.asarray(outward, float) - float(np.dot(outward, e)) * e
+    if np.linalg.norm(side) < 1e-9:
+        return 0.0
+    return float(np.dot(bend, ss._unit(side)))
+
+
+def knee_plane(bend, e, outward, floor):
+    """The knee's bend direction `bend` (a unit vector off the hip-ankle line `e`) turned about `e` the least way
+    until it points no further into the body than `floor`: its share along `outward` (made square to `e`) at least
+    `floor` (2026-11-19: a leg of a Box clip's sideways step under the walk's knee turns fell 7 cm in, the animator:
+    «колени смотрят внутрь»). Returns `bend` itself when it is out far enough."""
+    e = ss._unit(np.asarray(e, float))
+    side = np.asarray(outward, float) - float(np.dot(outward, e)) * e
+    if np.linalg.norm(side) < 1e-9:
+        return bend
+    side = ss._unit(side)
+    a = float(np.dot(bend, side))
+    if a >= floor:
+        return bend
+    q = np.cross(e, bend)
+    b = float(np.dot(q, side))
+    r = math.hypot(a, b)
+    if r < 1e-9:
+        return bend
+    turn = math.acos(max(-1.0, min(1.0, min(floor, r) / r)))
+    base = math.atan2(b, a)
+    phi = min((base - turn, base + turn), key=lambda x: abs(math.atan2(math.sin(x), math.cos(x))))
+    return math.cos(phi) * np.asarray(bend, float) + math.sin(phi) * q
+
+
+def _limb_fix(clip, worlds, targets, chain, reach=REACH, plane=None, old=None):
+    """A three-joint chain (`chain` leaf names, root to end) solved onto `targets` (4x4, the end's world), in place;
+    the middle joint bending toward `plane` when given (else the chain's own bend), the root bone rolled with it;
+    `old` the bend the chain came in with when its own knee is too near straight to say (else read off it)."""
     ix = clip.index
     th, ca, fo = (ix[n] for n in chain)
     hip, knee0, ankle0 = worlds[th, 3, :3], worlds[ca, 3, :3], worlds[fo, 3, :3]
     l1, l2 = float(np.linalg.norm(knee0 - hip)), float(np.linalg.norm(ankle0 - knee0))
     goal = targets[3, :3]
     e = ss._unit(goal - hip)
-    bend = ss.bend_side(knee0 - hip, e)
+    bend0 = ss.bend_side(knee0 - hip, e)
+    bend = bend0 if plane is None else ss.bend_side(plane, e)
     knee, reached, short = ss.two_bone(hip, goal, l1, l2, bend, reach)
+    # the chain's hinge before and after: the normal of the plane the hip-end line and the knee's offset make. Both
+    # bones are turned by what takes their direction and THAT normal onto the new ones, so each keeps its roll about
+    # its own length (2026-11-19): read against the bend direction instead, a lower bone bent past square to the
+    # hip-end line crossed it and flipped its roll by half a turn - the legs' hinges drifted 30-115 deg in their own
+    # bones' frames, 15-30 deg in one frame (the knee kinks and knees turning in of the TwoHand Box clips)
+    e0 = ss._unit(ankle0 - hip)
+    off0 = (knee0 - hip) - float(np.dot(knee0 - hip, e0)) * e0
+    if old is not None:
+        b0 = ss.bend_side(old, e0)
+    else:
+        b0 = ss._unit(off0) if np.linalg.norm(off0) > HINGE_MIN else ss.bend_side(bend, e0)
+    n0 = ss._unit(np.cross(e0, b0))
+    e1 = ss._unit(reached - hip)
+    n1 = ss._unit(np.cross(e1, ss.bend_side(bend, e1)))
     before = {j: worlds[j].copy() for j in range(len(worlds))}
     new = {}
-    new[th] = _aimed(worlds[th], knee0 - hip, knee - hip, bend)
+    new[th] = _hinged(worlds[th], knee0 - hip, knee - hip, n0, n1)
     new[th][3, :3] = hip
-    new[ca] = _aimed(worlds[ca], ankle0 - knee0, reached - knee, bend)
+    new[ca] = _hinged(worlds[ca], ankle0 - knee0, reached - knee, n0, n1)
     new[ca][3, :3] = knee
     foot = np.array(worlds[fo])
     foot[:3, :3] = ss.orthonormal(targets) * np.linalg.norm(worlds[fo][:3, :3], axis=1)[:, None]
     foot[3, :3] = reached
     new[fo] = foot
+    _carry(clip, worlds, before, new)
+    return float(short)
+
+
+def _arm_fix(clip, worlds, target, chain, reach=1.0):
+    """An arm (`chain` leaf names: upper arm, forearm, hand) solved onto `target` (4x4, the hand's world), in place.
+    The arm's own PLANE carried onto the new one - the shoulder-wrist line and the elbow's side of it, before and
+    after - both bones turned by that one map, so the forearm keeps its roll in the arm (2026-11-19). _limb_fix turns
+    each bone on its own about a normal crossed from that bone and the elbow's side: where the forearm stood near
+    that side the normal flipped, and a two-handed grip's forearms rolled 180-340 deg against the upper arm (the
+    Transition clips' "elbows out, twists broken"); the twist bones under the forearm rode it. Returns how far the
+    hand fell short."""
+    ix = clip.index
+    up, low, hand = (ix[n] for n in chain)
+    sh, el0, wr0 = worlds[up, 3, :3], worlds[low, 3, :3], worlds[hand, 3, :3]
+    l1, l2 = float(np.linalg.norm(el0 - sh)), float(np.linalg.norm(wr0 - el0))
+    goal = target[3, :3]
+    e0 = ss._unit(wr0 - sh)
+    side0 = el0 - sh - np.dot(el0 - sh, e0) * e0
+    e1 = ss._unit(goal - sh)
+    hint = side0 if np.linalg.norm(side0) > 1e-6 else ss._any_perpendicular(e0)
+    side1 = ss.bend_side(hint, e1)
+    side0 = ss.bend_side(hint, e0)
+    elbow, reached, short = ss.two_bone(sh, goal, l1, l2, side1, reach)
+    n0, n1 = ss._unit(np.cross(e0, side0)), ss._unit(np.cross(e1, side1))
+    before = {j: worlds[j].copy() for j in range(len(worlds))}
+    new = {}
+    for j, a0, a1, place in ((up, el0 - sh, elbow - sh, sh), (low, wr0 - el0, reached - elbow, elbow)):
+        u0, u1 = ss._unit(a0), ss._unit(a1)
+        p0 = ss._unit(n0 - np.dot(n0, u0) * u0)       # the plane's normal, square to the bone (exactly so already)
+        p1 = ss._unit(n1 - np.dot(n1, u1) * u1)
+        m = np.array(worlds[j])
+        m[:3, :3] = worlds[j][:3, :3] @ ss.align(u0, p0, u1, p1)
+        m[3, :3] = place
+        new[j] = m
+    h = np.array(worlds[hand])
+    h[:3, :3] = ss.orthonormal(target) * np.linalg.norm(worlds[hand][:3, :3], axis=1)[:, None]
+    h[3, :3] = reached
+    new[hand] = h
     _carry(clip, worlds, before, new)
     return float(short)
 
@@ -293,6 +517,37 @@ def grip_hold(result, names):
     if float(np.ptp(rel[:, 3, :3], axis=0).max()) > GRIP_STILL:
         return None
     return _rigid(rel[0])
+
+
+def absolute_arms(clip):
+    """The raw indices of both arms - each clavicle and every joint under it (the upper and lower arms, their twist
+    bones, the hand, the fingers, the weapon bone) - that a pose's two-handed grip in the walk takes over whole
+    (2026-11-19). The grip's arm is the pose's: its elbow bends ~110 deg where the walk's own bends ~25, so its
+    change is ~85 deg of elbow - and laid over a clip's own arm as a difference, onto a run's elbow already bent
+    100-115 deg, it bent the elbow through 180: the forearm folded back and rolled 180-340 deg against the upper
+    arm (the Transition clips' "elbows out, twists broken"). Taken from the walk, the arm is the walk's at the
+    frame's phase and the grip's IK only follows the clip's own chest."""
+    out = set()
+    for side in ("l", "r"):
+        top = clip.index.get("clavicle_" + side)
+        if top is not None:
+            out.update(_under(clip, top))
+    return out
+
+
+def _hinged(world, old_dir, new_dir, n0, n1):
+    """`world` turned by the rotation taking the bone direction `old_dir` and the chain's hinge normal `n0` onto
+    `new_dir` and `n1` (each direction square to its normal: both lie in the chain's plane)."""
+    u0, u1 = ss._unit(old_dir), ss._unit(new_dir)
+    m0 = ss._unit(n0 - float(np.dot(n0, u0)) * u0)
+    m1 = ss._unit(n1 - float(np.dot(n1, u1)) * u1)
+    if np.linalg.norm(m0) < 1e-9 or np.linalg.norm(m1) < 1e-9:
+        return np.array(world)
+    o = np.array([u0, m0, np.cross(u0, m0)])
+    m = np.array([u1, m1, np.cross(u1, m1)])
+    out = np.array(world)
+    out[:3, :3] = world[:3, :3] @ (o.T @ m)
+    return out
 
 
 def _aimed(world, old_dir, new_dir, bend):
@@ -341,7 +596,11 @@ def build(raw, loop, result, statics=None, bones=None, parts=None, share=1.0, k=
     lengths = np.diff(raw_strikes) if len(raw_strikes) > 1 else np.array([loop_cycle.period])
     strides = max(1, int(round(loop_cycle.period / max(float(np.median(lengths)), 1.0))))
     phases, walking, loop_speed = phase_of(raw_a, loop_a, loop_cycle, strides)
-    lr, lo = walk_difference(raw, loop_cycle, result_cycle, phases, raw.names, loop.names)
+    # a two-handed grip the walk holds and the loop does not: the pose's arms, taken whole (absolute_arms)
+    hold = grip_hold(result, raw.index) if grip_hold(loop, raw.index) is None else None
+    share_of_change = change_share(phases, walking)
+    lr, lo = walk_difference(raw, loop_cycle, result_cycle, phases, raw.names, loop.names, share_of_change,
+                             absolute_arms(raw) if hold is not None else ())
     F, J = raw.F, raw.J
     # the stance: Start/Stop Builder's model on the same clip with the same pose, its run the clip's own, standing
     # where the body is slower than the walk
@@ -376,36 +635,65 @@ def build(raw, loop, result, statics=None, bones=None, parts=None, share=1.0, k=
         out[:, f] = _fk(raw, flr, flo, scales)
     # the legs: each contact moved by one rigid motion, the swing carried between, the hips sunk where a planted
     # foot is out of reach
-    targets = dict((s, _foot_targets(raw_a, raw.worlds[raw.index["foot_" + s]], out[raw.index["foot_" + s]], s))
-                   for s in ss.SIDES)
+    asked = asked_width(raw, loop, result, loop_cycle, result_cycle, phases, stance, still)
+    targets, widths = _placed_feet(raw, raw_a, out, asked)
+    # how straight a leg may come: the clip's own straightest, eased into over its last SOFT share
+    # of the leg - a knee near straight turns tens of degrees for a centimetre of reach (trap 266), and a leg pinned
+    # at its reach for a few frames of a push-off clicked 18-30 deg a frame (the animator's Box_B_LR_Lfoot, 2026-11-19)
+    lengths, limits = {}, {}
+    for s in ss.SIDES:
+        th, ca, fo = (raw.index["%s_%s" % (b, s)] for b in LEGS)
+        lengths[s] = float(np.linalg.norm(raw.worlds[ca, 0, 3, :3] - raw.worlds[th, 0, 3, :3])
+                           + np.linalg.norm(raw.worlds[fo, 0, 3, :3] - raw.worlds[ca, 0, 3, :3]))
+        own = np.linalg.norm(raw.worlds[fo, :, 3, :3] - raw.worlds[th, :, 3, :3], axis=1)
+        limits[s] = min(lengths[s], float(own.max()))       # the clip's own straightest (it is given back as it is)
     need = np.zeros(F)
     for f in range(F):
         for s in ss.SIDES:
             if not raw_a.feet[s]["down"][f]:
                 continue
-            th, ca, fo = (raw.index["%s_%s" % (b, s)] for b in LEGS)
-            length = (np.linalg.norm(out[ca, f, 3, :3] - out[th, f, 3, :3])
-                      + np.linalg.norm(out[fo, f, 3, :3] - out[ca, f, 3, :3]))
-            # no further than the legs' reach - or the clip's own stretch there, a clip walking on legs straighter
-            # than REACH is not sunk for it
+            th, fo = raw.index["thigh_" + s], raw.index["foot_" + s]
+            hip, goal = out[th, f, 3, :3], targets[s][f, 3, :3]
+            # never sunk past the clip's own stretch there: a clip that walks that straight keeps it
             own = float(np.linalg.norm(raw.worlds[fo, f, 3, :3] - raw.worlds[th, f, 3, :3]))
-            gap = float(np.linalg.norm(targets[s][f, 3, :3] - out[th, f, 3, :3])) - max(REACH * length, own)
-            need[f] = max(need[f], gap)
+            want = max(soft_reach(float(np.linalg.norm(goal - hip)), limits[s], SOFT * lengths[s]), own)
+            # (never past SINK_MOST of the leg: a goal that far is a step the hips cannot reach for - it falls short)
+            need[f] = max(need[f], min(sink_for(hip, goal, want), SINK_MOST * lengths[s]))
     drop = ss.cover(np.maximum(need, 0.0), SINK_SIGMA) if need.max() > 1e-4 else np.zeros(F)
     pelvis = raw.index["pelvis"]
     above = _under(raw, pelvis)
     shorts = np.zeros(F)
+    other = {"l": "r", "r": "l"}
+    hinges = dict((s, thigh_hinge(raw, out, s)) for s in ss.SIDES)      # read before the legs are solved
     for f in range(F):
         if drop[f] > 0.0:
             out[above, f, 3, 1] -= drop[f]
         for s in ss.SIDES:
-            shorts[f] = max(shorts[f], _leg_fix(raw, out[:, f], targets[s][f], s))
+            # the knee no further into the body than the clip's own there (and never in where the clip's is out)
+            th, ca, fo = (raw.index["%s_%s" % (b, s)] for b in LEGS)
+            w0 = raw.worlds[:, f]
+            raw_out = w0[th, 3, :3] - w0[raw.index["thigh_" + other[s]], 3, :3]
+            raw_out[1] = 0.0
+            floor = min(0.0, knee_share(w0[th, 3, :3], w0[ca, 3, :3], w0[fo, 3, :3], raw_out))
+            outward = out[th, f, 3, :3] - out[raw.index["thigh_" + other[s]], f, 3, :3]
+            outward[1] = 0.0
+            target = targets[s][f]
+            if not raw_a.feet[s]["down"][f]:     # a foot in the air passes nearer the hip than its reach: eased
+                hip = out[raw.index["thigh_" + s], f, 3, :3]
+                d = float(np.linalg.norm(target[3, :3] - hip))
+                own = float(np.linalg.norm(w0[fo, 3, :3] - w0[th, 3, :3]))   # a leg the clip swings this straight
+                if d > 1e-6:
+                    target = np.array(target)
+                    target[3, :3] = hip + (target[3, :3] - hip) * (
+                        max(soft_reach(d, limits[s], SOFT * lengths[s]), min(d, own)) / d)
+            shorts[f] = max(shorts[f], _leg_fix(raw, out[:, f], target, s,
+                                                max(limits[s], 1e-6) / lengths[s] + 1e-6, outward, floor,
+                                                hinges[s]))
     # the hands last: a two-handed grip in the walk holds on every frame of the clip - the right hand carries the
     # weapon and the left arm is solved by IK onto its hold (2026-11-17: in a whole clip the clip's own swinging arms
     # under the walk's difference let the hands drift 64 cm apart)
     # (a clip that holds its weapon two-handed already keeps its grip under the difference: left as it is, so the walk's
     # own values still give the clip back)
-    hold = grip_hold(result, raw.index) if grip_hold(loop, raw.index) is None else None
     grip_short = 0.0
     if hold is not None:
         hand_r = raw.index["hand_r"]
@@ -421,16 +709,18 @@ def build(raw, loop, result, statics=None, bones=None, parts=None, share=1.0, k=
                 want = _mix(_rigid(out[hand_r, f]), in_chest @ _rigid(out[chest, f]), walk)
                 scale = np.linalg.norm(out[hand_r, f][:3, :3], axis=1)
                 want[:3, :3] = want[:3, :3] * scale[:, None]
-                grip_short = max(grip_short, _limb_fix(raw, out[:, f], want, ["%s_r" % b for b in ARMS], 1.0))
+                grip_short = max(grip_short, _arm_fix(raw, out[:, f], want, ["%s_r" % b for b in ARMS], 1.0))
             target = hold @ out[hand_r, f]
             scale = np.linalg.norm(out[raw.index["hand_l"], f][:3, :3], axis=1)
             target[:3, :3] = ss.orthonormal(target) * scale[:, None]
-            grip_short = max(grip_short, _limb_fix(raw, out[:, f], target, ["%s_l" % b for b in ARMS], 1.0))
+            grip_short = max(grip_short, _arm_fix(raw, out[:, f], target, ["%s_l" % b for b in ARMS], 1.0))
     info = {"walking": walking, "phases": phases, "loop_speed": loop_speed, "still": still,
+            "change_share": share_of_change,
             "grip": hold is not None, "grip_short": float(grip_short),
             "start": (0, walking[0][0] - 1) if walking[0][0] > 0 else None,
             "stop": (walking[-1][1], F - 1) if walking[-1][1] < F - 1 else None,
             "drop": float(drop.max()), "short": float(shorts.max()), "stance": stance is not None,
+            "width": {"raw": widths[0], "asked": asked, "before": widths[1], "after": widths[2]},
             "stance_worlds": stance, "names": list(raw.names),
             "transition": raw_a.transition}
     return out, info
@@ -476,6 +766,117 @@ def _paced(raw, lr, lo, stance, still):
     return out
 
 
+def feet_width(worlds, index):
+    """(F,) the feet's width across the body: the left ankle against the right along the hips' line (right hip to
+    left, along the floor), cm, signed - negative where the feet cross. `worlds` (J, F, 4, 4)."""
+    w = np.asarray(worlds)
+    hip = w[index["thigh_l"], :, 3, :3] - w[index["thigh_r"], :, 3, :3]
+    hip[:, 1] = 0.0
+    hip /= np.maximum(np.linalg.norm(hip, axis=1, keepdims=True), 1e-9)
+    return np.sum((w[index["foot_l"], :, 3, :3] - w[index["foot_r"], :, 3, :3]) * hip, axis=1)
+
+
+def asked_width(raw, loop, result, loop_cycle, result_cycle, phases, stance, still):
+    """(F,) how much the walk asks the feet's width to change at each frame of the clip: Walk Builder's loop against
+    its own source at the frame's phase (its Width, Stance, the pose's feet), and the stance's against the clip
+    where the body stands, mixed by `still`."""
+    F = raw.F
+    ask = np.zeros(F)
+    for f in range(F):
+        R, S = result_cycle.sample(phases[f]), loop_cycle.sample(phases[f])
+        ask[f] = feet_width(R[:, None], result.index)[0] - feet_width(S[:, None], loop.index)[0]
+    if stance is not None:
+        stand = feet_width(stance, raw.index) - feet_width(raw.worlds, raw.index)
+        ask = (1.0 - np.asarray(still)) * ask + np.asarray(still) * stand
+    return ask
+
+
+def width_bounds(raw_width, asked, least=WIDTH_LEAST, slack=WIDTH_SLACK):
+    """(lo, hi) (F,) each: the feet's width a frame may take - the clip's own moved by no more than the walk asks
+    (`asked`, give or take `slack` cm either way), and never narrower than the clip's own or `least`, whichever is
+    narrower: a narrowing never crosses feet the clip keeps apart, and never crosses them further than it does
+    (2026-11-19, the animator: «ноги не должны разъезжаться сверх нормы ... высчитывать дельту и придерживаться»;
+    a person's step width is 5-15 cm between the ankles, the gait guide's norm)."""
+    raw_width, asked = np.asarray(raw_width, float), np.asarray(asked, float)
+    hi = raw_width + np.maximum(asked, 0.0) + slack
+    lo = np.maximum(raw_width + np.minimum(asked, 0.0) - slack, np.minimum(raw_width, least))
+    return lo, np.maximum(hi, lo)
+
+
+def width_shifts(widths, lo, hi, contacts, rate=0.5):
+    """{contact index: cm} how far each of one foot's contacts moves along the body's line to bring the feet's width
+    (F,) back inside (lo, hi): `rate` of the median excess over the contact's frames (the other foot takes the rest),
+    a contact already inside left out. Positive: the width grows."""
+    excess = np.asarray(widths) - np.clip(widths, lo, hi)
+    out = {}
+    for i, (c0, c1) in enumerate(contacts):
+        e = excess[c0:c1 + 1]
+        if not len(e) or float(np.abs(e).max()) < 0.05:
+            continue
+        out[i] = -rate * float(np.median(e[np.abs(e) > 1e-9])) if np.any(np.abs(e) > 1e-9) else 0.0
+    return out
+
+
+def _placed_feet(raw, raw_a, out, asked, rounds=WIDTH_ROUNDS):
+    """({side: (F, 4, 4)} the feet's targets, (raw, before, after) widths): `_foot_targets` with each contact moved
+    along the hips' line where the feet's width leaves `width_bounds` (the rounds converge: each foot takes half)."""
+    ix = raw.index
+    feet = dict((s, (raw.worlds[ix["foot_" + s]], out[ix["foot_" + s]])) for s in ss.SIDES)
+    contacts = dict((s, edge_contacts(raw_a.feet[s]["contacts"], raw_a.feet[s]["down"], raw.F)) for s in ss.SIDES)
+    raw_width = feet_width(raw.worlds, ix)
+    lo, hi = width_bounds(raw_width, asked)
+    hip = out[ix["thigh_l"], :, 3, :3] - out[ix["thigh_r"], :, 3, :3]
+    hip[:, 1] = 0.0
+    hip /= np.maximum(np.linalg.norm(hip, axis=1, keepdims=True), 1e-9)
+    shifts = dict((s, {}) for s in ss.SIDES)
+    first = None
+    for _ in range(rounds + 1):
+        targets = dict((s, _foot_targets(raw_a, feet[s][0], feet[s][1], s, shifts[s])) for s in ss.SIDES)
+        widths = _target_width(out, ix, targets)
+        if first is None:
+            first = widths
+        moved = False
+        for s, sign in (("l", 1.0), ("r", -1.0)):
+            for i, cm in width_shifts(widths, lo, hi, contacts[s]).items():
+                c0, c1 = contacts[s][i]
+                axis = hip[(c0 + c1) // 2]
+                shifts[s][i] = shifts[s].get(i, np.zeros(3)) + sign * cm * axis
+                moved = True
+        if not moved:
+            break
+    return targets, (raw_width, first, widths)
+
+
+def _target_width(out, ix, targets):
+    hip = out[ix["thigh_l"], :, 3, :3] - out[ix["thigh_r"], :, 3, :3]
+    hip[:, 1] = 0.0
+    hip /= np.maximum(np.linalg.norm(hip, axis=1, keepdims=True), 1e-9)
+    return np.sum((targets["l"][:, 3, :3] - targets["r"][:, 3, :3]) * hip, axis=1)
+
+
+def soft_reach(d, limit, soft):
+    """How far a leg asked to reach `d` reaches: `d` itself up to `limit - soft`, then eased (C1, an exponential)
+    toward `limit` without ever getting there."""
+    start = limit - soft
+    if d <= start or soft <= 1e-9:
+        return min(d, limit)
+    return limit - soft * math.exp(-(d - start) / soft)
+
+
+def sink_for(hip, goal, want):
+    """How far the hips sink (straight down) for the leg from `hip` to `goal` to be `want` long: 0 when it already
+    is; a goal further than `want` along the floor alone takes the whole height (the legs then fall short)."""
+    v = np.asarray(goal, float) - np.asarray(hip, float)
+    d = float(np.linalg.norm(v))
+    if d <= want:
+        return 0.0
+    flat = math.hypot(float(v[0]), float(v[2]))
+    down = -float(v[1])                       # the hip above the goal
+    if flat >= want:
+        return max(0.0, down)
+    return max(0.0, down - math.sqrt(want * want - flat * flat))
+
+
 def _under(clip, top):
     """Every joint at or under `top`."""
     out, seen = [], {top}
@@ -486,36 +887,114 @@ def _under(clip, top):
     return out
 
 
-def _foot_targets(raw_a, clip_foot, blended_foot, side):
-    """(F, 4, 4) where the foot of `side` stands: in a contact the clip's foot moved by one rigid
-    motion, in the swing the blended foot carried by the correction mixed from the lift-off's to the landing's."""
+def edge_contacts(contacts, down, F):
+    """The contacts a foot holds with the clip's two ends' landings in them (2026-11-19): a foot down from the
+    clip's first frame (or to its last) that is not still there - a start's first push, a stop's or a Box clip's
+    last landing - is planted as a contact too, or the frames before the first contact and after the last had
+    only a lift-off's correction carried through a whole stride (the animator's Box_B_LR_Lfoot: the last landing
+    8 cm under the floor and 30 cm aside, the hips sunk 14 cm for it). A down run reaching an end joins the contact
+    it runs into, else it is a contact of its own. `contacts` [(c0, c1)] inclusive, `down` (F,) bools."""
+    down = np.asarray(down, bool)
+    out = [(int(a), int(b)) for a, b in contacts]
+    if not len(down):
+        return out
+    if down[0] and (not out or out[0][0] > 0):
+        end = 0
+        while end + 1 < F and down[end + 1]:
+            end += 1
+        if out and end >= out[0][0] - 1:
+            out[0] = (0, out[0][1])
+        else:
+            out.insert(0, (0, min(end, out[0][0] - 2) if out else end))
+    if down[-1] and (not out or out[-1][1] < F - 1):
+        begin = F - 1
+        while begin - 1 >= 0 and down[begin - 1]:
+            begin -= 1
+        if out and begin <= out[-1][1] + 1:
+            out[-1] = (out[-1][0], F - 1)
+        else:
+            out.append((max(begin, out[-1][1] + 2) if out else begin, F - 1))
+    return [(a, b) for a, b in out if b >= a]
+
+
+def contact_motion(clip_foot, blended_foot):
+    """The one rigid motion a contact's foot takes (4x4, row vectors, world): the blended foot's place along the
+    floor and its turn about up, at the contact's middle - never its height or its tilt (2026-11-19). The walk's
+    difference laid over the leg's joints puts a planted foot a centimetre or two off the floor and tilted; the
+    clip's own foot is on it, and moved only along the floor and about up it stays there, with every contact read
+    off the result on the frames the clip has it (the animator: the timing must match)."""
+    pivot = np.asarray(clip_foot)[3, :3]
+    turn = ss.orthonormal(clip_foot).T @ ss.orthonormal(blended_foot)      # blended = clip . turn (world)
+    spin = ss.yaw(ss.yaw_of(turn))
+    shift = np.asarray(blended_foot)[3, :3] - pivot
+    shift[1] = 0.0
+    out = np.eye(4)
+    out[:3, :3] = spin
+    out[3, :3] = pivot - pivot @ spin + shift
+    return out
+
+
+def _correction(blended, target):
+    """(the turn in the foot's own frame, the offset in the world) taking the foot `blended` onto `target`: a
+    correction that means the same wherever the foot is - mixed along a swing, or held - where a world transform
+    (a turn about the room's origin) carried a stride swings the foot by its whole distance from the origin."""
+    rb, rt = ss.orthonormal(blended), ss.orthonormal(target)
+    return rt @ rb.T, np.asarray(target)[3, :3] - np.asarray(blended)[3, :3]
+
+
+def _corrected(blended, turn, offset):
+    out = np.eye(4)
+    out[:3, :3] = turn @ ss.orthonormal(blended)
+    out[3, :3] = np.asarray(blended)[3, :3] + offset
+    return out
+
+
+def _foot_targets(raw_a, clip_foot, blended_foot, side, shifts=None):
+    """(F, 4, 4) where the foot of `side` stands: in a contact (and in a landing at either end of the clip,
+    `edge_contacts`) the clip's foot moved by one rigid motion, in the swing the blended foot carried by the
+    correction (a turn in the foot's frame, an offset in the world: `_correction`) mixed from the lift-off's to the
+    landing's, before the first contact and after the last the nearest's held. `shifts` {contact index: world
+    offset} moves a contact's whole place further (`width_shifts`)."""
     F = len(clip_foot)
-    contacts = [(int(c0), int(c1)) for c0, c1 in raw_a.feet[side]["contacts"]]
+    contacts = edge_contacts(raw_a.feet[side]["contacts"], raw_a.feet[side]["down"], F)
     out = np.array([_rigid(m) for m in blended_foot])
     if not contacts:
         return out
     motions = []
-    for c0, c1 in contacts:
-        mid = (c0 + c1) // 2
-        motion = np.linalg.inv(_rigid(clip_foot[mid])) @ _rigid(blended_foot[mid])
+    for i, (c0, c1) in enumerate(contacts):
+        motion = contact_motion(clip_foot[(c0 + c1) // 2], blended_foot[(c0 + c1) // 2])
+        if shifts and i in shifts:
+            motion[3, :3] += shifts[i]
         motions.append(motion)
         for f in range(c0, c1 + 1):
             out[f] = _rigid(clip_foot[f]) @ motion
-    # the swings: the blended foot carried by a correction going from the one at the lift-off to the landing's
+
     def correction(f):
-        return np.linalg.inv(_rigid(blended_foot[f])) @ out[f]
-    for (a0, a1), (b0, b1) in zip(contacts[:-1], contacts[1:]):
-        ca, cb = correction(a1), correction(b0)
+        return _correction(blended_foot[f], out[f])
+    for i, ((a0, a1), (b0, b1)) in enumerate(zip(contacts[:-1], contacts[1:])):
+        (ra, da), (rb, db) = correction(a1), correction(b0)
         for f in range(a1 + 1, b0):
-            u = ss._smooth((f - a1) / float(b0 - a1))
-            out[f] = _rigid(blended_foot[f]) @ _mix(ca, cb, u)
-    first, last = contacts[0], contacts[-1]
-    c = correction(first[0])
-    for f in range(0, first[0]):
-        out[f] = _rigid(blended_foot[f]) @ c
-    c = correction(last[1])
-    for f in range(last[1] + 1, F):
-        out[f] = _rigid(blended_foot[f]) @ c
+            u = (f - a1) / float(b0 - a1)
+            s = ss._smooth(u)
+            walk = _corrected(blended_foot[f], ss.slerp(ra, rb, s), (1.0 - s) * da + s * db)
+            # the clip's own swing carried between the two contacts' places: the foot leaves and lands as the clip
+            # has it (its speed there, so each contact is read on its own frames), the walk's swing in the middle
+            # (mixed on a smootherstep: flat to its second derivative at both ends, the place it moves to barely
+            # changes the foot's speed in the frames next to a contact)
+            s2 = u * u * u * (u * (6.0 * u - 15.0) + 10.0)
+            copy = _mix(_rigid(clip_foot[f]) @ motions[i], _rigid(clip_foot[f]) @ motions[i + 1], s2)
+            out[f] = _mix(copy, walk, math.sin(math.pi * u) ** 4)
+    # before the first contact and after the last (a foot in the air at an end): as a swing's half - the clip's own
+    # moved as its nearest contact next to it, the walk's (its correction held) half a swing away (a contact's turn
+    # about its own place swings a foot far from it aside: Box_F's first step is 1.8 m long)
+    swings = [b0 - a1 for (a0, a1), (b0, b1) in zip(contacts[:-1], contacts[1:])]
+    half = max(3.0, 0.5 * float(np.median(swings))) if swings else 6.0
+    for ends, frames, motion in (((contacts[0][0]), range(0, contacts[0][0]), motions[0]),
+                                 ((contacts[-1][1]), range(contacts[-1][1] + 1, F), motions[-1])):
+        turn, offset = correction(ends)
+        for f in frames:
+            e = ss._smooth(min(1.0, abs(f - ends) / half))
+            out[f] = _mix(_rigid(clip_foot[f]) @ motion, _corrected(blended_foot[f], turn, offset), e)
     return out
 
 

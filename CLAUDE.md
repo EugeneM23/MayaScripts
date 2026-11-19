@@ -12573,6 +12573,32 @@ the body plays about it exactly as without it. The card no longer greys In place
 one press without In place. Proof: `verify_walk_wholeclip.py` **17/17** (OxGuard start: the root 0.0000 cm where
 the clip carries it 207 cm, the body about it 1e-12 cm); `tests/test_walk_wholeclip_inplace.py`.
 
+**…and a turn is no sharper than the clip's own** (2026-11-19, review note F: Box_F_LR_Lfoot «в районе 35 кадра
+какой-то резкий переход»). Measured pass by pass (`docs/superpowers/plans/walkparam/diag_walk_turn.py`, the stance,
+the legs and the grip switched off in turn): all of it was the walk's DIFFERENCE, and all of that its PHASE. A Box
+clip's corner is a short fast stride (18 frames for the loop's 30), the phase ran through it at 1.67 (1.15 the stride
+before) - piecewise linear, its rate jumping at every strike - and the walk's change laid at that rate had its
+accelerations x2.8 there (pelvis 1.16 -> 1.81 cm/fr², head 1.37 -> 2.33). Now (`wholeclip.py`):
+- `phase_of`: the phase is a monotone C1 cubic through the same strike knots (`monotone`, Fritsch-Carlson), its
+  slope 1 at the first and last walking strike so the frames before and after run at the loop's rate exactly as they
+  did; every strike still lands on its loop stride;
+- `change_share`: where the phase runs faster than `RATE_FREE` (1.1) times the clip's own walking pace (the median of
+  its walking strides' rates, never under the loop's), the change's MOTION about its cycle mean
+  (`change_mean`) is taken (free pace / rate)² - its accelerations stay the walk's own - while its POSTURE (the mean:
+  the pose, Height...) stays whole (`walk_difference(..., share)`). At the walk's own values the change is nothing,
+  so the defaults are what they were (to 2.6e-12 against the build before).
+- Measured on the build's own worlds (each bone's peak acceleration against the root, the turn window): Box_F_LR_Lfoot
+  pelvis 1.16 / 1.81 / **1.47**, spine_03 1.21 / 1.84 / 1.51, head 1.37 / 2.33 / 1.89, forearms 2.82-2.88 / 2.29-2.37
+  (source / before / after); Box_F_LR_Rfoot and Box_B_LR_Lfoot, whose corners run 1.2-1.4, move little. What stays
+  above the source is the walk's change at its normal strength (the reach drop's 3 cm bob under Height +40 and the
+  arms' hold - the same ratio it has on any stride: the Loop's own pelvis 1.31 -> 1.44).
+- **Timing (A)**: the take keeps its frames and every contact - a planted foot moves exactly as the clip's (0.0000
+  cm/fr on 4 of 5 clips, 0.09 on Box_B_LR_Lfoot); a lift-off can read one frame off at the 1.5 cm/fr threshold.
+  `diag_walk_batch.py`'s contacts read the foot against the ground (the root's travel put back for an In place
+  result, the floor the median of the still frames - a swing dipped through the floor made the lowest frame the floor).
+- Seen, not fixed (the legs): Box_B_LR_Lfoot's left ball swings 6 cm under the floor at frames 35-38, before and after.
+Tests `tests/test_walk_wholeclip_turn.py`.
+
 ## The Pose Library: our look, a folder button, a list at the smallest size (2026-10-22)
 
 The animator: «перерисовать библеотеку поз в нашем стиле и сделать само меню более компактным ...
@@ -18689,3 +18715,33 @@ light, key glows and sparks, the portraits' fire, the camera flight, and ⋮ -> 
   A new Qt surface of ours goes through it once built.
 - Proof: 13384 unit tests, the one failure the known `test_chat_deploy.Keys`. **Not seen in a GUI
   Maya.**
+
+## Walk Builder on a whole clip: a two-handed grip's arms are the walk's (2026-11-19)
+
+The animator's TwoHand batch review (`docs/superpowers/notes/2026-11-19-walk-builder-review-twohand-walk.md`,
+items B / C / D: elbows out and arms "broken", elbows wobbling, the sword shoulder jittering). Measured on the
+batch's own clips through the animator's preset `2H_Sword_02` (`LongSword_Idle_3P`, Hold, Overlap 65 ms, Shoulder
+1, Whole clip): **the whole clips' forearms rolled up to 1090 deg against their upper arms** (HEAD, ptp over the
+take, 18 on the mildest arm; the source 4-6), the twist bones riding them. Two causes in `maya_walk/wholeclip.py`, both fixed:
+- **the difference laid an elbow past 180** (`walk_difference`): the grip's arm is the POSE's - its elbow bends
+  ~110 deg where the walk's own bends ~25 - so its "change" is ~85 deg of elbow, and laid on a clip's own arm
+  already bent 100-115 deg (a run) the two added up past 180: the forearm folded back and flipped. Where the walk
+  holds a two-handed grip the loop does not (`grip_hold`), both arms - each clavicle and everything under it
+  (`absolute_arms`) - take the RESULT's own turn at the frame's phase (`walk_difference(..., absolute=)`); the
+  grip's IK then only follows the clip's own chest. No grip: the difference as before (the walk's own values still
+  give the clip back).
+- **the grip's arm solve turned each bone on its own** (`_limb_fix`'s `_aimed`: a normal crossed from that bone
+  and the elbow's side, which flips where the forearm stands near that side): the grip's arms now go through
+  `_arm_fix`, which carries the arm's own PLANE (shoulder-wrist line and the elbow's side, before and after) onto
+  the new one with one map for both bones, so the forearm keeps its roll in the arm. **The legs still use
+  `_limb_fix`** and can meet the same flip.
+
+Proof (replayed headless from captured inputs, `docs/superpowers/plans/walkparam/diag_walk_batch.py` with
+`DIAG_DUMP`): forearm roll ptp 0 on all nine Box / Transition clips; elbow wobble at or under the source's
+(Box_F_LR_Rfoot right max 2.49 src -> 3.32 HEAD -> 1.91); Transition_Run_to_Walk_Lfoot right elbow out 20.6 ->
+17.4 (the source 15.1; the rig pose's own sword edit is +3.9 of it); the two hands' hold 0.000 cm.
+`tests/test_walk_wholeclip.GripArms` (the grip test fails on HEAD with a 179.9 deg forearm roll).
+**Left as designed, said**: the clavicle's step-rate swing (2-4x the source's acceleration) is Shoulder 1.0
+taking the reach change Overlap makes (the hand rides the chest 1.95 frames late, so its bob trails the
+shoulder's by ~1.2 cm): Overlap 0 takes it to under the source's, Shoulder 0 hands it to the elbow (at the
+source's own wobble). It is h2-h3 of the stride, not noise. **Not seen in a GUI Maya.**
