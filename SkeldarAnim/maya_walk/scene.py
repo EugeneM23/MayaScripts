@@ -1435,6 +1435,8 @@ def animate(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, pose_c
             moving = base.worlds
         else:
             moving, rw, steps, layer_note = kp.on_result(walk, base.worlds, keys)
+            if not kp.is_empty(keys):      # the layer turns each arm on its own: a two-handed hold kept (2026-11-19)
+                moving, _carrier = kp.keep_hold(walk, base.worlds, moving, weapons)
         if snap:            # Snap weapon (2026-11-11): last of everything, the rig pose's layer under it
             moving, done = sw.apply(walk, moving, snap)
             snap_note = sw.line(snap, done)
@@ -1461,6 +1463,15 @@ def walker_animation(root, with_steps=True):
     return animate(root, memo["walk"], memo.get("knobs"), memo.get("pose") or None,
                    tuple(memo.get("parts", ALL_PARTS)), pose_card=memo.get("pose_card") or None,
                    params=memo_params(root, memo, translate=False), with_steps=with_steps)
+
+
+def whole_in_place(params, given):
+    """Whether In place is asked of a whole clip: the card's chip (params), else the model's knob in `given`. A
+    whole clip keeps its own timing (TIMING_KNOBS), so the model never sees it - the clip is put on the spot
+    after (wholeclip.in_place)."""
+    if params is not None:
+        return float(params.get("in_place", 0.0) or 0.0) >= 0.5
+    return float((given or {}).get("in_place", 0.0) or 0.0) >= 0.5
 
 
 def whole_applies(walk_name, anim):
@@ -1542,6 +1553,10 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
     whole_info = None
     if whole:          # the walker's own clip whole: its frames, the walk's change laid over them (2026-11-17)
         worlds, names, whole_info = _whole(anim, walk_name)
+        if whole_in_place(params, given):       # In place on a whole clip (2026-11-19): after the walk's change
+            from . import wholeclip
+            data_parents = wf.load(walk_path(walk_name))["parents"]
+            worlds, whole_info["in_place"] = wholeclip.in_place(worlds, names, data_parents, anim.walk.up)
         written = [n for n in names if n in bones]
         translated = set(written)
         rows = [names.index(n) for n in written]
@@ -1588,6 +1603,8 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS, record=T
             wholeclip.line(whole_info))
         if whole_info["stance"]:
             text += ", the stance where it stands"
+        if "in_place" in whole_info:
+            text += " | in place (the root's %.0f cm of travel taken off)" % whole_info["in_place"]
     if anim.pose is not None:
         text += " | pose %s x%.2f%s" % (anim.pose_label, result.info["knobs"]["pose"],
                                          "" if tuple(parts) == ALL_PARTS else " (%s)" % (", ".join(parts) or "no part"))

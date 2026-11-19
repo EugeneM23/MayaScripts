@@ -829,6 +829,60 @@ def on_result(walk, worlds, keys):
     return np.asarray(out.worlds, float), rw, steps, note
 
 
+HOLD_CM = 0.1          # two hands whose relation wanders less than this over the cycle hold ONE thing
+HOLD_DIST = 30.0       # ... and stand within this of each other (model.GRIP_DIST's reach)
+
+
+def _relation(worlds, a, b):
+    """(n+1, 4, 4): joint `a`'s world in joint `b`'s frame on every frame (row vectors: a = rel . b)."""
+    return np.array([worlds[a, f] @ np.linalg.inv(worlds[b, f]) for f in range(worlds.shape[1])])
+
+
+def _mean_rigid(mats):
+    """The chordal mean of rigid 4x4s: the mean rotation projected back onto SO(3), the mean translation."""
+    m = np.mean(mats[:, :3, :3], axis=0)
+    u, _, vt = np.linalg.svd(m)
+    rot = u @ vt
+    if np.linalg.det(rot) < 0.0:
+        u[:, -1] *= -1.0
+        rot = u @ vt
+    out = np.eye(4)
+    out[:3, :3] = rot
+    out[3, :3] = np.mean(mats[:, 3, :3], axis=0)
+    return out
+
+
+def keep_hold(walk, before, after, weapons=None):
+    """(worlds, carrier side or None): a two-handed hold the evaluation kept (`before`, the walker's frames before
+    the rig pose's layer) kept through the layer (`after`) - 2026-11-19, «после применения риг позы левая рука
+    соскочила и не следует за оружием». The layer turns each arm's bones on their own, so the hands' relation,
+    constant before, wandered (4 cm on the animator's walker). The hand the weapon is in (else the right) keeps
+    what the layer gave it; the other is put back on it at the relation the layered cycle holds on average - the
+    rig pose's own grip, since the layer was read so the mean pose is the rig's - and its arm rebuilt by IK."""
+    idx, chains = walk.index, walk._arm_chains()
+    if not all(s in chains for s in ("l", "r")) or "hand_l" not in idx or "hand_r" not in idx:
+        return after, None
+    before = np.asarray(before, float)
+    hl, hr = idx["hand_l"], idx["hand_r"]
+    rel0 = _relation(before, hl, hr)
+    places = rel0[:, 3, :3]
+    if (np.max(np.linalg.norm(places - places.mean(axis=0), axis=1)) > HOLD_CM
+            or np.linalg.norm(places.mean(axis=0)) > HOLD_DIST):
+        return after, None
+    held = [s for s in ("r", "l") if s in (weapons or {})]
+    carrier = held[0] if held else "r"
+    other = "l" if carrier == "r" else "r"
+    after = np.asarray(after, float)
+    hc, ho = idx["hand_" + carrier], idx["hand_" + other]
+    rel = _mean_rigid(_relation(after, ho, hc))
+    n = after.shape[1] - 1
+    hands = {other: np.array([rel @ after[hc, f] for f in range(n + 1)])}
+    kin, out = after.copy(), after.copy()
+    new = walk._arm_to_hand(kin, n, {other: chains[other]}, hands)
+    walk._reattach(out, kin, new)
+    return out, carrier
+
+
 def in_place(worlds, walk, amount):
     """The model's In place on `worlds` (J, n+1, 4, 4): every joint moved back by the root's progress along the walk
     and by the line's climb, x `amount` (model.Walk._in_place, for frames edited after the evaluation)."""
