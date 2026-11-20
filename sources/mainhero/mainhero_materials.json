@@ -1,0 +1,552 @@
+{
+ "materials": {
+  "/Game/Characters/Main_Hero/MainHero/Material/MI_Hero_Chains": {
+   "class": "MaterialInstanceConstant",
+   "parent": "/Game/Characters/Main_Hero/MainHero/Material/M_Hero_chains",
+   "scalars": {
+    "Emissive Value": 0.0
+   },
+   "textures": {},
+   "used": [],
+   "vectors": {
+    "Emissive Color": [
+     0.07039300352334976,
+     0.04434899985790253,
+     0.265625,
+     1.0
+    ]
+   }
+  },
+  "/Game/Characters/Main_Hero/MainHero/Material/MI_MainHero_Eyes": {
+   "class": "MaterialInstanceConstant",
+   "parent": "/Game/Characters/Main_Hero/MainHero/Material/M_HeroBody",
+   "scalars": {},
+   "textures": {},
+   "used": [],
+   "vectors": {
+    "bc": [
+     0.40451401472091675,
+     0.3183180093765259,
+     0.28863799571990967,
+     1.0
+    ]
+   }
+  },
+  "/Game/Characters/Main_Hero/MainHero/Material/MI_MainHero_outfit01": {
+   "class": "MaterialInstanceConstant",
+   "parent": "/Game/Characters/Main_Hero/MainHero/Material/M_Hero_base",
+   "scalars": {},
+   "textures": {},
+   "used": [],
+   "vectors": {}
+  },
+  "/Game/Characters/Main_Hero/MainHero/Material/M_Chainmail": {
+   "class": "Material",
+   "scalars": {},
+   "textures": {},
+   "used": [
+    "/Game/Characters/Main_Hero/MainHero/Textures/T_Chainmail_normal",
+    "/Game/Characters/Main_Hero/MainHero/Textures/T_Chainmail_Opacity",
+    "/Game/Characters/Main_Hero/MainHero/Textures/T_Chainmail_ao"
+   ],
+   "vectors": {}
+  },
+  "/Game/Characters/Main_Hero/MainHero/Material/M_HeroBody": {
+   "class": "Material",
+   "scalars": {},
+   "textures": {},
+   "used": [],
+   "vectors": {}
+  },
+  "/Game/Characters/Main_Hero/MainHero/Material/M_Hero_base": {
+   "class": "Material",
+   "scalars": {},
+   "textures": {},
+   "used": [
+    "/Game/Characters/Main_Hero/MainHero/Textures/T_MainHero_Outfit01_N",
+    "/Game/Characters/Main_Hero/MainHero/Textures/T_MainHero_Outfit01_BC",
+    "/Game/Characters/Main_Hero/MainHero/Textures/T_MainHero_Outfit01_ORM"
+   ],
+   "vectors": {}
+  },
+  "/Game/Characters/Main_Hero/MainHero/Material/M_Hero_chains": {
+   "class": "Material",
+   "scalars": {},
+   "textures": {},
+   "used": [
+    "/Game/Characters/Main_Hero/MainHero/Textures/T_mainHero_chains01_N",
+    "/Game/Characters/Main_Hero/MainHero/Textures/T_MainHero_Chains01_E",
+    "/Game/Characters/Main_Hero/MainHero/Textures/T_MainHero_Chains01_BC",
+    "/Game/Characters/Main_Hero/MainHero/Textures/T_MainHero_Chains01_ORM"
+   ],
+   "vectors": {}
+  },
+  "/Game/Characters/Main_Hero/MainHero/we_4/artefacts_sim_1_proxy": {
+   "class": "MaterialInstanceConstant",
+   "parent": "/InterchangeAssets/Materials/FBXLegacyPhongSurfaceMaterial",
+   "scalars": {
+    "AmbientColorMapTilingU": 1.0,
+    "AmbientColorMapTilingV": 1.0,
+    "AmbientColorMapWeight": 0.0,
+    "AmbientOcclusion": 1.0,
+    "AmbientOcclusionMapTilingU": 1.0,
+    "AmbientOcclusionMapTilingV": 1.0,
+    "AmbientOcclusionMapWeight": 0.0,
+    "DiffuseColorMapTilingU": 1.0,
+    "DiffuseColorMapTilingV": 1.0,
+    "DiffuseColorMapWeight": 0.0,
+    "EmissiveColorMapTilingU": 1.0,
+    "EmissiveColorMapTilingV": 1.0,
+    "EmissiveColorMapWeight": 0.0,
+    "NormalMapTilingU": 1.0,
+    "NormalMapTilingV": 1.0,
+    "NormalMapWeight": 0.0,
+    "Opacity": 1.0,
+    "OpacityMapTilingU": 1.0,
+    "OpacityMapTilingV": 1.0,
+    "OpacityMapWeight": 0.0,
+    "OpacityMaskMapTilingU": 1.0,
+    "OpacityMaskMapTilingV": 1.0,
+    "OpacityMaskMapWeight": 0.0,
+    "OpacitySourceChannel": 0.0,
+    "Shininess": 6.311790943145752,
+    "ShininessMapTilingU": 1.0,
+    "ShininessMapTilingV": 1.0,
+    "ShininessMapWeight": 0.0,
+    "SpecularColorMapTilingU": 1.0,
+    "SpecularColorMapTilingV": 1.0,
+    "SpecularColorMapWeight": 0.0,
+    "one": 1.0
+   },
+   "textures": {
+    "AmbientColorMap": "/Engine/EngineResources/DefaultTexture",
+    "AmbientOcclusionMap": "/Engine/EngineMaterials/BaseFlattenLinearColor",
+    "DiffuseColorMap": "/Engine/EngineResources/DefaultTexture",
+    "EmissiveColorMap": "/Engine/EngineResources/DefaultTexture",
+    "NormalMap": "/Engine/EngineMaterials/DefaultNormal",
+    "OpacityMap": "/Engine/EngineMaterials/BaseFlattenLinearColor",
+    "OpacityMaskMap": "/Engine/EngineMaterials/BaseFlattenLinearColor",
+    "ShininessMap": "/Engine/EngineMaterials/BaseFlattenLinearColor",
+    "SpecularColorMap": "/Engine/EngineResources/DefaultTexture"
+   },
+   "used": [],
+   "vectors": {
+    "AmbientColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "DiffuseColor": [
+     0.4000000059604645,
+     0.4000000059604645,
+     0.4000000059604645,
+     1.0
+    ],
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "SpecularColor": [
+     0.5,
+     0.5,
+     0.5,
+     1.0
+    ]
+   }
+  },
+  "/Game/Characters/Main_Hero/MainHero/we_4/artefacts_sim_2_proxy": {
+   "class": "MaterialInstanceConstant",
+   "parent": "/InterchangeAssets/Materials/FBXLegacyPhongSurfaceMaterial",
+   "scalars": {
+    "AmbientColorMapTilingU": 1.0,
+    "AmbientColorMapTilingV": 1.0,
+    "AmbientColorMapWeight": 0.0,
+    "AmbientOcclusion": 1.0,
+    "AmbientOcclusionMapTilingU": 1.0,
+    "AmbientOcclusionMapTilingV": 1.0,
+    "AmbientOcclusionMapWeight": 0.0,
+    "DiffuseColorMapTilingU": 1.0,
+    "DiffuseColorMapTilingV": 1.0,
+    "DiffuseColorMapWeight": 0.0,
+    "EmissiveColorMapTilingU": 1.0,
+    "EmissiveColorMapTilingV": 1.0,
+    "EmissiveColorMapWeight": 0.0,
+    "NormalMapTilingU": 1.0,
+    "NormalMapTilingV": 1.0,
+    "NormalMapWeight": 0.0,
+    "Opacity": 1.0,
+    "OpacityMapTilingU": 1.0,
+    "OpacityMapTilingV": 1.0,
+    "OpacityMapWeight": 0.0,
+    "OpacityMaskMapTilingU": 1.0,
+    "OpacityMaskMapTilingV": 1.0,
+    "OpacityMaskMapWeight": 0.0,
+    "OpacitySourceChannel": 0.0,
+    "Shininess": 6.311790943145752,
+    "ShininessMapTilingU": 1.0,
+    "ShininessMapTilingV": 1.0,
+    "ShininessMapWeight": 0.0,
+    "SpecularColorMapTilingU": 1.0,
+    "SpecularColorMapTilingV": 1.0,
+    "SpecularColorMapWeight": 0.0,
+    "one": 1.0
+   },
+   "textures": {
+    "AmbientColorMap": "/Engine/EngineResources/DefaultTexture",
+    "AmbientOcclusionMap": "/Engine/EngineMaterials/BaseFlattenLinearColor",
+    "DiffuseColorMap": "/Engine/EngineResources/DefaultTexture",
+    "EmissiveColorMap": "/Engine/EngineResources/DefaultTexture",
+    "NormalMap": "/Engine/EngineMaterials/DefaultNormal",
+    "OpacityMap": "/Engine/EngineMaterials/BaseFlattenLinearColor",
+    "OpacityMaskMap": "/Engine/EngineMaterials/BaseFlattenLinearColor",
+    "ShininessMap": "/Engine/EngineMaterials/BaseFlattenLinearColor",
+    "SpecularColorMap": "/Engine/EngineResources/DefaultTexture"
+   },
+   "used": [],
+   "vectors": {
+    "AmbientColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "DiffuseColor": [
+     0.0,
+     0.800000011920929,
+     0.0,
+     1.0
+    ],
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "SpecularColor": [
+     0.5,
+     0.5,
+     0.5,
+     1.0
+    ]
+   }
+  },
+  "/Game/Characters/Main_Hero/MainHero/we_4/artefacts_sim_3_proxy": {
+   "class": "MaterialInstanceConstant",
+   "parent": "/InterchangeAssets/Materials/FBXLegacyPhongSurfaceMaterial",
+   "scalars": {
+    "AmbientColorMapTilingU": 1.0,
+    "AmbientColorMapTilingV": 1.0,
+    "AmbientColorMapWeight": 0.0,
+    "AmbientOcclusion": 1.0,
+    "AmbientOcclusionMapTilingU": 1.0,
+    "AmbientOcclusionMapTilingV": 1.0,
+    "AmbientOcclusionMapWeight": 0.0,
+    "DiffuseColorMapTilingU": 1.0,
+    "DiffuseColorMapTilingV": 1.0,
+    "DiffuseColorMapWeight": 0.0,
+    "EmissiveColorMapTilingU": 1.0,
+    "EmissiveColorMapTilingV": 1.0,
+    "EmissiveColorMapWeight": 0.0,
+    "NormalMapTilingU": 1.0,
+    "NormalMapTilingV": 1.0,
+    "NormalMapWeight": 0.0,
+    "Opacity": 1.0,
+    "OpacityMapTilingU": 1.0,
+    "OpacityMapTilingV": 1.0,
+    "OpacityMapWeight": 0.0,
+    "OpacityMaskMapTilingU": 1.0,
+    "OpacityMaskMapTilingV": 1.0,
+    "OpacityMaskMapWeight": 0.0,
+    "OpacitySourceChannel": 0.0,
+    "Shininess": 6.311790943145752,
+    "ShininessMapTilingU": 1.0,
+    "ShininessMapTilingV": 1.0,
+    "ShininessMapWeight": 0.0,
+    "SpecularColorMapTilingU": 1.0,
+    "SpecularColorMapTilingV": 1.0,
+    "SpecularColorMapWeight": 0.0,
+    "one": 1.0
+   },
+   "textures": {
+    "AmbientColorMap": "/Engine/EngineResources/DefaultTexture",
+    "AmbientOcclusionMap": "/Engine/EngineMaterials/BaseFlattenLinearColor",
+    "DiffuseColorMap": "/Engine/EngineResources/DefaultTexture",
+    "EmissiveColorMap": "/Engine/EngineResources/DefaultTexture",
+    "NormalMap": "/Engine/EngineMaterials/DefaultNormal",
+    "OpacityMap": "/Engine/EngineMaterials/BaseFlattenLinearColor",
+    "OpacityMaskMap": "/Engine/EngineMaterials/BaseFlattenLinearColor",
+    "ShininessMap": "/Engine/EngineMaterials/BaseFlattenLinearColor",
+    "SpecularColorMap": "/Engine/EngineResources/DefaultTexture"
+   },
+   "used": [],
+   "vectors": {
+    "AmbientColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "DiffuseColor": [
+     0.800000011920929,
+     0.800000011920929,
+     0.0,
+     1.0
+    ],
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "SpecularColor": [
+     0.5,
+     0.5,
+     0.5,
+     1.0
+    ]
+   }
+  }
+ },
+ "mesh": "/Game/Characters/Main_Hero/MainHero/SK_MainHeroProto_Skinned4",
+ "sections": [
+  {
+   "cloth": true,
+   "index": 0
+  },
+  {
+   "cloth": false,
+   "index": 1
+  },
+  {
+   "cloth": true,
+   "index": 2
+  },
+  {
+   "cloth": true,
+   "index": 3
+  },
+  {
+   "cloth": false,
+   "index": 4
+  },
+  {
+   "cloth": true,
+   "index": 5
+  },
+  {
+   "cloth": true,
+   "index": 6
+  },
+  {
+   "cloth": true,
+   "index": 7
+  },
+  {
+   "cloth": false,
+   "index": 8
+  },
+  {
+   "cloth": false,
+   "index": 9
+  },
+  {
+   "cloth": false,
+   "index": 10
+  },
+  {
+   "cloth": false,
+   "index": 11
+  },
+  {
+   "cloth": false,
+   "index": 12
+  },
+  {
+   "cloth": false,
+   "index": 13
+  },
+  {
+   "cloth": false,
+   "index": 14
+  },
+  {
+   "cloth": false,
+   "index": 15
+  },
+  {
+   "cloth": false,
+   "index": 16
+  },
+  {
+   "cloth": false,
+   "index": 17
+  },
+  {
+   "cloth": false,
+   "index": 18
+  }
+ ],
+ "slots": [
+  [
+   "artefacts_sim_3",
+   "/Game/Characters/Main_Hero/MainHero/Material/MI_Hero_Chains"
+  ],
+  [
+   "Proxy_Chains_mat1",
+   "/Game/Characters/Main_Hero/MainHero/Material/M_Hero_chains"
+  ],
+  [
+   "artefacts_sim_1",
+   "/Game/Characters/Main_Hero/MainHero/Material/MI_Hero_Chains"
+  ],
+  [
+   "artefacts_sim_2",
+   "/Game/Characters/Main_Hero/MainHero/Material/MI_Hero_Chains"
+  ],
+  [
+   "helmet",
+   "/Game/Characters/Main_Hero/MainHero/Material/M_Hero_chains"
+  ],
+  [
+   "Cape_mat",
+   "/Game/Characters/Main_Hero/MainHero/Material/M_Hero_base"
+  ],
+  [
+   "Outfit_skirt",
+   "/Game/Characters/Main_Hero/MainHero/Material/MI_MainHero_outfit01"
+  ],
+  [
+   "Outfit_skirt_2",
+   "/Game/Characters/Main_Hero/MainHero/Material/MI_MainHero_outfit01"
+  ],
+  [
+   "Eyes_mat",
+   "/Game/Characters/Main_Hero/MainHero/Material/MI_MainHero_Eyes"
+  ],
+  [
+   "pasted__Body_mat",
+   "/Game/Characters/Main_Hero/MainHero/Material/M_HeroBody"
+  ],
+  [
+   "Outfit_mat",
+   "/Game/Characters/Main_Hero/MainHero/Material/M_Hero_base"
+  ],
+  [
+   "Body_mat",
+   "/Game/Characters/Main_Hero/MainHero/Material/M_HeroBody"
+  ],
+  [
+   "Chainmail_mat",
+   "/Game/Characters/Main_Hero/MainHero/Material/M_Chainmail"
+  ],
+  [
+   "artefacts_sim_1_proxy",
+   "/Game/Characters/Main_Hero/MainHero/we_4/artefacts_sim_1_proxy"
+  ],
+  [
+   "artefacts_sim_2_proxy",
+   "/Game/Characters/Main_Hero/MainHero/we_4/artefacts_sim_2_proxy"
+  ],
+  [
+   "artefacts_sim_3_proxy",
+   "/Game/Characters/Main_Hero/MainHero/we_4/artefacts_sim_3_proxy"
+  ],
+  [
+   "M_Shoulders_B",
+   "/Game/Characters/Main_Hero/MainHero/Material/MI_Hero_Chains"
+  ],
+  [
+   "M_Shoulders_A",
+   "/Game/Characters/Main_Hero/MainHero/Material/MI_Hero_Chains"
+  ],
+  [
+   "M_Shoulders",
+   "/Game/Characters/Main_Hero/MainHero/Material/MI_Hero_Chains"
+  ]
+ ],
+ "textures": {
+  "T_Chainmail_Opacity": {
+   "path": "/Game/Characters/Main_Hero/MainHero/Textures/T_Chainmail_Opacity",
+   "size": [
+    2048,
+    2048
+   ],
+   "srgb": true
+  },
+  "T_Chainmail_ao": {
+   "path": "/Game/Characters/Main_Hero/MainHero/Textures/T_Chainmail_ao",
+   "size": [
+    2048,
+    2048
+   ],
+   "srgb": true
+  },
+  "T_Chainmail_normal": {
+   "path": "/Game/Characters/Main_Hero/MainHero/Textures/T_Chainmail_normal",
+   "size": [
+    2048,
+    2048
+   ],
+   "srgb": false
+  },
+  "T_MainHero_Chains01_BC": {
+   "path": "/Game/Characters/Main_Hero/MainHero/Textures/T_MainHero_Chains01_BC",
+   "size": [
+    2048,
+    2048
+   ],
+   "srgb": true
+  },
+  "T_MainHero_Chains01_E": {
+   "path": "/Game/Characters/Main_Hero/MainHero/Textures/T_MainHero_Chains01_E",
+   "size": [
+    2048,
+    2048
+   ],
+   "srgb": true
+  },
+  "T_MainHero_Chains01_ORM": {
+   "path": "/Game/Characters/Main_Hero/MainHero/Textures/T_MainHero_Chains01_ORM",
+   "size": [
+    2048,
+    2048
+   ],
+   "srgb": false
+  },
+  "T_MainHero_Outfit01_BC": {
+   "path": "/Game/Characters/Main_Hero/MainHero/Textures/T_MainHero_Outfit01_BC",
+   "size": [
+    2048,
+    2048
+   ],
+   "srgb": true
+  },
+  "T_MainHero_Outfit01_N": {
+   "path": "/Game/Characters/Main_Hero/MainHero/Textures/T_MainHero_Outfit01_N",
+   "size": [
+    2048,
+    2048
+   ],
+   "srgb": false
+  },
+  "T_MainHero_Outfit01_ORM": {
+   "path": "/Game/Characters/Main_Hero/MainHero/Textures/T_MainHero_Outfit01_ORM",
+   "size": [
+    2048,
+    2048
+   ],
+   "srgb": false
+  },
+  "T_mainHero_chains01_N": {
+   "path": "/Game/Characters/Main_Hero/MainHero/Textures/T_mainHero_chains01_N",
+   "size": [
+    2048,
+    2048
+   ],
+   "srgb": false
+  }
+ }
+}

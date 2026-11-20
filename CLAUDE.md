@@ -18745,3 +18745,40 @@ Proof (replayed headless from captured inputs, `docs/superpowers/plans/walkparam
 taking the reach change Overlap makes (the hand rides the chest 1.95 frames late, so its bob trails the
 shoulder's by ~1.2 cm): Overlap 0 takes it to under the source's, Shoulder 0 hands it to the elbow (at the
 source's own wobble). It is h2-h3 of the stride, not noise. **Not seen in a GUI Maya.**
+
+## Main Hero: Atone's current hero as a rig, a skeleton and six clothing rows (2026-11-20)
+
+The animator (port 7003, the Atone editor open): «взяти актуального головного перонажа з проекту Атон і
+додати в плагін Skeldar по всім правилам пайплайну, і скелет і ріг і одяг, наплічники окремо. Роби хутко».
+- **Which**: `/Game/Characters/BP_Character`'s mesh, `/Game/Characters/Main_Hero/MainHero/SK_MainHeroProto_Skinned4`
+  (on `SK_Mannequin_proto`; 19 material slots). Its body bones are Manny's to 0.07 cm (Manny's own calf_l;
+  the helpers 1-5.7 cm off, trap 152, and unweighted), so it is the **Playerchar's road**: Manny_Rig with
+  Manny's meshes out and the hero's body in. `joint`, `AB_Armor_Shoulder_L/R` carry no weight and go.
+- **Unreal's FBX export of the asset DROPS its cloth-simulated sections** (cape, two skirts, three chain
+  strands: 59573 of 153534 triangles; `is_section_using_cloth`), and Python has no unbind and
+  `mesh_clothing_assets` is read-only. `export_mainhero_from_unreal.py` copies the mesh through Geometry
+  Script (`GeometryScript_AssetUtils.copy_mesh_from_skeletal_mesh` -> `GeometryScript_NewAssetUtils.
+  create_new_skeletal_mesh_asset_from_mesh`, the slots passed as a Name->Material map, original vertex
+  order) into `/Game/__skeldar_export`, exports that, and deletes it. Also the textures (SOURCE data) and
+  `mainhero_materials.json`. The three `artefacts_sim_*_proxy` slots are the cloth cages (trap 92): left out.
+- **`make_mainhero_assets.py`** (one mayapy per step; uses `make_playerchar_assets`' helpers, whose
+  `copy_mesh` gained `tol=` and whose `one_uv_set` accepts a lone `map1`): `textures` (colour + normal maps,
+  green flipped, 2048 JPG in `assets/MainHero/`), `source` (`sources/mainhero/MainHero_Source.mb`: the
+  skeleton out of the -90 X wrapper, `Body` = head 9 + eyes 8 + arms 11 + suit 10 with each face's kind,
+  and one mesh per piece), `rig` (`MainHero_Rig.ma`: Body + `Body_1P` by the limb rule, `Main.view`; the
+  suit in its maps, skin and eyes flat - `M_HeroBody` has no texture), `skeleton`, `armor <key>`.
+  **The body includes the suit**: without it the hero is a head and arms.
+- **Catalog**: «Main Hero [rig]» after Playerchar's rig, «Main Hero [skeleton]» after Playerchar's, model
+  `MainHero` (fire `teal`), portrait by `make_character_portraits.py` (`PORTRAITS_ONLY=MainHero`) in a
+  disposable GUI Maya; armor rows Hero Helmet (head / head), Hero Chainmail (coif + neck chains, neck_01 /
+  neck), **Hero Shoulders** (the three pad layers, spine_05 / shoulders), Hero Chains (the hanging strands,
+  spine_05 / chest), Hero Cape (spine_03 / back), Hero Skirt (pelvis / waist); the chain pieces in
+  `MainHero_Chains_Color.jpg`, cape and skirt in the suit's map (so they share the body's material).
+  A helmet of the Playerchar's and the hero's share the slot `head`: one takes the other off. Icons by
+  `make_armor_icons.py` (`ICONS_ONLY=MainHero`); `character_skeletons.json` rewritten. The portrait and icon
+  scripts find the repo from their own folder now (they named `C:/!!!Work`).
+- Proof: `verify_mainhero.py <UE clip> <scratch>` **18/18 mayapy standalone** (AS_Dg_Atk_NLt_3P): both rows
+  naked on their bind, the body on the hero's to 7.5e-9 cm; six worn; under the retargeted take every
+  clothing vertex where the source's own skin puts it 9.5e-7 cm, Body_1P exact; at the bind the clothes
+  stand up to 0.016 cm off the source (the rig's calf_l); refused on the Creep; the Manny skeleton wears
+  the skirt; Delete. Not seen in a GUI Maya hub; not done: normal maps on the clothing, the cloth sim.

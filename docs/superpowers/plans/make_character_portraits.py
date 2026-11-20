@@ -26,7 +26,7 @@ import os
 import sys
 import time
 
-REPO = "C:/!!!Work/MayaScripts/SkeldarAnim"
+REPO = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "SkeldarAnim")
 if REPO in sys.path:
     sys.path.remove(REPO)
 sys.path.insert(0, REPO)

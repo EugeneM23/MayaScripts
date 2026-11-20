@@ -202,9 +202,11 @@ def first_person_faces(transform):
 def one_uv_set(shape):
     """The source's `DiffuseUV` as the shape's only set, `map1`."""
     sets = cmds.polyUVSet(shape, q=True, allUVSets=True) or []
-    if "DiffuseUV" not in sets:
+    if sets == ["map1"]:                      # a source already written with one set (the Main Hero's)
+        pass
+    elif "DiffuseUV" not in sets:
         raise RuntimeError("%s has no DiffuseUV: %s" % (shape, sets))
-    if sets[0] != "DiffuseUV":
+    elif sets[0] != "DiffuseUV":
         cmds.polyCopyUV(shape, uvSetNameInput="DiffuseUV", uvSetName=sets[0], createNewMap=False)
         cmds.polyUVSet(shape, currentUVSet=True, uvSet=sets[0])
         for extra in sets[1:]:
@@ -222,7 +224,7 @@ def one_uv_set(shape):
     cmds.setAttr(shape + ".displayColors", 0)
 
 
-def copy_mesh(src, name, faces=None):
+def copy_mesh(src, name, faces=None, tol=1e-5):
     """A copy of `src` at its bind under world, only `faces` (None = every one), plain `name`, no
     history, one UV set. Returns (transform, the source vertex of each new vertex) - vertex ids compact
     in order when faces are deleted, checked by position."""
@@ -265,7 +267,7 @@ def copy_mesh(src, name, faces=None):
     new = mfn(du).getPoints(om.MSpace.kWorld)
     assert len(new) == len(kept), (name, len(new), len(kept))
     drift = max(new[k].distanceTo(points[v]) for k, v in enumerate(kept))
-    assert drift < 1e-5, "%s: the vertex map is off by %.3e" % (name, drift)
+    assert drift < tol, "%s: the vertex map is off by %.3e" % (name, drift)
     return du, kept
 
 

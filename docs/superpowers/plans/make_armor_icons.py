@@ -22,7 +22,7 @@ import maya.cmds as cmds  # noqa: E402
 import maya.mel as mel  # noqa: E402
 import maya.api.OpenMaya as om  # noqa: E402
 
-PLUGIN = "C:/!!!Work/MayaScripts/SkeldarAnim"
+PLUGIN = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "SkeldarAnim")
 sys.path.insert(0, PLUGIN)
 cmds.loadPlugin("fbxmaya", quiet=True)
 
@@ -146,7 +146,7 @@ def render(entry):
 
 
 def main():
-    for entry in catalog.ARMOR:
+    for entry in [e for e in catalog.ARMOR if e.key.startswith(os.environ.get("ICONS_ONLY", ""))]:
         path = catalog.armor_icon_path(entry.key)
         if not os.path.isdir(os.path.dirname(path)):
             os.makedirs(os.path.dirname(path))

@@ -96,6 +96,16 @@ CHARACTERS = [
     # stays Manny's.
     Character("Playerchar_Rig", "Playerchar [rig]", "Playerchar_Rig.ma", "rig",
               textured=True, model="Playerchar"),
+    # Atone's main hero (2026-11-20, «взяти актуального головного перонажа з проекту Атон ... і
+    # скелет і ріг і одяг, наплічники окремо»): what BP_Character wears,
+    # SK_MainHeroProto_Skinned4 on SK_Mannequin_proto -- Manny's body bones to 0.07 cm, so on
+    # Manny_Rig as the Playerchar is. The character is the head, eyes, arms and the suit with its
+    # boots (without the suit there is no torso); its outfit is six clothing rows of ARMOR below,
+    # the shoulder pads a row of their own. Built by docs/superpowers/plans/make_mainhero_assets.py
+    # from sources/mainhero/ (export_mainhero_from_unreal.py; the cloth sections through Geometry
+    # Script, Unreal's FBX export drops them). After Manny's rows: the Auto card ties to table order.
+    Character("MainHero_Rig", "Main Hero [rig]", "MainHero_Rig.ma", "rig",
+              textured=True, model="MainHero"),
     # The second Creep (2026-10-27, «новый крип его нужно встроить в наш пайплайн, риг скелет,
     # карточки»; asked, a second Creep beside the first, in a palette colour): Unreal's
     # SK_Creep_skinned, Manny's bone names on its own body (the pelvis 5.3 cm lower than the first
@@ -159,6 +169,9 @@ CHARACTERS = [
     # skeleton's way.
     Character("Playerchar", "Playerchar [skeleton]", "Playerchar_Skeleton.ma", "skeleton",
               textured=True, model="Playerchar"),
+    # The same body without its rig (2026-11-20), the Playerchar skeleton's way.
+    Character("MainHero", "Main Hero [skeleton]", "MainHero_Skeleton.ma", "skeleton",
+              textured=True, model="MainHero"),
     # The second Creep without its rig (2026-10-27), made from Creep2_Rig.ma the Creep skeleton's way.
     Character("Creep2", "Creep 2 [skeleton]", "Creep2_Skeleton.ma", "skeleton", model="Creep2"),
     Character("Creep2_Body", "Creep 2 Body [skeleton]", "Creep2_Body_Skeleton.ma", "skeleton",
@@ -201,6 +214,7 @@ MODELS = [Model("Manny", "Manny"), Model("Creep", "Creep"), Model("Creep2", "Cre
           Model("Creep2_Body", "Creep 2 Body"),
           Model("Creep2_ArmR", "Creep 2 Arm R"), Model("Creep2_Head", "Creep 2 Head"),
           Model("Orc_D", "Orc D"), Model("Playerchar", "Playerchar"),
+          Model("MainHero", "Main Hero"),
           Model("Swordman", "Swordman"),
           Model("Fighter", "Fighter"),
           Model("UE4_Mannequin", "UE4 Mannequin"), Model(AUTO, "Auto")]
@@ -446,6 +460,21 @@ ARMOR = [
           "spine_05", "back", _asset_path("Playerchar/Playerchar_Color.jpg"), SKINNED),
     Armor("Playerchar_Pants", "Pants", _asset_path("Armor/Playerchar_Pants.ma"),
           "pelvis", "legs", _asset_path("Playerchar/Playerchar_Color.jpg"), SKINNED),
+    # Atone's main hero's outfit as clothing (2026-11-20, «і одяг, наплічники окремо»): Unreal's
+    # material slots of SK_MainHeroProto_Skinned4 grouped into pieces, in the hero's own colour maps
+    # (assets/MainHero/). Built by docs/superpowers/plans/make_mainhero_assets.py.
+    Armor("MainHero_Helmet", "Hero Helmet", _asset_path("Armor/MainHero_Helmet.ma"),
+          "head", "head", _asset_path("MainHero/MainHero_Chains_Color.jpg"), SKINNED),
+    Armor("MainHero_Chainmail", "Hero Chainmail", _asset_path("Armor/MainHero_Chainmail.ma"),
+          "neck_01", "neck", _asset_path("MainHero/MainHero_Chains_Color.jpg"), SKINNED),
+    Armor("MainHero_Shoulders", "Hero Shoulders", _asset_path("Armor/MainHero_Shoulders.ma"),
+          "spine_05", "shoulders", _asset_path("MainHero/MainHero_Chains_Color.jpg"), SKINNED),
+    Armor("MainHero_Chains", "Hero Chains", _asset_path("Armor/MainHero_Chains.ma"),
+          "spine_05", "chest", _asset_path("MainHero/MainHero_Chains_Color.jpg"), SKINNED),
+    Armor("MainHero_Cape", "Hero Cape", _asset_path("Armor/MainHero_Cape.ma"),
+          "spine_03", "back", _asset_path("MainHero/MainHero_Outfit_Color.jpg"), SKINNED),
+    Armor("MainHero_Skirt", "Hero Skirt", _asset_path("Armor/MainHero_Skirt.ma"),
+          "pelvis", "waist", _asset_path("MainHero/MainHero_Outfit_Color.jpg"), SKINNED),
 ]
 
 

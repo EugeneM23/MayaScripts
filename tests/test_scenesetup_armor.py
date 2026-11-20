@@ -218,26 +218,33 @@ class Clothing(unittest.TestCase):
 
 class ClothingRows(unittest.TestCase):
 
-    def test_four_clothing_rows_after_the_tech_limb(self):
+    def test_the_clothing_rows_after_the_tech_limb(self):
         self.assertEqual([r.key for r in catalog.ARMOR],
                          ["Tech_Limb", "Playerchar_Helmet", "Playerchar_Armor",
-                          "Playerchar_Shield", "Playerchar_Pants"])
+                          "Playerchar_Shield", "Playerchar_Pants",
+                          "MainHero_Helmet", "MainHero_Chainmail", "MainHero_Shoulders",
+                          "MainHero_Chains", "MainHero_Cape", "MainHero_Skirt"])
 
     def test_the_tech_limb_is_rigid_and_the_clothes_skinned(self):
         self.assertEqual(TECH.kind, catalog.RIGID)
         for row in catalog.ARMOR[1:]:
             self.assertEqual(row.kind, catalog.SKINNED, row.key)
 
-    def test_each_piece_its_own_slot(self):
-        slots = [r.slot for r in catalog.ARMOR]
-        self.assertEqual(len(slots), len(set(slots)))
-        self.assertEqual([r.slot for r in catalog.ARMOR[1:]], ["head", "torso", "back", "legs"])
+    def test_each_piece_of_one_outfit_its_own_slot(self):
+        # one character's pieces never take each other off; another's helmet does take a helmet off
+        for prefix, want in (("Playerchar_", ["head", "torso", "back", "legs"]),
+                             ("MainHero_", ["head", "neck", "shoulders", "chest", "back", "waist"])):
+            self.assertEqual([r.slot for r in catalog.ARMOR if r.key.startswith(prefix)], want)
 
-    def test_the_clothes_wear_the_character_s_atlas(self):
+    def test_the_clothes_wear_their_character_s_maps(self):
         atlas = catalog.asset_path("Playerchar/Playerchar_Color.jpg")
         self.assertTrue(os.path.isfile(atlas), atlas)
         for row in catalog.ARMOR[1:]:
-            self.assertEqual(row.texture, atlas, row.key)
+            if row.key.startswith("Playerchar_"):
+                self.assertEqual(row.texture, atlas, row.key)
+            else:
+                self.assertTrue(row.texture.endswith(("MainHero/MainHero_Chains_Color.jpg",
+                                                      "MainHero/MainHero_Outfit_Color.jpg")), row.key)
             self.assertEqual(catalog.missing(row), "", row.key)
 
     def test_a_clothing_file_is_a_group_and_a_skeleton(self):
