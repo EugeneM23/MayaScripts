@@ -30,6 +30,8 @@ LIVE_MS = 15
 TIME_CURVES = (0, 1, 2, 3)          # MFnAnimCurve TL, TA, TT, TU: time-driven
 SPAN_ATTR = "skeldarATTrailSpan"    # "start end" on the handle
 MAX_WATCHED = 3000
+DRESS_FLAGS = ("showFrames", "showFrameMarkers", "showFrameMarkerFrames", "showKeyframes")
+KEY_FLAG = 2                        # what Maya's own motionTrail writes for a key (measured)
 
 
 def state():
@@ -85,6 +87,11 @@ def shown(chain):
         if not vis or not lod or (override and not override_vis):
             return False
     return True
+
+
+def key_times(times, span):
+    """The key times inside `span`, once each, in order - what the trail marks as keys. Pure."""
+    return sorted(set(float(t) for t in times if span[0] <= t <= span[1]))
 
 
 def curve_changes(before, after):
@@ -236,8 +243,9 @@ class Scene(object):
         if changed:
             mod.doIt()
 
-    def write(self, uuid, span, points):
-        """The handle's trail shape takes the points; no undo entry, the scene's modified flag kept."""
+    def write(self, uuid, span, points, target=None):
+        """The handle's trail shape takes the points; no undo entry, the scene's modified flag kept.
+        With `target` the shape is dressed too (`dress`): frame numbers and the object's keys."""
         om, cmds = self.om, self.cmds
         node = self._node(uuid)
         if not node:
@@ -254,8 +262,60 @@ class Scene(object):
         fn = om.MFnDependencyNode(sel.getDependNode(0))
         fn.findPlug("points", False).setMObject(om.MFnPointArrayData().create(arr))
         fn.findPlug("startTime", False).setMTime(om.MTime(span[0], om.MTime.uiUnit()))
+        if target:
+            try:
+                self.dress(shapes[0], fn, target, span)
+            except Exception:
+                pass                         # the line is drawn whatever the dressing does
         if not was:
             cmds.file(modified=False)
+
+    def dress(self, shape, fn, target, span):
+        """Frame markers with their numbers and the object's keys on the trail, as Maya's own trail shows
+        them (2026-11-22: «я хочу щоб були номери кадрів на трейлі» - ours drew a bare line). The shape
+        draws numbers only once it holds its frames and its object (`transformToMove`, measured live).
+        Each part written only when it differs; nothing reaches the undo queue."""
+        om, cmds = self.om, self.cmds
+        obj = self._node(target)
+        if not obj:
+            return
+        mod, changed = om.MDGModifier(), False
+        for attr in DRESS_FLAGS:
+            plug = fn.findPlug(attr, False)
+            if not plug.asBool():
+                mod.newPlugValueBool(plug, True)
+                changed = True
+        sel = om.MSelectionList()
+        sel.add(obj)
+        message = om.MFnDependencyNode(sel.getDependNode(0)).findPlug("message", False)
+        move = fn.findPlug("transformToMove", False)
+        if not move.isDestination or move.source() != message:
+            if move.isDestination:
+                mod.disconnect(move.source(), move)
+            mod.connect(message, move)
+            changed = True
+        if changed:
+            mod.doIt()
+        keys = key_times(cmds.keyframe(obj, query=True, timeChange=True) or [], span)
+        times = fn.findPlug("keyframeTimes", False)
+        try:
+            standing = list(om.MFnDoubleArrayData(times.asMObject()).array())
+        except Exception:
+            standing = None
+        if standing != keys:
+            times.setMObject(om.MFnDoubleArrayData().create(keys))
+            fn.findPlug("keyframeFlags", False).setMObject(om.MFnIntArrayData().create([KEY_FLAG] * len(keys)))
+        #  getAttr cannot read an Int64Array back (it answers None), so what was written is remembered
+        written = state().setdefault("dressed_frames", {})
+        key = fn.uuid().asString()
+        if written.get(key) != tuple(span):
+            state_was = cmds.undoInfo(query=True, state=True)
+            cmds.undoInfo(stateWithoutFlush=False)
+            try:
+                cmds.setAttr(shape + ".frames", list(frames.frames_of(span)), type="Int64Array")
+            finally:
+                cmds.undoInfo(stateWithoutFlush=state_was)
+            written[key] = tuple(span)
 
 
 SCENE = [None]
@@ -386,7 +446,7 @@ def _tick(sc, st):
         walked = len(batch)
     for h in touched:
         tr = st["tracks"][h]
-        sc.write(h, tr.span, tr.points)
+        sc.write(h, tr.span, tr.points, target=tr.target)
     if any(st["tracks"][h].dirty for h in readers):
         arm(WAIT_MS if (sc.mouse_down() or sc.playing()) else IDLE_MS)
     return walked

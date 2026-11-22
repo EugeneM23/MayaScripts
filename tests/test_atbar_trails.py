@@ -66,8 +66,9 @@ class FakeScene(object):
     def put_back(self, held):
         self.put.append(held)
 
-    def write(self, uuid, span, points):
+    def write(self, uuid, span, points, target=None):
         self.writes.append((uuid, span, dict(points)))
+        self.targets = getattr(self, "targets", []) + [target]
 
 
 def fresh():
@@ -214,6 +215,27 @@ class Tick(unittest.TestCase):
         with mock.patch.object(trails, "_unwatch"):
             trails.tick(self.sc)
         self.assertEqual(self.st["tracks"], {})
+
+
+class Dressing(unittest.TestCase):
+    """2026-11-22: «я хочу щоб були номери кадрів на трейлі» - the trail carries its keys and frames."""
+
+    def test_key_times_are_the_keys_inside_the_span_once_each_in_order(self):
+        self.assertEqual(trails.key_times([12, 3, 3.0, -2, 40, 7.5], (0, 20)), [3.0, 7.5, 12.0])
+        self.assertEqual(trails.key_times([], (0, 20)), [])
+
+    def test_a_write_names_the_object_so_the_shape_can_be_dressed(self):
+        st, sc = fresh(), FakeScene()
+        add(st, sc, handle="h", target="obj", span=(0, 5))
+        with mock.patch.object(trails, "arm"):
+            trails.tick(sc)
+        self.assertTrue(sc.writes)
+        self.assertEqual(set(sc.targets), {"obj"})
+
+    def test_the_numbers_and_markers_are_asked_for(self):
+        self.assertEqual(set(trails.DRESS_FLAGS),
+                         {"showFrames", "showFrameMarkers", "showFrameMarkerFrames", "showKeyframes"})
+        self.assertEqual(trails.KEY_FLAG, 2)
 
 
 class Tracking(unittest.TestCase):
