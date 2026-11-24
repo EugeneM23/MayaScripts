@@ -167,6 +167,7 @@ from maya_poselib import objects as objs
 from maya_poselib import posemath as pm
 from maya_poselib import rigsolve
 from maya_poselib import scene
+from maya_poselib.scene import heal_markers as _heal_markers
 from maya_poselib import skelsolve
 from maya_poselib import timewalk
 from maya_poselib import upper
@@ -1385,6 +1386,7 @@ def apply(header, frames, selection=None, mirror=False, alpha=1.0, options=None,
     `progress` (a `timewalk.Progress`) steps a frame at a time and Esc undoes the press.
     `curves` - the card's `curves.json.gz` (`store.read_curves`) for Paste as «Original curves»;
     None for any other paste, or when it cannot be read."""
+    _heal_markers()
     if header and header.get("kind") == "objects":
         return _press_objects(header, selection, alpha, options, progress)
     refusal = _card_refusal(header)
@@ -1528,6 +1530,7 @@ class Blend(object):
     def start(self, header, frames, mirror=False, options=None, selection=None, only=False):
         """"" when a session started, else the refusal (nothing changed). A session already
         running is cancelled first. `only`: Selected only, the preview's and the paste's."""
+        _heal_markers()
         if self.inner is not None:
             self.cancel()
         if not header:

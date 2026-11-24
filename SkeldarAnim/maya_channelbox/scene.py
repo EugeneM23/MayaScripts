@@ -307,6 +307,12 @@ def key(plugs, breakdown=False):
             done += 1
         except Exception:                                    # noqa: BLE001
             pass
+    if done:
+        try:
+            from maya_scenesetup import aimcore
+            aimcore.keep_aims()      # a key on an aimed weapon turns its aim off (Maya's pairBlend)
+        except Exception:                                    # noqa: BLE001
+            pass
     return done
 
 

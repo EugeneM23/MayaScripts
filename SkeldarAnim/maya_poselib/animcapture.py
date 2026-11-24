@@ -106,6 +106,7 @@ from maya_poselib import keys
 from maya_poselib import objects as objs
 from maya_poselib import look
 from maya_poselib import scene
+from maya_poselib.scene import heal_markers as _heal_markers
 from maya_poselib import store
 from maya_poselib import timewalk
 
@@ -586,6 +587,7 @@ def build_clip(selection=None, regions=None, start=None, end=None, progress=None
     `progress` (a `timewalk.Progress`, or None) is stepped once per frame of a character's walk
     - `end - start + 1` steps; an objects card steps nothing (it walks the time only for the
     channels it samples, `_sampled`)."""
+    _heal_markers()
     if start is None or end is None:
         first, last = default_range()
         start = first if start is None else start

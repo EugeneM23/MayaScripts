@@ -538,6 +538,8 @@ def breakdown(selection, frame):
     with _chunk("skeldarTimeBarBreakdown"):
         if not _kq(time=(a, b)):
             cmds.setKeyframe(breakdown=True)
+            from . import layerscene
+            layerscene.keep_aims()
         else:
             _on(cmds.keyframe, edit=True, time=(a, b), breakdown=True)
 

@@ -1605,6 +1605,11 @@ def select_animated():
 def key_selection():
     if selection():
         cmds.setKeyframe(selection())
+        try:
+            from maya_scenesetup import aimcore
+            aimcore.keep_aims()      # a key on an aimed weapon turns its aim off (Maya's pairBlend)
+        except Exception:                                    # noqa: BLE001
+            pass
 
 
 @undoable

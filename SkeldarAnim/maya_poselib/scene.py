@@ -590,6 +590,20 @@ def _followed(path):
     return path
 
 
+def heal_markers():
+    """Our UUID markers written again where the scene graph says what they meant
+    (`maya_tools.relink`) - before a press reads them. A node that came in by import or paste
+    (a Scene Tabs paste folded into its tab, «Back to one scene») carries a new UUID, so 1P
+    Setup's `Chest_1P_ctrl` named no object and its constraint no knot: the chest read as «driven
+    by pairBlend» and was not posed, and the knot alone selected named no character (2026-11-23).
+    Out of the undo queue, never raises."""
+    try:
+        from maya_tools import relink
+        return relink.heal_quietly()
+    except Exception:                                        # noqa: BLE001
+        return 0
+
+
 def stand_ins(paths):
     """{path: what it stands for} of `paths` (long DAG paths) - `stand_in`'s rule, every path
     asked in one `ls` first."""

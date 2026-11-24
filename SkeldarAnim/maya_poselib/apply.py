@@ -145,6 +145,7 @@ from maya_poselib import objects as objs
 from maya_poselib import posemath as pm
 from maya_poselib import rigsolve
 from maya_poselib import scene
+from maya_poselib.scene import heal_markers as _heal_markers
 from maya_poselib import skelsolve
 from maya_poselib import upper
 
@@ -952,6 +953,7 @@ def apply(data, selection=None, mirror=False, alpha=1.0, only=False):
     frame, mirrored when asked, `alpha` < 1 blending from the current values; `only` (Selected
     only): just the selected controls / joints keyed, each at its value in the whole pose. An
     objects pose goes to `apply_objects` (it keys the selected objects anyway). One undo chunk."""
+    _heal_markers()
     if data and data.get("kind") == "objects":
         return apply_objects(data, selection, alpha)
     refusal = _card_refusal(data)
@@ -1370,6 +1372,7 @@ class Blend(object):
     def start(self, data, mirror=False, selection=None, only=False):
         """"" when a session started, else the refusal (nothing changed). A session already
         running is cancelled first. `only`: Selected only, as `apply`'s."""
+        _heal_markers()
         if self.active():
             self.cancel()
         if not data:

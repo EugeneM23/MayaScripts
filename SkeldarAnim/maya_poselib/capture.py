@@ -53,6 +53,7 @@ from maya_scenetabs import scope
 from maya_poselib import keys
 from maya_poselib import objects
 from maya_poselib import scene
+from maya_poselib.scene import heal_markers as _heal_markers
 from maya_poselib import store
 
 AUTHOR_VAR = "skeldarShareName"   # maya_share.AUTHOR_VAR: who the Shared card says is sending
@@ -227,6 +228,7 @@ def build_pose(selection=None, regions=None, frame=None):
     the objects selected beside it (a camera, a prop - not the Camera Setup camera, the body's) in its
     `objects`; else an objects pose of its transforms, else (None, "select a character or
     objects"). Two characters: (None, "pick one character for a pose")."""
+    _heal_markers()
     with _at(frame):
         refs, body, loose = scene.split(selection)
         if len(refs) > 1:

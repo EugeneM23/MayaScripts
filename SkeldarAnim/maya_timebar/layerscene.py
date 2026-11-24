@@ -367,9 +367,20 @@ def _base_for_the_key(root):
     return True
 
 
+def keep_aims():
+    """A key on a weapon or camera in Aim Mode turns its aim off (Maya's pairBlend at
+    weight 0): put it back (`aimcore.keep_aims`). Never raises."""
+    try:
+        from maya_scenesetup import aimcore
+        return aimcore.keep_aims()
+    except Exception:                                        # noqa: BLE001
+        return []
+
+
 def after_key():
     """Called by our `performSetKeyframeArgList` after Maya's: the layer flags
     `_base_for_the_key` changed, put back. Never raises."""
+    keep_aims()
     flags = dict(_KEY_FLAGS)
     _KEY_FLAGS.clear()
     for layer, (selected, preferred) in flags.items():

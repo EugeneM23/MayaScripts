@@ -164,6 +164,65 @@ def constraint(node, kind):
     return None
 
 
+CON_MARKERS = ("skeldarWeaponAimOf", "skeldarCameraAimOf")   # weaponaim's and cameraaim's
+
+
+def unblend(con):
+    """A key set on a node in Aim Mode (S, Key > Set Key, a script) makes Maya splice a
+    pairBlend between our aimConstraint and its rotate and set the node's `blendAim` to 0:
+    the rotate plays the key, the aim drives nothing (2026-11-23, the animator: «зникла
+    анімація еймів коли поставила ключі на ножі»). Put it back: the rotate curves the key
+    made deleted, the blend's weight cut of keys and set to 1. The translate keys stay.
+    Returns how many blends were put back. Never raises."""
+    fixed = 0
+    try:
+        blends = set()
+        for ch in ("constraintRotateX", "constraintRotateY", "constraintRotateZ"):
+            blends.update(cmds.listConnections(con + "." + ch, source=False, destination=True,
+                                               type="pairBlend") or [])
+        for blend in sorted(blends):
+            weight = (cmds.listConnections(blend + ".weight", source=True, destination=False,
+                                           plugs=True, skipConversionNodes=True) or [None])[0]
+            curves = set()
+            for ch in ("inRotate1", "inRotateX1", "inRotateY1", "inRotateZ1"):
+                curves.update(cmds.listConnections(blend + "." + ch, source=True,
+                                                   destination=False, type="animCurve") or [])
+            off = weight is not None and cmds.getAttr(weight) < 1.0 - 1e-9
+            keyed = weight is not None and bool(cmds.listConnections(
+                weight, source=True, destination=False, type="animCurve"))
+            if not (off or keyed or curves):
+                continue
+            if curves:
+                cmds.delete(sorted(curves))       # in a live Maya this takes the pairBlend and
+            if weight is not None and cmds.objExists(weight):    # its blendAim with it
+                if keyed:
+                    cmds.cutKey(weight, clear=True)
+                if not cmds.getAttr(weight, lock=True):
+                    cmds.setAttr(weight, 1.0)
+            fixed += 1
+    except Exception:                                        # noqa: BLE001
+        pass
+    return fixed
+
+
+def keep_aims():
+    """Every aimConstraint of ours whose aim a key turned off, put back (`unblend`).
+    Returns the nodes put back. Never raises."""
+    done = []
+    try:
+        for con in cmds.ls(type="aimConstraint", long=True) or []:
+            if not any(cmds.attributeQuery(m, node=con, exists=True) for m in CON_MARKERS):
+                continue
+            owner = cmds.listRelatives(con, parent=True, fullPath=True) or []
+            if owner:
+                hold_rotate(owner[0])     # an aim made before the hold: the next key leaves it be
+            if unblend(con):
+                done.append(leaf((cmds.listRelatives(con, parent=True) or [con])[0]))
+    except Exception:                                        # noqa: BLE001
+        pass
+    return done
+
+
 def is_aimed(node, kind):
     group = group_of(node, kind)
     return group is not None and not broken(controllers(group, kind), constraint(node, kind))
@@ -228,8 +287,47 @@ def control(name, parent, points, colour):
     return node
 
 
+HELD = "skeldarAimHeldRotate"      # on the aimed node: its rotate channels we made non-keyable
+
+
+def hold_rotate(node):
+    """While the aim drives `node`, its rotate channels are not keyable (shown in the Channel
+    Box still), so a key set on it - S, Key > Set Key, Auto Key, the Channel Box, any script
+    keying the node - keys its translate and leaves the rotate to the aim. A keyable constrained
+    channel keyed makes Maya splice a pairBlend at weight 0 and the aim stops driving
+    (2026-11-24, the animator, a knife in Aim Mode: «ставлю ключ на сам ніж і ламається
+    анімація ротейтів»). The channels we changed are named on the node. Never raises."""
+    try:
+        changed = []
+        for ch in ROTATE:
+            plug = node + "." + ch
+            if cmds.getAttr(plug, keyable=True):
+                cmds.setAttr(plug, keyable=False, channelBox=True)
+                changed.append(ch)
+        if changed:
+            if not cmds.attributeQuery(HELD, node=node, exists=True):
+                cmds.addAttr(node, longName=HELD, dataType="string")
+            cmds.setAttr(node + "." + HELD, " ".join(changed), type="string")
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
+def release_rotate(node):
+    """The rotate channels `hold_rotate` made non-keyable keyable again. Never raises."""
+    try:
+        if not cmds.attributeQuery(HELD, node=node, exists=True):
+            return
+        for ch in (cmds.getAttr(node + "." + HELD) or "").split():
+            if ch in ROTATE:
+                cmds.setAttr(node + "." + ch, keyable=True)
+        cmds.deleteAttr(node + "." + HELD)
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
 def clear_broken(node, kind, group, cleanup=None):
     """What is left of a broken Aim Mode on `node` deleted: our constraint, the group."""
+    release_rotate(node)
     con = constraint(node, kind)
     if con:
         cmds.delete(con)
@@ -418,6 +516,7 @@ def aim_on(node, kind, vec, home_of, place, size=None, cleanup=None, frames=None
                                  worldUpType="object", worldUpObject=made["up"])[0]
         cmds.addAttr(con, longName=kind.con_marker, dataType="string")
         cmds.setAttr(con + "." + kind.con_marker, key, type="string")
+        hold_rotate(long_(key))
     return keys, long_(key)
 
 
@@ -460,6 +559,7 @@ def aim_off(node, kind, group, made, cleanup=None):
             cleanup(group)
         cmds.delete(group)
         node = long_(key)
+        release_rotate(node)
         for axis, ch in enumerate(ROTATE):
             plug = node + "." + ch
             if keys:
