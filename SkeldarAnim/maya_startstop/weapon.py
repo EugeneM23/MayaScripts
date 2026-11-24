@@ -75,17 +75,21 @@ def swung_about(origin, rot):
     return out
 
 
-def late(mats, lag):
+def late(mats, lag, cyclic=False):
     """Matrices (F, 4, 4) read `lag` frames earlier (a fraction falls between two frames: the rotation slerped,
-    the place lerped), held on the first frame before the clip starts and on the last after it ends. lag 0: the
-    input, matrix for matrix."""
+    the place lerped), held on the first frame before the clip starts and on the last after it ends - or, `cyclic`
+    (a loop whose last frame is its first: Idle Builder's idle, 2026-11-24), read round the seam as Walk Builder's
+    cycle is. lag 0: the input, matrix for matrix."""
     mats = np.asarray(mats, float)
     if abs(lag) < QUIET:
         return np.array(mats)
     F = mats.shape[0]
     out = np.tile(np.eye(4), (F, 1, 1))
     for f in range(F):
-        g = min(max(f - lag, 0.0), F - 1.0)
+        if cyclic and F > 2:
+            g = (f - lag) % (F - 1.0)
+        else:
+            g = min(max(f - lag, 0.0), F - 1.0)
         lo = int(math.floor(g))
         hi = min(lo + 1, F - 1)
         a = g - lo
@@ -95,13 +99,19 @@ def late(mats, lag):
     return out
 
 
-def slow_mats(mats, sigma=SLOW):
+def slow_mats(mats, sigma=SLOW, cyclic=False):
     """The slow part of a matrix series (F, 4, 4): its turn and place blurred by a Gaussian of `sigma` frames
-    (the turn as its log about the series' mean turn, the ends held) - what stands for a cycle's mean."""
+    (the turn as its log about the series' mean turn, the ends held) - what stands for a cycle's mean. `cyclic`:
+    the series IS a cycle, and its mean is taken, as Walk Builder takes it."""
     mats = np.asarray(mats, float)
     F = mats.shape[0]
     rots = np.array([m.orthonormal(mats[f]) for f in range(F)])
     anchor = m.mean_rot(rots)
+    if cyclic:
+        out = np.tile(np.eye(4), (F, 1, 1))
+        out[:, :3, :3] = anchor
+        out[:, 3, :3] = mats[:, 3, :3].mean(0)
+        return out
     logs = np.array([m.log_rot(anchor.T @ r) for r in rots])
     smooth = np.stack([m._blur(logs[:, i], sigma) for i in range(3)], axis=1)
     out = np.tile(np.eye(4), (F, 1, 1))
@@ -112,13 +122,13 @@ def slow_mats(mats, sigma=SLOW):
     return out
 
 
-def keeping(mats, keep, sigma=SLOW):
+def keeping(mats, keep, sigma=SLOW, cyclic=False):
     """A matrix series keeping the share `keep` of its motion over its slow part: 1 the input, 0 the slow part
     alone."""
     mats = np.asarray(mats, float)
     if keep >= 1.0 - QUIET:
         return np.array(mats)
-    slow = slow_mats(mats, sigma)
+    slow = slow_mats(mats, sigma, cyclic)
     out = np.array(slow)
     for f in range(mats.shape[0]):
         sr = slow[f, :3, :3]
@@ -127,12 +137,15 @@ def keeping(mats, keep, sigma=SLOW):
     return out
 
 
-def keeping_points(pts, keep, sigma=SLOW):
-    """Points (F, 3) keeping the share `keep` of their motion over their slow part."""
+def keeping_points(pts, keep, sigma=SLOW, cyclic=False):
+    """Points (F, 3) keeping the share `keep` of their motion over their slow part (`cyclic`: their mean)."""
     pts = np.asarray(pts, float)
     if keep >= 1.0 - QUIET:
         return np.array(pts)
-    slow = np.stack([m._blur(pts[:, i], sigma) for i in range(3)], axis=1)
+    if cyclic:
+        slow = np.tile(pts.mean(0), (pts.shape[0], 1))
+    else:
+        slow = np.stack([m._blur(pts[:, i], sigma) for i in range(3)], axis=1)
     return slow + (pts - slow) * keep
 
 
@@ -214,7 +227,7 @@ def levers(clip, kin, chains_, weapons, sides):
     return out
 
 
-def _shoulder(clip, kin, side_chain, want, share):
+def _shoulder(clip, kin, side_chain, want, share, cyclic=False):
     """The clavicle turned about its pivot so the shoulder follows the wanted hand: with d the shoulder-to-hand
     distance and `ref` its slow part, the arm is left d' = ref + (d - ref)(1 - share), the least turn in the plane of
     the clavicle and the hand, no further than SHOULDER_MAX_DEG, eased in. Returns ({clavicle, upper arm, forearm,
@@ -225,7 +238,7 @@ def _shoulder(clip, kin, side_chain, want, share):
     F = kin.shape[1]
     P, S, H = kin[clav, :, 3, :3], kin[up, :, 3, :3], want[:, 3, :3]
     d = np.linalg.norm(H - S, axis=1)
-    ref = m._blur(d, SLOW)
+    ref = np.full(F, d.mean()) if cyclic else m._blur(d, SLOW)
     limit = math.radians(SHOULDER_MAX_DEG)
     carried = dict((j, np.array(kin[j])) for j in (clav, up, low, hand))
     most = 0.0
@@ -251,12 +264,16 @@ def _shoulder(clip, kin, side_chain, want, share):
     return carried, most
 
 
-def apply(a, worlds, k, alpha=None, grip=False, weapons=None, still=None):
+def apply(a, worlds, k, alpha=None, grip=False, weapons=None, still=None, cyclic=False, hold_grip=False):
     """Walk Builder's Weapon tab on the frames (J, F, 4, 4) of a start or a stop. `alpha` (F,) how much a pose holds
     the arms a frame (Hold blends in by it; a hand the scene gives a weapon is held whole). `still` (F,) how still
     the body stands a frame: where it stands the hand keeps its own place on the chest (the pose's), the slow part
     taking over as it moves - a Gaussian reaching into the run put a start's hands 12-20 cm off its pose
-    (2026-11-17). Returns (worlds, info, the sides held - their arm springs to be left off)."""
+    (2026-11-17). `cyclic` (Idle Builder's looping idle, 2026-11-24): the slow parts are the cycle's means and a
+    lag reads round the seam - Walk Builder's own reading. `hold_grip` (Idle Builder, whose arms still play their own
+    motion under a grip): the other hand of a two-handed hold takes its MEAN relation to the carrier, so it stays on
+    the weapon (one grip on one weapon) - kept as the frames have it, it slid off as the clip's arms
+    moved apart (2026-11-24). Returns (worlds, info, the sides held - their arm springs to be left off)."""
     F = np.asarray(worlds).shape[1]
     alpha = np.zeros(F) if alpha is None else np.clip(np.asarray(alpha, float), 0.0, 1.0)
     posed = bool(alpha.max() > 0.0)
@@ -296,15 +313,21 @@ def apply(a, worlds, k, alpha=None, grip=False, weapons=None, still=None):
             keep = sum(min(max(float(ks[s]["weapon_inherit"]), 0.0), 1.0) for s in riders) / len(riders)
             H = np.array(kin[chains_[side][3]])
             own = _in(H, C)
-            offset = slow_mats(own)
+            offset = slow_mats(own, cyclic=cyclic)
             if still is not None:
                 offset = np.array([m.blend_matrix(offset[f], own[f], float(still[f])) for f in range(F)])
-            want = _on(_on(offset, late(keeping(Cr, keep), lag)), root)
+            want = _on(_on(offset, late(keeping(Cr, keep, cyclic=cyclic), lag, cyclic)), root)
             weight = np.ones(F) if any(s in (weapons or {}) for s in riders) else alpha
             want = np.array([m.blend_matrix(H[f], want[f], float(weight[f])) for f in range(F)])
             T = np.einsum("fij,fjk->fik", np.linalg.inv(H), want)      # H_other . inv(H) . want: the hold kept
             for s in riders:
-                hands[s] = want if s == side else np.einsum("fij,fjk->fik", np.array(kin[chains_[s][3]]), T)
+                if s == side:
+                    hands[s] = want
+                elif hold_grip:
+                    rel = slow_mats(_in(np.array(kin[chains_[s][3]]), H), cyclic=True)   # one grip: its mean
+                    hands[s] = _on(rel, want)
+                else:
+                    hands[s] = np.einsum("fij,fjk->fik", np.array(kin[chains_[s][3]]), T)
             info["hold_cm"] = max(info["hold_cm"], float(np.linalg.norm(want[:, 3, :3] - H[:, 3, :3], axis=1).max()))
             info["lag"] = max(info["lag"], abs(lag))
             info["inherit"] = min(info["inherit"], keep)
@@ -328,7 +351,7 @@ def apply(a, worlds, k, alpha=None, grip=False, weapons=None, still=None):
             T = np.array([ap @ H[f, :3, :3] + H[f, 3, :3] for f in range(H.shape[0])])
             rr = np.array([m.orthonormal(r) for r in root])
             Tr = np.einsum("fi,fij->fj", T - root[:, 3, :3], np.swapaxes(rr, -1, -2))
-            want = np.einsum("fi,fij->fj", keeping_points(Tr, keep), rr) + root[:, 3, :3]
+            want = np.einsum("fi,fij->fj", keeping_points(Tr, keep, cyclic=cyclic), rr) + root[:, 3, :3]
             for f in range(H.shape[0]):
                 a_, b_ = T[f] - G[f], want[f] - G[f]
                 M = swung_about(G[f], aim_swing(a_, b_))
@@ -345,7 +368,7 @@ def apply(a, worlds, k, alpha=None, grip=False, weapons=None, still=None):
         for side, share in sorted(shoulders.items()):
             if side not in hands:
                 hands[side] = np.array(kin[chains_[side][3]])
-            carried, deg = _shoulder(clip, kin, chains_[side], hands[side], share)
+            carried, deg = _shoulder(clip, kin, chains_[side], hands[side], share, cyclic)
             for j, mats in carried.items():
                 base[j] = mats
             if chains_[side][0] is not None and carried:

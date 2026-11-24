@@ -28,8 +28,14 @@ DEFAULTS = {
     "stance": 1.0,      # x the feet's spread across the body
     "width": 0.0,       # cm added to the feet's spread
     "seam": 0.0,        # frames at the end eased onto the first frame
-    "hold_l": 1.0, "hold_r": 1.0,    # Weapon: the hand rides the chest at its mean offset (where the pose holds the arm)
-    "overlap_l": 0.0, "overlap_r": 0.0,   # Weapon: ms the chest it rides is late
+    # Weapon - Walk Builder's tab, one to one (2026-11-24, maya_startstop.weapon): Hold the hand on the chest (where
+    # the pose holds the arm, or a weapon in the hand), Inherit the chest's motion, Overlap its age, Aim target,
+    # Shoulder
+    "hold_l": 1.0, "hold_r": 1.0,         # the hand rides the chest at its mean offset
+    "overlap_l": 0.0, "overlap_r": 0.0,   # ms the chest it rides is late
+    "inherit": 1.0,     # the share of the chest's own motion a held hand takes (0: stands still)
+    "aim": 1.0,         # the share of its own motion the blade's target keeps (0: a static target)
+    "shoulder": 0.0,    # the share of the arm's reach changes the clavicle takes
     "fps": 30.0,        # the output rate (ms into frames)
 }
 RANGES = {
@@ -38,6 +44,7 @@ RANGES = {
     "pelvis": (0.0, 3.0), "feet": (0.0, 3.0),
     "tempo": (0.25, 3.0), "smooth": (0.0, 10.0), "height": (-30.0, 30.0), "stance": (0.0, 3.0), "width": (-60.0, 60.0), "seam": (0.0, 60.0),
     "hold_l": (0.0, 1.0), "hold_r": (0.0, 1.0), "overlap_l": (-1000.0, 1000.0), "overlap_r": (-1000.0, 1000.0),
+    "inherit": (0.0, 1.0), "aim": (0.0, 1.0), "shoulder": (0.0, 1.0),
     "fps": (1.0, 240.0),
 }
 ALL_PARTS = ("torso", "head", "arms", "legs", "pelvis")      # what of the pose comes in (chips)
@@ -326,8 +333,9 @@ def _two_bone(hip, knee_hint, ankle, l1, l2):
     return hip + dn * x + perp * y, hip + dn * D
 
 
-def evaluate(idle, given=None, pose=None, parts=ALL_PARTS):
-    """(the new locals (J, N', 4, 4), info). `pose` = pose_targets(...) or None."""
+def evaluate(idle, given=None, pose=None, parts=ALL_PARTS, weapons=None):
+    """(the new locals (J, N', 4, 4), info). `pose` = pose_targets(...) or None; `weapons` the scene's weapons in
+    the hands (maya_walk.scene.weapons_in_hands: who carries a two-handed hold, the blade Aim target aims)."""
     k = knobs(given)
     clip = idle.clip
     J = len(clip.names)
@@ -448,7 +456,8 @@ def evaluate(idle, given=None, pose=None, parts=ALL_PARTS):
             L[fo, t, :3, :3] = orthonormal((fw @ np.linalg.inv(cw))[:3, :3])
         info["short"][s] = worst
     W = fk(clip.names, clip.parents, L, clip.top_parent)
-    info["held"] = _weapon_hold(idle, L, W, k, share if "arms" in parts else 0.0, idle.loops or k["seam"] >= 1.0)
+    info["weapon"] = _weapon(idle, L, W, k, share if "arms" in parts else 0.0, idle.loops or k["seam"] >= 1.0,
+                             weapons)
     W = fk(clip.names, clip.parents, L, clip.top_parent)
     # helpers riding a bone ride it again
     followers = dict(idle.followers)
@@ -473,91 +482,54 @@ def evaluate(idle, given=None, pose=None, parts=ALL_PARTS):
     return L, info
 
 
-# ---- Weapon: the hands on the chest, late (Walk Builder's Weapon tab) ----
+# ---- Weapon: Walk Builder's Weapon tab (maya_startstop.weapon's port of it) ----
 
-def _chest(idle):
+class _Shape(object):
+    """The clip as maya_startstop.weapon reads one: names, parents, index, the order parents first, the rate."""
+
+    def __init__(self, clip, fps):
+        self.names, self.parents, self.index = clip.names, clip.parents, clip.index
+        self.order = list(range(len(clip.names)))       # Clip's joints come parents first (fk relies on it)
+        self.fps = float(fps)
+
+
+class _Read(object):
+    def __init__(self, idle, fps):
+        self.clip = _Shape(idle.clip, fps)
+        self.root = idle.root
+        self.follows = dict((h, b) for h, (b, _rel) in idle.followers.items())
+
+
+GRIP_CM = 30.0      # two hands this close on the average hold one thing (Walk Builder's GRIP_DIST)
+
+
+def _weapon(idle, L, W, k, alpha, cyclic, weapons=None):
+    """Walk Builder's Weapon tab on the idle - maya_startstop.weapon's port of it, read on the cycle's means for a
+    looping idle (`cyclic`). Writes the new arms into `L` and `W`; answers the tab's info (its `line`)."""
+    from maya_startstop import model as ssm, weapon as wpn
     ix = idle.clip.index
-    for name in ("spine_05", "spine_04", "spine_03"):
-        if name in ix:
-            return ix[name]
-    spines = [j for j, g in enumerate(idle.groups) if g == "torso"]
-    return spines[-1] if spines else None
-
-
-def _late(mats, lag, cyclic):
-    """(N, 4, 4) read `lag` frames earlier: places lerped, turns slerped; a loop wraps, else the ends hold."""
-    n = mats.shape[0]
-    out = np.empty_like(mats)
-    period = n - 1 if cyclic and n > 2 else None
-    for t in range(n):
-        u = t - lag
-        if period:
-            u = u % period
-        else:
-            u = min(max(u, 0.0), n - 1)
-        i0 = int(math.floor(u))
-        i1 = min(i0 + 1, n - 1)
-        f = u - i0
-        m = np.eye(4)
-        m[:3, :3] = slerp(mats[i0, :3, :3], mats[i1, :3, :3], f)
-        m[3, :3] = mats[i0, 3, :3] * (1.0 - f) + mats[i1, 3, :3] * f
-        out[t] = m
-    return out
-
-
-def _weapon_hold(idle, L, W, k, alpha, cyclic):
-    """Each held hand rides the chest rigidly at its own mean offset, the chest read `overlap` ms late; the
-    arm (upperarm, lowerarm) solved onto it by two-bone IK, the hand's turn set. Only where the pose holds the
-    arms (`alpha`, the pose's share on Arms). Answers {side: cm the hand moved at most}."""
-    out = {}
-    chest = _chest(idle)
-    if chest is None or alpha <= 0.0:
-        return out
-    ix = idle.clip.index
-    names = idle.clip.names
-    parents = idle.clip.parents
-    C = W[chest]
-    for s in ("l", "r"):
-        hold = k["hold_" + s]
-        if hold < 0.5:
-            continue
-        chain = ("upperarm_" + s, "lowerarm_" + s, "hand_" + s)
-        if not all(n in ix for n in chain):
-            continue
-        up, lo, ha = (ix[n] for n in chain)
-        H = W[ha].copy()
-        rel = H @ np.linalg.inv(C)
-        A = np.eye(4)
-        A[:3, :3] = orthonormal(rel[:, :3, :3].sum(0))
-        A[3, :3] = rel[:, 3, :3].mean(0)
-        lag = k["overlap_" + s] * k["fps"] / 1000.0
-        want = A[None] @ _late(C, lag, cyclic)
-        n_out = H.shape[0]
-        worst = 0.0
-        for t in range(n_out):
-            target = np.eye(4)
-            target[:3, :3] = slerp(H[t, :3, :3], want[t, :3, :3], alpha)
-            target[3, :3] = H[t, 3, :3] * (1.0 - alpha) + want[t, 3, :3] * alpha
-            worst = max(worst, float(np.linalg.norm(target[3, :3] - H[t, 3, :3])))
-            pw = W[parents[up], t]
-            uw = L[up, t] @ pw
-            shoulder = uw[3, :3]
-            elbow_fk = (L[lo, t] @ uw)[3, :3]
-            l1 = float(np.linalg.norm(L[lo, t, 3, :3]))
-            l2 = float(np.linalg.norm(L[ha, t, 3, :3]))
-            elbow, reach = _two_bone(shoulder, elbow_fk, target[3, :3], l1, l2)
-            uw[:3, :3] = uw[:3, :3] @ between(elbow_fk - shoulder, elbow - shoulder)
-            lw = L[lo, t] @ uw
-            wrist_fk = (L[ha, t] @ lw)[3, :3]
-            lw[:3, :3] = lw[:3, :3] @ between(wrist_fk - elbow, reach - elbow)
-            hw = np.eye(4)
-            hw[:3, :3] = target[:3, :3]
-            L[up, t, :3, :3] = orthonormal((uw @ np.linalg.inv(pw))[:3, :3])
-            L[lo, t, :3, :3] = orthonormal((lw @ np.linalg.inv(uw))[:3, :3])
-            L[ha, t, :3, :3] = orthonormal((hw @ np.linalg.inv(lw))[:3, :3])
-        out[s] = worst
+    given = {"weapon_hold_l": k["hold_l"], "weapon_hold_r": k["hold_r"],
+             "weapon_overlap_l": k["overlap_l"], "weapon_overlap_r": k["overlap_r"],
+             "weapon_inherit": k["inherit"], "weapon_aim": k["aim"], "weapon_shoulder": k["shoulder"]}
+    k2 = ssm.knobs(**given)
+    grip = False
+    if alpha > 0.0 and "hand_l" in ix and "hand_r" in ix:
+        gap = np.linalg.norm(W[ix["hand_l"], :, 3, :3] - W[ix["hand_r"], :, 3, :3], axis=1)
+        grip = bool(gap.mean() < GRIP_CM)
+    worlds = np.array(W)
+    out, info, _held = wpn.apply(_Read(idle, k["fps"]), worlds, k2, alpha=np.full(W.shape[1], float(alpha)),
+                                 grip=grip, weapons=weapons, cyclic=cyclic, hold_grip=True)
+    names, parents = idle.clip.names, idle.clip.parents
+    changed = [j for j in range(len(names)) if np.abs(out[j] - W[j]).max() > 1e-9]
+    if changed:
+        for j in changed:
+            p = parents[j]
+            base = out[p] if p >= 0 else np.broadcast_to(idle.clip.top_parent, out[j].shape)
+            loc = out[j] @ np.linalg.inv(base)
+            L[j, :, :3, :3] = np.array([orthonormal(r) for r in loc[:, :3, :3]])
         W[:] = fk(names, parents, L, idle.clip.top_parent)
-    return out
+    info["grip"] = grip
+    return info
 
 
 GRIPS = (("weapon_r", "hand_r"), ("weapon_l", "hand_l"))

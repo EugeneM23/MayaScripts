@@ -317,7 +317,8 @@ def apply(root, given, card_path, parts):
     idle = idle_of(root)
     pose, name = pose_for(root, idle, card_path) if card_path else (None, "")
     given = dict(given or {}, fps=_fps())
-    L, info = im.evaluate(idle, given, pose, parts)
+    weapons = ws.weapons_in_hands(root)     # the hands' own weapons: who carries a hold, the blade Aim target aims
+    L, info = im.evaluate(idle, given, pose, parts, weapons=weapons)
     values = _channels(idle, L)
     links = []
     try:
@@ -342,8 +343,9 @@ def apply(root, given, card_path, parts):
         line += " | a foot %.1f cm out of reach" % short
     if info.get("drop"):
         line += " | pelvis lowered up to %.1f cm for the feet" % info["drop"]
-    if info.get("held"):
-        line += " | hands on the chest: " + ", ".join("%s %.1f cm" % (s.upper(), v) for s, v in sorted(info["held"].items()))
+    if info.get("weapon"):
+        from maya_startstop import weapon as wpn
+        line += wpn.line(info["weapon"])
     if links:
         line += " | weapon re-seated: " + ", ".join(_short(w) for _b, w in links)
     if held:

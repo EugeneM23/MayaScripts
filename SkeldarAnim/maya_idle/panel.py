@@ -38,10 +38,16 @@ SLIDERS = (
     ("width", "Width, cm", "Centimetres added to the distance between the feet (negative: narrower)"),
     ("seam", "Seam, fr", "The last frames eased onto the first, so the idle loops"),
 )
-WEAPON_SLIDERS = (
+WEAPON_SLIDERS = (           # Walk Builder's Weapon tab, one to one (2026-11-24)
+    ("inherit", "Inherit", "The share of the chest's own motion a held hand takes: 1 rides the torso, 0 stands still"),
     ("overlap_l", "Overlap L, ms", "The left hand rides the chest this many ms late (the weapon trails the body)"),
     ("overlap_r", "Overlap R, ms", "The right hand rides the chest this many ms late"),
+    ("aim", "Aim target", "The blade aims at a target keeping this share of its motion: 1 the animation, 0 a static "
+                          "target (the weapon's weight)"),
+    ("shoulder", "Shoulder", "The share of the arm's reach changes the clavicle takes, so the elbow is not "
+                             "overstretched"),
 )
+MS_SLIDERS = ("overlap_l", "overlap_r")
 HOLDS = (("hold_l", "Hold L"), ("hold_r", "Hold R"))
 JOB = {}
 
@@ -456,8 +462,10 @@ def build_panel():
     cmds.setParent("..")
     for name, label, tip in WEAPON_SLIDERS:
         low, high = im.RANGES[name]
-        cmds.floatSliderGrp(_control(name), label=label, field=True, minValue=-500.0, maxValue=500.0,
-                            fieldMinValue=low, fieldMaxValue=high, step=1.0, precision=0,
+        ms = name in MS_SLIDERS
+        cmds.floatSliderGrp(_control(name), label=label, field=True, minValue=-500.0 if ms else low,
+                            maxValue=500.0 if ms else high, fieldMinValue=low, fieldMaxValue=high,
+                            step=1.0 if ms else 0.05, precision=0 if ms else 2,
                             value=float(_stored(name, im.DEFAULTS[name])),
                             columnWidth3=hubstyle.pick((92, 44, 100), (100, 50, 150)), adjustableColumn=3,
                             height=hubstyle.height("small", 22), annotation=tip, changeCommand=knob_changed)
