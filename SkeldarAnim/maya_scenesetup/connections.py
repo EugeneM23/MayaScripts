@@ -108,6 +108,7 @@ import maya_hubcopy as hubcopy
 import maya_hubstyle as hubstyle
 import maya_rigs
 from maya_overrig import overrig
+from maya_scenesetup import aimcore
 from maya_scenesetup import attach
 from maya_scenesetup import bonedrive
 from maya_scenesetup import camera
@@ -1021,6 +1022,11 @@ def apply(wanted, rig=None, weapon=None):
         if aimed:
             weaponaim.leave(weapon)
             weapon = cmds.ls(uuid, long=True)[0]
+        if not weaponaim.is_aimed(weapon):
+            # a rotate an older Default left non-keyable (aimcore.hold_rotate): OverRig's
+            # parent_in / _out re-bake keyable channels only, so the hang left the weapon
+            # where it was and the line said "applied" (2026-11-24)
+            aimcore.release_rotate(weapon)
         sweep_orphans()
         span = _span(weapon, [_control(rig, side) for side in SIDES])
         for step, side in steps:

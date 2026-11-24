@@ -210,6 +210,14 @@ def keep_aims():
     Returns the nodes put back. Never raises."""
     done = []
     try:
+        aimed = set()
+        for con in cmds.ls(type="aimConstraint", long=True) or []:
+            if any(cmds.attributeQuery(m, node=con, exists=True) for m in CON_MARKERS):
+                aimed.update(cmds.ls(cmds.listRelatives(con, parent=True, fullPath=True) or [],
+                                     uuid=True) or [])
+        for node in cmds.ls("*." + HELD, objectsOnly=True, long=True, recursive=True) or []:
+            if not set(cmds.ls(node, uuid=True) or []) & aimed:
+                release_rotate(node)      # its aim is gone (an older Default): keyable again
         for con in cmds.ls(type="aimConstraint", long=True) or []:
             if not any(cmds.attributeQuery(m, node=con, exists=True) for m in CON_MARKERS):
                 continue
