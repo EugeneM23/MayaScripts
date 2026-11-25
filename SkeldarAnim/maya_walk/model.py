@@ -2724,12 +2724,15 @@ class Walk(object):
         for h, kind in enumerate(self.kind):
             if kind != "helper":
                 continue
+            # its nearest body ancestor first when rigid to it (weapon_r to hand_r), else the shallowest
+            # (meanpose._follows: a hand held rigidly on the chest made the chest win, 2026-11-25)
+            near = next((a for a in self._ancestors(h) if self.kind[a] != "helper"), -1)
             best = None
             for b in body:
                 rel = worlds[h] @ np.linalg.inv(worlds[b])
                 err = float(np.abs(rel - rel[0]).max())
                 if err < FOLLOW_TOL:
-                    key = (len(self._ancestors(b)), err)
+                    key = (0 if b == near else 1, len(self._ancestors(b)), err)
                     if best is None or key < best[0]:
                         best = (key, b, rel[0])
             if best is not None:

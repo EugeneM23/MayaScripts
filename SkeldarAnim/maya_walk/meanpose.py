@@ -499,7 +499,10 @@ def _helpers(names, parents):
 
 
 def _follows(W, helper, names, parents):
-    """{helper: (the body bone it follows rigidly - the shallowest, (4x4) its relation)} in the clip `W`."""
+    """{helper: (the body bone it follows rigidly, (4x4) its relation)} in the clip `W`: its nearest body ancestor
+    when it is rigid to it (weapon_r to hand_r), else the shallowest body bone it is rigid to. Shallowest first
+    alone took the CHEST for weapon_r under the Weapon tab's Hold (the hand rides the chest rigidly there), and a
+    layer that then turned the arm left the weapon bone at the chest, 20 cm off the hand (2026-11-25)."""
     depth = {}
     for j in _order(parents):
         depth[j] = 0 if parents[j] < 0 else depth[parents[j]] + 1
@@ -507,12 +510,15 @@ def _follows(W, helper, names, parents):
     inv = dict((b, np.linalg.inv(W[b])) for b in body)
     out = {}
     for h in helper:
+        near = parents[h]
+        while near >= 0 and near in helper:
+            near = parents[near]
         best = None
         for b in body:
             rel = W[h] @ inv[b]
             err = float(np.abs(rel - rel[0]).max())
             if err < wm.FOLLOW_TOL:
-                key = (depth[b], err)
+                key = (0 if b == near else 1, depth[b], err)
                 if best is None or key < best[0]:
                     best = (key, b, rel[0])
         if best is not None:
